@@ -1,5 +1,0 @@
-command_user="tailscale:tailscale"
-
-start_post() {
-	tailscale set --accept-dns=false
-}

@@ -28,10 +28,10 @@ alpine output:
 # internal - do not run manually
 # builds nix source if needed
 [script]
-nix-build package arch:
+nix-build package:
     mkdir -p sources
     if [ ! -e sources/{{package}} ]; then
-        nix build .#packages.{{arch}}-linux.{{package}} --out-link sources/{{package}}
+        nix build .#packages.aarch64-linux.{{package}} --out-link sources/{{package}}
     fi
 
 # internal - do not run manually
@@ -46,6 +46,46 @@ pack directory name:
     ln -sf $file {{name}}-current.tar.zst
     ln -sf $file.sha256 {{name}}-current.tar.zst.sha256
 
+# internal - do not run manually
+# checks if effective uid is 0
+[script]
+enforce-root:
+    if [ $(id -u) -ne 0 ]; then
+        echo "effective user id is not 0, please run this as root!"
+        exit 1
+    fi
+
+# internal - do not run manually
+# de-symlinks etc and sets permissions
+[script]
+etc identifier output: enforce-root
+    build_output=$(nix build .#packages.aarch64-linux.etc.{{identifier}} --no-link --print-out-paths)
+
+    cp -aL $build_output/etc/. {{output}}
+    find {{output}} -type f | \
+        grep -e gid -e uid -e mode | \
+        while read -r metadata; do
+            echo "$metadata" | sed -E 's/^(.*)\.(gid|uid|mode)$/\1 \2/' | {
+                read file type
+
+                value=$(cat "$metadata")
+                case $type in
+                    gid)
+                        chown ":$value" "$file"
+                        ;;
+                    uid)
+                        chown "$value" "$file"
+                        ;;
+                    mode)
+                        chmod "$value" "$file"
+                        ;;
+                esac
+            }
+
+            chmod o+w "$metadata"
+            rm "$metadata"
+        done
+
 # outputs
 
 # builds configs and package caches
@@ -56,10 +96,11 @@ extra identifier:
     rootfs=$tmp/rootfs
     output=$tmp/output
     mkdir $rootfs $output
-    trap "rm -rf $tmp" EXIT
+    # trap "rm -rf $tmp" EXIT
 
     # rootfs
     just alpine $rootfs
+    just etc {{identifier}} $rootfs/etc
     mkdir $rootfs/etc/apk/cache
 
     {{apk_base}} $rootfs update
@@ -72,15 +113,14 @@ extra identifier:
 
     # output
     mv $rootfs/etc/apk/cache $output/cache
-    cp -r config/extra $output/files
-    echo {{identifier}} > $output/files/etc/identifier
 
-    just pack $output extra
+    echo $rootfs
+    # just pack $output extra
 
 # builds kernel, initramfs, ect
 [script]
-base:
-    just nix-build linux aarch64
+base: enforce-root
+    just nix-build linux
 
     # setup
     tmp=$(mktemp --directory)
@@ -113,13 +153,9 @@ base:
 # flashes the device, follow link in README.md before using this
 [script]
 flash:
-    just nix-build u-boot $(uname -m)
-    just nix-build spl-loader $(uname -m)
-
-    if [ $(id -u) -ne 0 ]; then
-        echo "effective user id is not 0, please run this as root!"
-        exit 1
-    fi
+    just nix-build u-boot
+    just nix-build spl-loader
+    just enforce-root
 
     rkdeveloptool db sources/spl-loader
     rkdeveloptool wl 0 sources/u-boot/u-boot-rockchip-spi.bin

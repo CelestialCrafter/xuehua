@@ -1,3 +1,0 @@
-LABEL=deploy /mnt-deploy    ext4 noauto,defaults        0 0
-LABEL=data   /var/lib btrfs rw,defaults,subvol=@var-lib 0 2
-LABEL=data   /home btrfs    rw,defaults,subvol=@home    0 2
