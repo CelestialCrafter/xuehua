@@ -43,14 +43,18 @@
           extraMeta.branch = lib.version.majorMinor version;
         };
 
-        etc = lib.genAttrs [ "scarameow" ] (
-          identifier:
-          import ./nix/configuration.nix {
-            inherit nixpkgs;
-            lib = nixpkgs.lib;
-            pkgs = pkgs-aarch64;
-          } identifier
-        );
+        initrd =
+          let
+            inherit (callPackage ./nix { inherit (nixpkgs.lib) nixosSystem; }) system utils;
+            configuration = (pkgs.callPackage ./configuration.nix { inherit utils; });
+          in
+          lib.genAttrs [ "scarameow" ] (
+            identifier:
+            (system [
+              { system.name = identifier; }
+              configuration
+            ]).config.system.build.initialRamdisk
+          );
       };
 
       devShells.x86_64-linux.default = pkgs-x86.mkShell {
