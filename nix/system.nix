@@ -3,6 +3,7 @@
   lib,
   nixosSystem,
   initrd,
+  inputs,
   ...
 }:
 extraModules:
@@ -77,18 +78,33 @@ let
       };
 
       config = {
-        system.nixos.full = "${config.system.nixos.distroName}-${config.system.nixos.label}-${config.system.name}";
         boot.kernel.sysctl."kernel.poweroff_cmd" = mkForce null;
         networking.resolvconf.enable = false;
         systemd.coredump.enable = false;
         services.openssh.sftpServerExecutable = "internal-sftp";
 
-        system.stateVersion = config.system.nixos.release;
+        system = {
+          nixos = {
+            distroName = "Xuěhuā";
+            full = "${config.system.nixos.distroName}-${config.system.nixos.label}-${config.system.name}";
+          };
+          stateVersion = config.system.nixos.release;
+        };
       };
+    };
+
+  stripModule =
+    path:
+    pkgs.stdenvNoCC.mkDerivation {
+      nativeBuildInputs = [ inputs.nixos-module-stripper.packages.${currentSystem}.default ];
+      buildPhase = "cat $src | nixos-module-stripper > $out";
     };
 in
 nixosSystem ({
   system = pkgs.stdenv.hostPlatform.config;
+  # baseModules = map stripModule (
+    # filter (v: isPath v) (import "${pkgs.path}/nixos/modules/module-list.nix")
+  # );
   modules = [
     initrd
     alpine

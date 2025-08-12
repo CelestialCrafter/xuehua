@@ -35,6 +35,26 @@
         "url": "https://gitlab.collabora.com/hardware-enablement/rockchip-3588/u-boot.git"
       }
     },
+    "nixos-module-stripper": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1755304449,
+        "narHash": "sha256-p870Q+mn57kOF/rY9TTH2vie6jTt0QCQsJKiJxyjTGI=",
+        "owner": "CelestialCrafter",
+        "repo": "nixos-module-stripper",
+        "rev": "4df732a825d488b58c41c94e616400913ef464ef",
+        "type": "github"
+      },
+      "original": {
+        "owner": "CelestialCrafter",
+        "repo": "nixos-module-stripper",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1748460289,
@@ -55,6 +75,7 @@
       "inputs": {
         "collabora-linux": "collabora-linux",
         "collabora-u-boot": "collabora-u-boot",
+        "nixos-module-stripper": "nixos-module-stripper",
         "nixpkgs": "nixpkgs"
       }
     }
