@@ -11,3 +11,5 @@ path = "src/main.rs"
 eyre = "0.6.12"
 mlua = { version = "0.11.2", features = ["lua54", "serde"] }
 serde = { version = "1.0.219", features = ["derive"] }
+bpaf = { version = "0.9.20", features = ["autocomplete"] }
+humantime = "2.2.0"

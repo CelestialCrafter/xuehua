@@ -1,23 +1,26 @@
-use std::fs;
+pub mod options;
+
+use std::{fs, str::FromStr};
 
 use eyre::{OptionExt, Report, Result};
 use mlua::{Lua, LuaSerdeExt, StdLib, Value};
 use serde::Deserialize;
 
-#[derive(Deserialize, Debug)]
-#[serde(try_from = "String")]
-struct PackageId {
+use crate::options::options;
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct PackageId {
     name: String,
     namespace: String,
     version: String,
 }
 
-impl TryFrom<String> for PackageId {
-    type Error = Report;
+impl FromStr for PackageId {
+    type Err = Report;
 
     // namespace/name@version
-    fn try_from(value: String) -> Result<Self> {
-        let (namespace, rest) = value.split_once("/").ok_or_eyre("no / delimiter")?;
+    fn from_str(s: &str) -> Result<Self> {
+        let (namespace, rest) = s.split_once("/").ok_or_eyre("no / delimiter")?;
         let (name, version) = rest.split_once("@").ok_or_eyre("no @ delimiter")?;
 
         Ok(Self {
@@ -35,6 +38,8 @@ struct Package {
 }
 
 fn main() {
+    println!("{:?}", options().run());
+
     let lua = Lua::new();
     lua.load_std_libs(StdLib::ALL_SAFE)
         .expect("could not load stdlibs");
