@@ -1,7 +1,13 @@
 use eyre::{Context, OptionExt, Report, eyre};
 use mlua::{AsChunk, Lua, LuaSerdeExt, StdLib};
 use serde::Deserialize;
-use std::{ops::Deref, str::FromStr};
+use std::{
+    iter,
+    ops::Deref,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+use tempfile::tempdir;
 
 #[derive(Deserialize, Debug, Default, Clone)]
 #[serde(try_from = "String")]
@@ -35,16 +41,25 @@ impl TryFrom<String> for Id {
     }
 }
 
+#[derive(Default, Deserialize, Debug)]
+pub struct Dependencies {
+    pub build: Vec<PathBuf>,
+    pub runtime: Vec<PathBuf>,
+}
+
 #[derive(Deserialize, Debug)]
 pub struct Package {
     pub id: Id,
-    pub build_command: Vec<String>,
+    #[serde(default)]
+    pub dependencies: Dependencies,
+    pub instructions: Vec<String>,
 }
 
 #[derive(Debug)]
 pub enum BuildError {
     LuaError(Report),
     InstructionError(Report),
+    Other(Report),
 }
 
 impl Deref for BuildError {
@@ -54,6 +69,7 @@ impl Deref for BuildError {
         match self {
             BuildError::LuaError(err) => err,
             BuildError::InstructionError(err) => err,
+            BuildError::Other(err) => err,
         }
     }
 }
@@ -77,29 +93,40 @@ fn eval_pkg(source: impl AsChunk) -> Result<Package, BuildError> {
     Ok(pkg)
 }
 
+fn setup_sandbox_root(_root: &Path, _dependencies: &Dependencies) -> Result<(), BuildError> {
+    Ok(())
+}
+
 pub fn build(source: impl AsChunk) -> Result<(), BuildError> {
     let pkg = eval_pkg(source)?;
-    let cmd = pkg.build_command;
 
-    let (program, args) = cmd.split_first().ok_or(BuildError::InstructionError(eyre!(
-        "invalid instruction: {cmd:?} (is there an executable?)"
-    )))?;
+    let root = tempdir().map_err(|err| BuildError::Other(err.into()))?;
+    setup_sandbox_root(root.path(), &pkg.dependencies)?;
 
-    let output = duct::cmd(program, args)
+    let cmd = pkg.instructions;
+    let args = {
+        let bwrap = [];
+
+        bwrap
+            .into_iter()
+            .chain(iter::once("--"))
+            .chain(cmd.iter().map(|v| v.as_str()))
+    };
+
+    let output = duct::cmd("bwrap", args)
         .stderr_capture()
         .unchecked()
         .run()
-        .wrap_err(format!("could not run command: {cmd:?}"))
+        .wrap_err("could not run instructions")
         .map_err(BuildError::InstructionError)?;
 
     if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+
+        // TODO: truncate stderr, gate full stderr behind log level
         return Err(BuildError::InstructionError(
-            eyre!(
-                "{cmd:?} returned non-zero exit code: {}",
-                output.status.code().unwrap_or(-1)
-            )
-            // TODO: truncate stderr, gate full stderr behind log level
-            .wrap_err(String::from_utf8_lossy(&output.stderr).into_owned()),
+            eyre!("instruction \"{cmd:?}\" returned non-zero exit code: {code}")
+                .wrap_err(String::from_utf8_lossy(&output.stderr).into_owned()),
         ));
     }
 
