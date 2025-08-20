@@ -14,3 +14,4 @@ bpaf = { version = "0.9.20", features = ["autocomplete"] }
 humantime = "2.2.0"
 duct = "1.1.0"
 serde = { version = "1.0.219", features = ["derive"] }
+tempfile = "3.21.0"
