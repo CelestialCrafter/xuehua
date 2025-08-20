@@ -3,14 +3,14 @@ use std::path::PathBuf;
 use bpaf::{OptionParser, Parser, construct, long, positional, pure};
 use humantime::Duration;
 
-use crate::PackageId;
+use crate::package::Id;
 
 pub const DISPLAY_NAME: &str = "Xuěhuā";
 
 #[derive(Debug, Clone)]
 pub enum Subcommand {
-    Link { id: PackageId, reverse: bool },
-    Shell { id: PackageId },
+    Link { id: Id, reverse: bool },
+    Shell { id: Id },
     GC { older_than: Option<Duration> },
     Repair,
 }
