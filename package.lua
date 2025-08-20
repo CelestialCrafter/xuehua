@@ -1,6 +1,4 @@
 return {
   id = "namespace/name@version";
-  build = function()
-    print("hii")
-  end
+  build_command = {"sh", "-c", "echo 'hii! <3' > test.txt"};
 }
