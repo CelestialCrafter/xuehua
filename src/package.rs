@@ -2,13 +2,19 @@ pub mod build;
 
 use eyre::{OptionExt, Report};
 use serde::Deserialize;
-use std::{path::PathBuf, str::FromStr};
+use std::{fmt::Display, path::PathBuf, str::FromStr};
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(try_from = "String")]
 pub struct Id {
     pub name: String,
     pub namespace: String,
+}
+
+impl Display for Id {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.name, self.namespace)
+    }
 }
 
 impl FromStr for Id {

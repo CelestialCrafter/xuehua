@@ -1,4 +1,4 @@
 return {
-  id = "namespace/name@version";
+  id = "namespace@name";
   instructions = {"sh", "-c", "echo 'hii! <3' > test.txt"};
 }

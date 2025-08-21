@@ -2,32 +2,25 @@ pub mod options;
 pub mod package;
 pub mod store;
 
-use std::{fs, path::Path, sync::LazyLock};
+use std::fs;
 
-use blake3::Hash;
-
-use crate::{
-    options::OPTIONS,
-    package::build::build,
-    store::fetcher::{self, FetchOptions},
-};
+use crate::options::OPTIONS;
+use crate::options::cli::Subcommand;
+use crate::package::build::build;
 
 fn main() {
-    LazyLock::force(&OPTIONS);
-    println!("{:?}", OPTIONS);
-
-    println!(
-        "{:?}",
-        build(fs::read("./package.lua").expect("could not open package.lua"))
-    );
-
-    println!(
-        "{:?}",
-        fetcher::fetch(FetchOptions {
-            url: "https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/aarch64/alpine-minirootfs-3.22.1-aarch64.tar.gz",
-            hash: Hash::from_hex("40eb8714729db02cb26741d15c302c0e9f610142770715f1b7479183f4da88d9").unwrap(),
-            store: Path::new("./"),
-            curl_opts: &[]
-        })
-    )
+    match &OPTIONS.cli.subcommand {
+        Subcommand::Build { package } => {
+            eprintln!("building {package}");
+            build(fs::read("xuehua/main.lua").expect("could not open package.lua"))
+                .expect("could not build package");
+        }
+        Subcommand::Link {
+            reverse: _,
+            package: _,
+        } => todo!("link not yet implemented"),
+        Subcommand::Shell { package: _ } => todo!("shell not yet implemented"),
+        Subcommand::GC => todo!("gc not yet implemented"),
+        Subcommand::Repair => todo!("repair not yet implemented"),
+    }
 }
