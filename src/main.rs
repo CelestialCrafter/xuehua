@@ -3,7 +3,7 @@ pub mod package;
 
 use std::{fs, sync::LazyLock};
 
-use crate::{options::OPTIONS, package::build};
+use crate::{options::OPTIONS, package::build::build};
 
 fn main() {
     LazyLock::force(&OPTIONS);
