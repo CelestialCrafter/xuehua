@@ -10,8 +10,10 @@ path = "src/main.rs"
 [dependencies]
 eyre = "0.6.12"
 mlua = { version = "0.11.2", features = ["lua54", "serde"] }
-bpaf = { version = "0.9.20", features = ["autocomplete"] }
 humantime = "2.2.0"
 duct = "1.1.0"
 serde = { version = "1.0.219", features = ["derive"] }
 tempfile = "3.21.0"
+clap = { version = "4.5.45", features = ["derive", "wrap_help"] }
+toml = "0.9.5"
+url = "2.5.6"
