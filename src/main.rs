@@ -1,12 +1,13 @@
 pub mod options;
 pub mod package;
 
-use std::fs;
+use std::{fs, sync::LazyLock};
 
-use crate::{options::options, package::build};
+use crate::{options::OPTIONS, package::build};
 
 fn main() {
-    println!("{:?}", options().run());
+    LazyLock::force(&OPTIONS);
+    println!("{:?}", OPTIONS);
 
     println!(
         "{:?}",
