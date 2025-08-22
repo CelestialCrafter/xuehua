@@ -6,7 +6,7 @@ use petgraph::graph::NodeIndex;
 use smol_str::SmolStr;
 use xh_reports::prelude::*;
 
-use crate::Value;
+use crate::encoding::Value;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum LinkTime {
