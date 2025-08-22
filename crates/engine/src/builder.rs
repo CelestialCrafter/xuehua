@@ -8,7 +8,7 @@ use smol_str::SmolStr;
 use xh_archive::{Event, packing::Packer};
 use xh_reports::{compat::StdCompat, prelude::*};
 
-use crate::{executor::Executor, package::DispatchRequest, planner::Planner};
+use crate::{executor::Executor, package::DispatchRequest, planner::{Frozen, Planner}};
 
 #[derive(Debug, IntoReport)]
 #[message("executor not found")]
@@ -152,7 +152,7 @@ where
         Ok(Some(archive))
     }
 
-    pub async fn build(&self, planner: &Planner, request: BuildRequest) -> Result<(), Error> {
+    pub async fn build(&self, planner: &Planner<Frozen>, request: BuildRequest) -> Result<(), Error> {
         let environment = self.environment_path(&request.id);
 
         create_dir(&environment)

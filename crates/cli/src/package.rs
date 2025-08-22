@@ -17,7 +17,7 @@ use xh_engine::{
     backend::Backend,
     builder::Builder,
     package::PackageName,
-    planner::Planner,
+    planner::{Frozen, Planner},
     scheduler::{Event, Scheduler},
     store::Store,
 };
@@ -45,6 +45,11 @@ pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
         .wrap_with(PackageActionError::Initialize)
         .erased()?;
 
+    let planner = planner
+        .freeze()
+        .wrap_with(PackageActionError::Initialize)
+        .erased()?;
+
     match action {
         PackageAction::Build { packages, .. } => build(&planner, packages).await.erased()?,
         PackageAction::Link { .. } => todo!("link action not implemented"),
@@ -62,7 +67,7 @@ pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
 }
 
 fn inspect_packages(
-    planner: Planner,
+    planner: Planner<Frozen>,
     packages: &Vec<PackageName>,
     format: &PackageFormat,
 ) -> Result<(), ()> {
@@ -84,7 +89,7 @@ fn inspect_packages(
                     writeln!(
                         stdout,
                         "**Dependency**: {} at {}",
-                        plan[dependency.node].name, dependency.time
+                        dependency.name, dependency.time
                     )
                     .erased()?;
                 }
@@ -101,7 +106,7 @@ fn inspect_packages(
     Ok(())
 }
 
-fn inspect_project(planner: &Planner, format: &ProjectFormat) {
+fn inspect_project(planner: &Planner<Frozen>, format: &ProjectFormat) {
     match format {
         ProjectFormat::Dot => println!(
             "{:?}",
@@ -121,7 +126,7 @@ fn inspect_project(planner: &Planner, format: &ProjectFormat) {
 struct BuildActionError;
 
 async fn build(
-    planner: &Planner,
+    planner: &Planner<Frozen>,
     packages: &Vec<PackageName>,
 ) -> StdResult<(), Report<BuildActionError>> {
     let locations = &get_opts().base.locations;
@@ -193,7 +198,7 @@ pub struct PackageResolveError {
 }
 
 fn resolve_many(
-    planner: &Planner,
+    planner: &Planner<Frozen>,
     packages: &Vec<PackageName>,
 ) -> Result<Vec<NodeIndex>, PackageResolveError> {
     let result = partition_result(

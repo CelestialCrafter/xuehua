@@ -3,21 +3,23 @@ pub mod config;
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
+    marker::PhantomData,
     sync::{Arc, RwLock},
 };
 
 use log::trace;
 use petgraph::{
+    Direction,
     acyclic::Acyclic,
-    data::Build,
+    data::{Build, DataMapMut},
     graph::{DiGraph, NodeIndex},
-    visit::Dfs,
+    visit::{Dfs, EdgeRef},
 };
 use smol_str::SmolStr;
 use xh_reports::prelude::*;
 
 use crate::{
-    package::{Dependency, LinkTime, Package, PackageName},
+    package::{LinkTime, Package, PackageName},
     utils::passthru::PassthruHashSet,
 };
 
@@ -37,6 +39,14 @@ pub struct ConflictError {
 pub struct CycleError {
     from: PackageName,
     to: PackageName,
+}
+
+#[derive(Debug, IntoReport)]
+#[message("unregistered dependency on {package}")]
+#[suggestion("register the dependency as a package")]
+#[context(package)]
+pub struct UnregisteredDependency {
+    package: PackageName,
 }
 
 #[derive(Default, Debug, IntoReport)]
@@ -76,16 +86,29 @@ pub struct DependencyClosure {
 pub type Plan = Acyclic<DiGraph<Package, LinkTime>>;
 pub type PackageId = blake3::Hash;
 
-#[derive(Default, Debug)]
-pub struct Planner {
+pub struct Frozen;
+pub struct Unfrozen;
+
+#[derive(Debug)]
+pub struct Planner<State> {
     graph: Plan,
     packages: HashMap<PackageName, NodeIndex>,
+    _marker: PhantomData<State>,
 }
 
-impl Planner {
+impl Planner<Unfrozen> {
     #[inline]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            graph: Default::default(),
+            packages: Default::default(),
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn freeze(self) -> Result<Planner<Frozen>, Error> {
+        Planner::<Frozen>::new(self)
     }
 
     pub fn register(&mut self, package: Package) -> Result<NodeIndex, Error> {
@@ -99,23 +122,55 @@ impl Planner {
         }
 
         let name = package.name.clone();
-        let dependencies = package.dependencies.clone();
         let node = self.graph.add_node(package);
+        self.packages.insert(name, node);
 
-        for dependency in dependencies.clone() {
-            self.graph
-                .try_add_edge(node, dependency.node, dependency.time)
-                .map_err(|_| {
-                    CycleError {
-                        from: name.clone(),
-                        to: self.graph[dependency.node].name.clone(),
-                    }
-                    .wrap()
-                })?;
+        Ok(node)
+    }
+}
+
+impl Planner<Frozen> {
+    fn new(unfrozen: Planner<Unfrozen>) -> Result<Self, Error> {
+        let mut planner = Planner {
+            graph: unfrozen.graph,
+            packages: unfrozen.packages,
+            _marker: PhantomData,
+        };
+
+        // .collect so we don't hold a reference to the graph
+        let order = planner.graph.nodes_iter().collect::<Vec<_>>();
+        for node in order {
+            // take dependencies so we don't hold a reference to the graph
+            let dependencies = std::mem::take(
+                &mut planner
+                    .graph
+                    .node_weight_mut(node)
+                    .expect("node should exist")
+                    .dependencies,
+            );
+
+            for dependency in dependencies {
+                planner
+                    .graph
+                    .try_add_edge(
+                        node,
+                        planner
+                            .resolve(&dependency.name)
+                            .ok_or_else(|| UnregisteredDependency {
+                                package: dependency.name.clone(),
+                            })
+                            .wrap()?,
+                        dependency.time,
+                    )
+                    .map_err(|_| CycleError {
+                        from: planner.graph[node].name.clone(),
+                        to: dependency.name.clone(),
+                    })
+                    .wrap()?;
+            }
         }
 
-        self.packages.insert(name, node);
-        Ok(node)
+        Ok(planner)
     }
 
     #[inline]
@@ -123,25 +178,20 @@ impl Planner {
         &self.graph
     }
 
-    #[inline]
-    pub fn resolve(&self, id: &PackageName) -> Option<NodeIndex> {
-        self.packages.get(id).copied()
-    }
-
     // TODO: cache closure
     pub fn closure(&self, node: NodeIndex) -> Option<DependencyClosure> {
-        let compute_closure = |dependencies: Vec<Dependency>| {
+        let compute_closure = |dependencies: Vec<(NodeIndex, LinkTime)>| {
             let mut runtime = PassthruHashSet::default();
             let mut visitor = Dfs::empty(&self.graph);
 
-            for node in dependencies.into_iter().map(|d| d.node) {
+            for (node, _) in dependencies {
                 visitor.move_to(node);
                 while let Some(node) = visitor.next(&self.graph) {
                     runtime.extend(
-                        self.graph[node]
-                            .dependencies
-                            .iter()
-                            .filter_map(|d| (d.time == LinkTime::Runtime).then_some(d.node)),
+                        self.graph
+                            .edges_directed(node, Direction::Outgoing)
+                            .filter(|edge| *edge.weight() == LinkTime::Runtime)
+                            .map(|edge| edge.target()),
                     );
                 }
             }
@@ -149,10 +199,11 @@ impl Planner {
             runtime
         };
 
-        let (runtime, buildtime) = self.graph[node]
-            .dependencies
-            .iter()
-            .partition(|dependency| dependency.time == LinkTime::Runtime);
+        let (runtime, buildtime) = self
+            .graph
+            .edges_directed(node, Direction::Outgoing)
+            .map(|edge| (edge.target(), *edge.weight()))
+            .partition(|(_, time)| *time == LinkTime::Runtime);
 
         Some(DependencyClosure {
             runtime: compute_closure(runtime),
@@ -185,5 +236,10 @@ impl Planner {
             .for_each(|node| hash_pkg(&self.graph[*node]));
 
         Some(hasher.finalize())
+    }
+
+    #[inline]
+    pub fn resolve(&self, id: &PackageName) -> Option<NodeIndex> {
+        self.packages.get(id).copied()
     }
 }

@@ -2,7 +2,6 @@ pub mod manifest;
 
 use std::{fmt, result::Result as StdResult, str::FromStr};
 
-use petgraph::graph::NodeIndex;
 use smol_str::SmolStr;
 use xh_reports::prelude::*;
 
@@ -88,9 +87,9 @@ pub struct DispatchRequest {
     pub payload: Value,
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Dependency {
-    pub node: NodeIndex,
+    pub name: PackageName,
     pub time: LinkTime,
 }
 

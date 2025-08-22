@@ -8,7 +8,7 @@ use xh_reports::prelude::*;
 use crate::{
     backend::Backend,
     package::{Package, PackageName},
-    planner::Planner,
+    planner::{Planner, Unfrozen},
     utils::passthru::PassthruHashMap,
 };
 
@@ -44,12 +44,12 @@ impl<B: Backend> Config<B> {
 
 pub struct ConfigManager<'a, B: Backend> {
     configs: PassthruHashMap<NodeIndex, Config<B>>,
-    pub planner: &'a mut Planner,
+    pub planner: &'a mut Planner<Unfrozen>,
 }
 
 impl<'a, B: Backend> ConfigManager<'a, B> {
     #[inline]
-    pub fn new(planner: &'a mut Planner) -> Self {
+    pub fn new(planner: &'a mut Planner<Unfrozen>) -> Self {
         Self {
             planner,
             configs: Default::default(),
@@ -57,14 +57,14 @@ impl<'a, B: Backend> ConfigManager<'a, B> {
     }
 
     #[inline]
-    pub fn register(&mut self, name: PackageName, config: Config<B>) -> Result<NodeIndex, Error> {
+    pub fn register(&mut self, name: PackageName, config: Config<B>) -> Result<(), Error> {
         let mut package = config.clone().apply().wrap()?;
         package.name = name;
 
         let node = self.planner.register(package).wrap()?;
         self.configs.insert(node, config);
 
-        Ok(node)
+        Ok(())
     }
 
     #[inline]
@@ -73,7 +73,7 @@ impl<'a, B: Backend> ConfigManager<'a, B> {
         source: &NodeIndex,
         destination: PackageName,
         modify: impl FnOnce(B::Value) -> Result<B::Value, B::Error>,
-    ) -> Option<Result<NodeIndex, Error>> {
+    ) -> Option<Result<(), Error>> {
         trace!("configuring from {source:?} into {destination}");
 
         self.configs.get(source).cloned().map(|source| {
