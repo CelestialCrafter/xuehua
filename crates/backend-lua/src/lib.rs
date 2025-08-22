@@ -4,14 +4,13 @@ use std::{path::Path, str::FromStr};
 
 use log::warn;
 use mlua::{
-    AnyUserData, ExternalResult, Function, Lua, LuaSerdeExt, Table, UserData, UserDataRegistry,
-    Value as LuaValue, serde::Deserializer,
+    AnyUserData, ExternalResult, Function, Lua, Table, UserData, UserDataRegistry,
+    Value as LuaValue,
 };
 use petgraph::graph::{DefaultIx, NodeIndex};
-use serde::Deserialize;
 use xh_engine::{
-    Value,
     backend::Backend,
+    encoding::to_value,
     package::{Dependency, DispatchRequest, LinkTime, Metadata, Package, PackageName},
     planner::{
         NamespaceTracker, Planner,
@@ -34,13 +33,9 @@ fn conv_dependency(table: Table) -> StdResult<Dependency, mlua::Error> {
 }
 
 fn conv_request(table: Table) -> Result<DispatchRequest, Error> {
-    let payload = table.get("payload").wrap()?;
-    let deserializer = Deserializer::new(payload);
-    let payload = Value::deserialize(deserializer).wrap()?;
-
     Ok(DispatchRequest {
         executor: table.get::<String>("executor").wrap()?.into(),
-        payload,
+        payload: to_value(table.get::<LuaValue>("payload").wrap()?).wrap()?,
     })
 }
 
@@ -181,13 +176,6 @@ impl Backend for LuaBackend {
     type Error = Error;
     type Value = LuaValue;
 
-    fn serialize(&self, value: &Value) -> Result<Self::Value, Self::Error> {
-        self.lua.to_value(value).wrap()
-    }
-
-    fn deserialize(&self, value: Self::Value) -> Result<Value, Self::Error> {
-        self.lua.from_value(value).wrap()
-    }
 
     fn plan(&self, planner: &mut Planner, project: &Path) -> Result<(), Error> {
         let chunk = self
