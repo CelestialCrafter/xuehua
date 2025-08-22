@@ -14,6 +14,7 @@
           pkg-config
           bubblewrap
           lua54Packages.lua
+          curl
         ];
       };
     };
