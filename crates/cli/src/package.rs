@@ -187,7 +187,7 @@ async fn build(
 
 #[derive(Debug, IntoReport)]
 #[message("could not resolve packages")]
-#[context(debug: packages)]
+#[context(packages)]
 pub struct PackageResolveError {
     packages: Vec<PackageName>,
 }

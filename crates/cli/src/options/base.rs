@@ -36,7 +36,7 @@ impl Display for LocationType {
 
 #[derive(Debug, IntoReport)]
 #[message("could not initialize locations")]
-#[context(debug: locations)]
+#[context(locations)]
 pub struct InitializeLocationsError {
     locations: Locations,
 }

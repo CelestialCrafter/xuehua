@@ -20,7 +20,7 @@ pub struct Error;
 /// An invalid path was in the index
 #[derive(Debug, IntoReport)]
 #[message("invalid path")]
-#[context(debug: path)]
+#[context(path)]
 pub struct InvalidPathError {
     path: PathBytes,
 }

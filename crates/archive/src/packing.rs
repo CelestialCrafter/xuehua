@@ -10,7 +10,7 @@ use crate::{Event, Object, ObjectContent, PathBytes, utils::debug};
 /// An unsupported file type was encountered (eg. socket, pipe, etc)
 #[derive(Debug, IntoReport)]
 #[message("unsupported file type")]
-#[context(debug: path)]
+#[context(path)]
 pub struct UnsupportedTypeError {
     path: PathBytes,
 }
