@@ -16,6 +16,8 @@ members = [
 xh-archive = { path = "crates/archive", features = ["mmap"] }
 xh-engine = { path = "crates/engine" }
 xh-reports = { path = "crates/reports", default-features = false }
+xh-executor-http = { path = "crates/executor-http" }
+xh-executor-bubblewrap = { path = "crates/executor-bubblewrap" }
 tempfile = "3.24.0"
 tokio = "1.49.0"
 petgraph = "0.8.3"
@@ -27,5 +29,5 @@ smol_str = "0.3.5"
 log = { version = "0.4.29", features = ["std", "kv", "kv_std"] }
 serde = { version = "1.0.228", features = ["derive"] }
 blake3 = { version = "1.8.3", default-features = false }
-educe = { version = "0.6.0", features = ["Debug", "Clone", "Default"] }
+educe = { version = "0.6.0", features = ["Debug", "Clone", "Default", "PartialEq", "Eq"] }
 jiff = { version = "0.2.18", default-features = false, features = ["alloc", "std", "perf-inline"] }
