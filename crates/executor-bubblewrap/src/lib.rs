@@ -4,8 +4,9 @@ use std::{
 };
 
 use log::debug;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use smol_str::SmolStr;
 use xh_engine::{builder::InitializeContext, executor::Executor};
 use xh_reports::prelude::*;
 
@@ -22,13 +23,13 @@ pub struct CommandError {
 #[message("could not execute request")]
 pub struct Error;
 
-#[derive(Default, Debug, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CommandRequest {
-    program: String,
-    working_dir: Option<String>,
-    arguments: Vec<String>,
-    environment: Vec<(String, String)>,
+    pub program: SmolStr,
+    pub working_dir: Option<SmolStr>,
+    pub arguments: Vec<SmolStr>,
+    pub environment: Vec<(SmolStr, SmolStr)>,
 }
 
 #[derive(Debug)]
