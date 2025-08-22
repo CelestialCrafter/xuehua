@@ -7,7 +7,7 @@ use xh_reports::Result;
 
 use crate::{
     builder::{BuildRequest, Builder, Dispatch, Error as BuilderError, Initialize},
-    planner::Planner,
+    planner::{Frozen, Planner},
     utils::passthru::{PassthruHashMap, PassthruHashSet},
 };
 
@@ -31,7 +31,7 @@ pub enum Event {
 
 pub struct Scheduler<'a, E> {
     state: PassthruHashMap<NodeIndex, PackageState>,
-    planner: &'a Planner,
+    planner: &'a Planner<Frozen>,
     builder: &'a Builder<E>,
 }
 
@@ -40,7 +40,7 @@ where
     E: Initialize,
     E::Output: Dispatch,
 {
-    pub fn new(planner: &'a Planner, builder: &'a Builder<E>) -> Self {
+    pub fn new(planner: &'a Planner<Frozen>, builder: &'a Builder<E>) -> Self {
         let plan = planner.graph();
         let state = plan
             .node_indices()

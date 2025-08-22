@@ -13,7 +13,7 @@ use xh_engine::{
     encoding::to_value,
     package::{Dependency, DispatchRequest, LinkTime, Metadata, Package, PackageName},
     planner::{
-        NamespaceTracker, Planner,
+        NamespaceTracker, Planner, Unfrozen,
         config::{Config, ConfigManager},
     },
 };
@@ -25,7 +25,7 @@ pub struct Error;
 
 fn conv_dependency(table: Table) -> StdResult<Dependency, mlua::Error> {
     Ok(Dependency {
-        node: table.get::<AnyUserData>("node")?.take()?,
+        name: table.get::<AnyUserData>("package")?.take()?,
         time: LinkTime::from_str(&table.get::<String>("time")?)
             .into_error()
             .into_lua_err()?,
@@ -140,14 +140,8 @@ impl UserData for LuaConfigManager<'_> {
 
             this.inner
                 .register(name, config)
-                .map(AnyUserData::wrap)
                 .into_error()
                 .into_lua_err()
-        });
-
-        methods.add_method("resolve", |_, this, id: String| {
-            let id = PackageName::from_str(&id).into_lua_err()?;
-            Ok(this.inner.planner.resolve(&id).map(AnyUserData::wrap))
         });
     }
 
@@ -176,8 +170,7 @@ impl Backend for LuaBackend {
     type Error = Error;
     type Value = LuaValue;
 
-
-    fn plan(&self, planner: &mut Planner, project: &Path) -> Result<(), Error> {
+    fn plan(&self, planner: &mut Planner<Unfrozen>, project: &Path) -> Result<(), Error> {
         let chunk = self
             .lua
             .load(std::fs::read(project.join("main.lua")).wrap()?)
