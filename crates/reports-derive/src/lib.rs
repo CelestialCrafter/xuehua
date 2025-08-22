@@ -14,8 +14,8 @@ use syn::{
 
 #[derive(Default, Debug, Clone, Copy)]
 enum Mode {
-    Debug,
     #[default]
+    Debug,
     Display,
 }
 

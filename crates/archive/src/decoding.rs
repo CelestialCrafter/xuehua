@@ -16,7 +16,7 @@ use crate::{
 #[derive(Debug, IntoReport)]
 #[message("unexpected token encountered")]
 #[suggestion("provide {expected}")]
-#[context(debug: token)]
+#[context(token)]
 pub struct UnexpectedTokenError {
     #[allow(missing_docs)]
     token: Bytes,
