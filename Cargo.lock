@@ -2735,6 +2735,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "xh-backend-alpine"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "educe",
+ "petgraph",
+ "serde",
+ "smol_str",
+ "xh-engine",
+ "xh-executor-bubblewrap",
+ "xh-executor-http",
+ "xh-reports",
+]
+
+[[package]]
 name = "xh-backend-arch"
 version = "0.1.0"
 dependencies = [
@@ -2777,6 +2792,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "xh-archive",
+ "xh-backend-alpine",
  "xh-backend-arch",
  "xh-backend-lua",
  "xh-engine",

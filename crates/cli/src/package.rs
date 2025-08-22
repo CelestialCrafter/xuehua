@@ -13,7 +13,8 @@ use log::info;
 use petgraph::{Direction, dot, graph::NodeIndex, visit::EdgeRef};
 use tokio::task;
 // use xh_backend_lua::LuaBackend;
-use xh_backend_arch::ArchBackend;
+// use xh_backend_arch::ArchBackend;
+use xh_backend_alpine::AlpineBackend;
 use xh_engine::{
     backend::Backend,
     builder::Builder,
@@ -42,15 +43,10 @@ pub enum PackageActionError {
 
 pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
     let mut planner = Planner::new();
-    ArchBackend::new(xh_backend_arch::Options {
-        mirror: "http://mirrors.acm.wpi.edu/archlinux".to_string(),
-        architecture: "x86_64".into(),
-        repos: Default::default(),
-        priorities: Default::default(),
-    })
-    .plan(&mut planner, project)
-    .wrap_with(PackageActionError::Initialize)
-    .erased()?;
+    AlpineBackend::new("https://dl-cdn.alpinelinux.org/latest-stable/main/x86_64".into())
+         .plan(&mut planner, project)
+         .wrap_with(PackageActionError::Initialize)
+         .erased()?;
 
     let planner = planner
         .freeze()

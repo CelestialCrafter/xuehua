@@ -1,0 +1,15 @@
+[package]
+name = "xh-backend-alpine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xh-engine.workspace = true
+xh-reports.workspace = true
+xh-executor-http.workspace = true
+xh-executor-bubblewrap.workspace = true
+bytes.workspace = true
+smol_str.workspace = true
+serde.workspace = true
+petgraph.workspace = true
+educe.workspace = true
