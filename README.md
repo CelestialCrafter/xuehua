@@ -161,3 +161,10 @@ trusted attesters must have the power to yank packages
   - build caches
   - trusted attesters
   - \# of required essential attestations
+
+## notes
+
+phase 1 - ns evaluation
+phase 2 - pkg aggregation
+phase 3 - pkg compilation
+phase 4 - linkage

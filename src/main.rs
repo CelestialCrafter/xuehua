@@ -1,19 +1,20 @@
+pub mod fetcher;
 pub mod options;
+pub mod evaluator;
 pub mod package;
-pub mod store;
 
-use std::fs;
+use std::path::Path;
 
 use crate::options::OPTIONS;
 use crate::options::cli::Subcommand;
-use crate::package::build::build;
+use crate::package::namespace::Resolver;
 
 fn main() {
     match &OPTIONS.cli.subcommand {
         Subcommand::Build { package } => {
-            eprintln!("building {package}");
-            build(fs::read("xuehua/main.lua").expect("could not open package.lua"))
-                .expect("could not build package");
+            let mut resolver = Resolver::new(Path::new("xuehua/main.lua"));
+            let package = resolver.find(package);
+            println!("{:?}", package);
         }
         Subcommand::Link {
             reverse: _,

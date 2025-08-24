@@ -1,4 +1,1 @@
-return {
-  id = "namespace@name";
-  instructions = {"sh", "-c", "echo 'hii! <3' > test.txt"};
-}
+namespace("1", "xuehua/1.lua")
