@@ -15,6 +15,7 @@
           bubblewrap
           lua54Packages.lua
           curl
+          sqlite
         ];
       };
     };

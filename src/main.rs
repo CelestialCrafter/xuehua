@@ -1,19 +1,19 @@
+pub mod fetcher;
 pub mod options;
-pub mod package;
-pub mod store;
+pub mod pkgsys;
 
-use std::fs;
+use std::path::PathBuf;
 
 use crate::options::OPTIONS;
 use crate::options::cli::Subcommand;
-use crate::package::build::build;
+use crate::pkgsys::namespace::NamespaceResolver;
 
 fn main() {
     match &OPTIONS.cli.subcommand {
         Subcommand::Build { package } => {
-            eprintln!("building {package}");
-            build(fs::read("xuehua/main.lua").expect("could not open package.lua"))
-                .expect("could not build package");
+            let mut resolver = NamespaceResolver::new(PathBuf::from("xuehua/main.lua"));
+            let package = resolver.resolve(package, resolver.root);
+            println!("{:?}", package);
         }
         Subcommand::Link {
             reverse: _,
