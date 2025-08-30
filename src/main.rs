@@ -1,20 +1,14 @@
 pub mod options;
 pub mod package;
+pub mod error;
 pub mod store;
-
-use std::fs;
 
 use crate::options::OPTIONS;
 use crate::options::cli::Subcommand;
-use crate::package::build::build;
 
 fn main() {
     match &OPTIONS.cli.subcommand {
-        Subcommand::Build { package } => {
-            eprintln!("building {package}");
-            build(fs::read("xuehua/main.lua").expect("could not open package.lua"))
-                .expect("could not build package");
-        }
+        Subcommand::Build { package: _ } => {}
         Subcommand::Link {
             reverse: _,
             package: _,

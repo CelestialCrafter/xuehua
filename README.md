@@ -161,3 +161,10 @@ trusted attesters must have the power to yank packages
   - build caches
   - trusted attesters
   - \# of required essential attestations
+
+## notes
+
+phase 1 - namespace resolver
+phase 2 - dependency resolver
+phase 3 - linker
+phase 4 - build resolver
