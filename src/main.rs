@@ -1,20 +1,35 @@
 pub mod options;
-pub mod package;
+pub mod engine;
 pub mod store;
+pub mod utils;
 
-use std::fs;
+use std::io::stderr;
 
-use crate::options::OPTIONS;
-use crate::options::cli::Subcommand;
-use crate::package::build::build;
+use eyre::{Context, DefaultHandler, Result};
+use log::LevelFilter;
 
-fn main() {
+use crate::options::{OPTIONS, cli::Subcommand};
+
+fn main() -> Result<()> {
+    eyre::set_hook(Box::new(DefaultHandler::default_with))
+        .wrap_err("error installing eyre handler")?;
+
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{}] {} {}",
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .level(LevelFilter::Debug)
+        .chain(stderr())
+        .apply()
+        .wrap_err("error installing logger")?;
+
     match &OPTIONS.cli.subcommand {
-        Subcommand::Build { package } => {
-            eprintln!("building {package}");
-            build(fs::read("xuehua/main.lua").expect("could not open package.lua"))
-                .expect("could not build package");
-        }
+        Subcommand::Build { package: _ } => {}
         Subcommand::Link {
             reverse: _,
             package: _,
@@ -23,4 +38,6 @@ fn main() {
         Subcommand::GC => todo!("gc not yet implemented"),
         Subcommand::Repair => todo!("repair not yet implemented"),
     }
+
+    Ok(())
 }
