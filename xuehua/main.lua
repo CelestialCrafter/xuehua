@@ -5,6 +5,10 @@ local utils = require("xuehua.utils")
 local build = function(id)
   return function()
     log.info(string.format("im building " .. id))
+    local path = "/" .. id
+    return {
+      [path] = path
+    }
   end
 end
 
@@ -25,14 +29,14 @@ local p3a = plan.package {
 
 local p2 = plan.package {
   id = "p2",
-  dependencies = { utils.runtime(p3a) },
+  dependencies = { utils.buildtime(p3a) },
   metadata = {},
   build = build("p2")
 }
 
 plan.package {
   id = "p1",
-  dependencies = { utils.runtime(p2), utils.runtime(p3) },
+  dependencies = { utils.runtime(p2), utils.buildtime(p3) },
   metadata = {},
   build = build("p1")
 }

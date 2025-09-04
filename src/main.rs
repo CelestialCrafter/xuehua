@@ -29,7 +29,7 @@ fn main() -> Result<()> {
 
     match &OPTIONS.cli.subcommand {
         Subcommand::Build { package: _ } => {
-            engine::run(Path::new("xuehua/main.lua"))?;
+            engine::run(Path::new("xuehua/main.lua"), 2.into())?;
         }
         Subcommand::Link {
             reverse: _,

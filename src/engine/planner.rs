@@ -43,7 +43,6 @@ impl From<mlua::Error> for PlannerError {
 
 pub type Plan = Acyclic<DiGraph<Package, DependencyType>>;
 
-#[derive(Default)]
 pub struct Planner {
     plan: Plan,
     cache: HashMap<u64, NodeIndex>,
@@ -52,13 +51,20 @@ pub struct Planner {
 const MODULE_NAME: &str = "xuehua.planner";
 
 impl Planner {
+    pub fn new() -> Planner {
+        Self {
+            plan: Plan::default(),
+            cache: HashMap::default(),
+        }
+    }
+
     #[inline]
     pub fn plan(&self) -> &Plan {
         &self.plan
     }
 
-    pub fn run(lua: &Lua, root: &Path) -> Result<Self, PlannerError> {
-        let planner = RefCell::new(Planner::default());
+    pub fn run(&mut self, lua: &Lua, root: &Path) -> Result<(), PlannerError> {
+        let planner = RefCell::new(self);
         let get_planner = || {
             planner
                 .try_borrow_mut()
@@ -96,10 +102,14 @@ impl Planner {
             lua.load(fs::read(root)?).exec()
         })?;
 
-        Ok(planner.into_inner())
+        Ok(())
     }
 
-    pub fn repository(&mut self, _lua: &Lua, _source: NodeIndex) -> Result<NodeIndex, PlannerError> {
+    pub fn repository(
+        &mut self,
+        _lua: &Lua,
+        _source: NodeIndex,
+    ) -> Result<NodeIndex, PlannerError> {
         todo!()
     }
 

@@ -7,22 +7,23 @@ pub mod utils;
 use std::path::Path;
 
 use mlua::Lua;
-use petgraph::dot::Dot;
+use petgraph::{dot::Dot, graph::NodeIndex};
 use thiserror::Error;
 
 use crate::{
-    engine::planner::{Planner, PlannerError},
+    engine::{
+        builder::{Builder, BuilderError},
+        planner::{Planner, PlannerError},
+    },
     utils::LuaError,
 };
 
 #[derive(Error, Debug)]
 pub enum EngineError {
-    #[error("error running planner")]
-    PlannerError(
-        #[source]
-        #[from]
-        PlannerError,
-    ),
+    #[error(transparent)]
+    PlannerError(#[from] PlannerError),
+    #[error(transparent)]
+    BuilderError(#[from] BuilderError),
     #[error("injection failed for {api}")]
     InjectionFailed {
         api: String,
@@ -38,7 +39,7 @@ fn into_injection<T>(api: &str, result: Result<T, mlua::Error>) -> Result<T, Eng
     })
 }
 
-pub fn run(root: &Path) -> Result<(), EngineError> {
+pub fn run(root: &Path, id: NodeIndex) -> Result<(), EngineError> {
     // TODO: restrict stdlibs
     let lua = Lua::new();
 
@@ -46,9 +47,13 @@ pub fn run(root: &Path) -> Result<(), EngineError> {
     into_injection("logger", logger::inject(&lua))?;
     into_injection("utils", utils::inject(&lua))?;
 
-    // execute lua
-    let planner = Planner::run(&lua, root)?;
+    let builder = Builder::new();
+    let mut planner = Planner::new();
+
+    planner.run(&lua, root)?;
     println!("{:?}", Dot::new(&planner.plan()));
+    let output = builder.link(&lua, planner.plan(), id)?;
+    println!("{:?}", output);
 
     Ok(())
 }
