@@ -1,14 +1,16 @@
-pub mod options;
 pub mod engine;
+pub mod options;
 pub mod store;
 pub mod utils;
 
-use std::io::stderr;
+use std::{fs, io::stderr};
 
 use eyre::{Context, DefaultHandler, Result};
 use log::LevelFilter;
 
-use crate::options::{OPTIONS, cli::Subcommand};
+use crate::
+    options::{OPTIONS, cli::Subcommand}
+;
 
 fn main() -> Result<()> {
     eyre::set_hook(Box::new(DefaultHandler::default_with))
@@ -29,7 +31,9 @@ fn main() -> Result<()> {
         .wrap_err("error installing logger")?;
 
     match &OPTIONS.cli.subcommand {
-        Subcommand::Build { package: _ } => {}
+        Subcommand::Build { package: _ } => {
+            engine::run(&fs::read("xuehua/main.lua")?)?;
+        }
         Subcommand::Link {
             reverse: _,
             package: _,
