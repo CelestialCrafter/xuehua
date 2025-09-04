@@ -1,4 +1,4 @@
-use crate::engine::Id;
+use crate::engine::PackageId;
 
 use clap::Parser;
 
@@ -11,19 +11,19 @@ pub enum Subcommand {
         reverse: bool,
 
         #[arg(value_name = "PACKAGE")]
-        package: Id,
+        package: PackageId,
     },
 
     /// builds a package
     Build {
         #[arg(value_name = "PACKAGE")]
-        package: Id,
+        package: PackageId,
     },
 
     /// start a shell in a package's environment
     Shell {
         #[arg(value_name = "PACKAGE")]
-        package: Id,
+        package: PackageId,
     },
 
     /// remove unlinked packages from the store
