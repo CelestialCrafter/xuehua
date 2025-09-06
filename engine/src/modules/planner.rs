@@ -102,7 +102,6 @@ impl Planner {
     }
 
     pub fn package(&mut self, pkg: Package) -> Result<NodeIndex, PlannerError> {
-        // check cache for node
         let mut hasher = DefaultHasher::new();
         pkg.hash(&mut hasher);
         let hash = hasher.finish();
@@ -110,7 +109,6 @@ impl Planner {
         Ok(match self.cache.get(&hash) {
             Some(node) => *node,
             None => {
-                // insert node if cache miss
                 let node = self.plan.add_node(pkg);
                 self.cache.insert(hash, node);
 
