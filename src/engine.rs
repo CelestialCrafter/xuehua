@@ -1,5 +1,7 @@
 pub mod executor;
+pub mod logger;
 pub mod planner;
+pub mod utils;
 
 use std::{collections::HashMap, rc::Rc};
 
@@ -8,7 +10,7 @@ use radix_trie::TrieCommon;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::engine::{executor::ExecError, planner::PlanError};
+use crate::utils::LuaError;
 
 pub type PackageId = String;
 
@@ -37,16 +39,16 @@ impl FromLua for Package {
     }
 }
 
-pub struct APIGuard<A> {
+pub struct APIGuard<'a, A> {
     strong: Rc<A>,
-    lua: Lua,
+    lua: &'a Lua,
 }
 
 #[macro_export]
 macro_rules! impl_inject_api {
     ($api:ident, $finalized:ident, $module:expr, $(($fn:ident, $lua:expr),)*) => {
-        impl APIGuard<$api> {
-            pub fn inject(lua: Lua) -> Result<Self, mlua::Error> {
+        impl<'a> APIGuard<'a, $api> {
+            pub fn inject(lua: &'a Lua) -> Result<Self, mlua::Error> {
                 let strong = Rc::new($api::default());
                 let weak = Rc::downgrade(&strong);
 
@@ -82,31 +84,40 @@ macro_rules! impl_inject_api {
 
 #[derive(Error, Debug)]
 pub enum EngineError {
-    #[error("planning error")]
-    Plan(
-        #[from]
+    #[error("lua runtime error")]
+    LuaError(#[source] LuaError),
+    #[error("injection failed for {api}")]
+    InjectionFailed {
+        api: String,
         #[source]
-        PlanError,
-    ),
-    #[error("executor error")]
-    Executor(
-        #[from]
-        #[source]
-        ExecError,
-    ),
+        error: LuaError,
+    },
+}
+
+impl From<mlua::Error> for EngineError {
+    fn from(err: mlua::Error) -> Self {
+        EngineError::LuaError(err.into())
+    }
+}
+
+fn convert_err<T>(api: &str, result: Result<T, mlua::Error>) -> Result<T, EngineError> {
+    result.map_err(|err| EngineError::InjectionFailed {
+        api: api.to_string(),
+        error: err.into(),
+    })
 }
 
 pub fn run(source: &[u8]) -> Result<(), EngineError> {
     // TODO: restrict stdlibs
     let lua = Lua::new();
 
-    let run_plan = || {
-        let api = APIGuard::inject(lua.clone())?;
-        lua.load(source).exec()?;
-        Ok::<_, PlanError>(api.release()?)
-    };
+    // inject apis
+    convert_err("logger", logger::inject(&lua))?;
+    let plan = convert_err("plan", APIGuard::inject(&lua))?;
 
-    let plan = run_plan()?;
+    // execute lua
+    lua.load(source).exec()?;
+    let plan = plan.release()?;
     let plan: HashMap<_, _> = plan.packages.iter().collect();
     dbg!(plan);
 
