@@ -1,7 +1,7 @@
 local log = require("xuehua.logger")
 local plan = require("xuehua.planner")
 -- local exec = require("xuehua.executor")
--- local utils = require("xuehua.utils")
+local utils = require("xuehua.utils")
 
 local build = function(id)
   return function()
@@ -40,7 +40,7 @@ plan.group("g1", function(g1)
   log.info("im entering group " .. g1)
   plan.package {
     id = "p1",
-    dependencies = {  },
+    dependencies = { utils.buildtime("g2/p2") },
     metadata = {},
     build = build("p1")
   }
@@ -56,7 +56,7 @@ plan.group("g1", function(g1)
     log.info(string.format("im entering group " .. g2))
     local p2 = plan.package {
       id = "p2",
-      dependencies = {  },
+      dependencies = { utils.runtime("/p0a") },
       metadata = {},
       build = build("p2")
     }
