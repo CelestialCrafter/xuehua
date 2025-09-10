@@ -113,6 +113,7 @@ pub fn run(source: &[u8]) -> Result<(), EngineError> {
 
     // inject apis
     convert_err("logger", logger::inject(&lua))?;
+    convert_err("utils", utils::inject(&lua))?;
     let plan = convert_err("plan", APIGuard::inject(&lua))?;
 
     // execute lua
