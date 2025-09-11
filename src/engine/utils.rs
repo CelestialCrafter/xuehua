@@ -1,4 +1,4 @@
-use mlua::{chunk, Function, Lua};
+use mlua::{Function, Lua, chunk};
 
 pub fn inject(lua: &Lua) -> Result<(), mlua::Error> {
     let module = lua.create_table()?;
@@ -6,8 +6,8 @@ pub fn inject(lua: &Lua) -> Result<(), mlua::Error> {
     module.set(
         "buildtime",
         lua.load(chunk! {
-            function(package)
-                return { id = "package", type = "build" }
+            function(id)
+                return { id = id, type = "buildtime" }
             end
         })
         .eval::<Function>()
@@ -17,8 +17,8 @@ pub fn inject(lua: &Lua) -> Result<(), mlua::Error> {
     module.set(
         "runtime",
         lua.load(chunk! {
-            function(package)
-                return { id = "package", type = "run" }
+            function(id)
+                return { id = id, type = "runtime" }
             end
         })
         .eval::<Function>()

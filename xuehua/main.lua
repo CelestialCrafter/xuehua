@@ -15,26 +15,30 @@ local build = function(id)
   end
 end
 
--- plan.template {
---   id = "p0",
---   schema = { option_1 = true },
---   apply = function(destination, inputs)
---     -- log.info("im being configured with " .. inputs)
---     return {
---       dependencies = {},
---       metadata = {},
---       build = build(destination),
---     }
---   end
--- }
+plan.template {
+  id = "p0",
+  schema = { option_1 = true },
+  apply = function(destination, inputs)
+    for k, v in pairs(inputs) do
+      log.info(string.format("im being configured with %s = %s", k, tostring(v)))
+    end
 
--- plan.profile {
---   source = "p0",
---   destination = "p0a",
---   inputs = {
---     option_1 = false
---   }
--- }
+    return {
+      id = destination,
+      dependencies = {},
+      metadata = {},
+      build = build(destination),
+    }
+  end
+}
+
+plan.profile {
+  source = "p0",
+  destination = "p0a",
+  inputs = {
+    option_1 = false
+  }
+}
 
 plan.group("g1", function(g1)
   log.info("im entering group " .. g1)
