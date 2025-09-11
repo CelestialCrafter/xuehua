@@ -3,12 +3,15 @@ use std::{
     rc::Rc,
 };
 
-use mlua::{ExternalResult, Function, Lua};
+use mlua::{ExternalResult, FromLua, Function, Lua, Table, Value};
 use radix_trie::Trie;
 use thiserror::Error;
 
 use crate::{
-    engine::{APIGuard, Package, PackageId},
+    engine::{
+        APIGuard,
+        package::{Package, PackageId},
+    },
     impl_inject_api,
     utils::LuaError,
 };
@@ -43,9 +46,47 @@ impl From<mlua::Error> for PlanError {
 pub struct Plan {
     pub packages: Trie<PackageId, Package>,
 }
+
+struct PackageTemplate {
+    id: PackageId,
+    schema: Value,
+    apply: Function,
+}
+
+impl FromLua for PackageTemplate {
+    fn from_lua(value: Value, lua: &Lua) -> Result<Self, mlua::Error> {
+        let table = Table::from_lua(value, lua)?;
+
+        Ok(Self {
+            id: table.get("id")?,
+            schema: table.get("schema")?,
+            apply: table.get("apply")?,
+        })
+    }
+}
+
+struct PackageProfile {
+    source: PackageId,
+    destination: PackageId,
+    inputs: Value,
+}
+
+impl FromLua for PackageProfile {
+    fn from_lua(value: Value, lua: &Lua) -> Result<Self, mlua::Error> {
+        let table = Table::from_lua(value, lua)?;
+
+        Ok(Self {
+            source: table.get("source")?,
+            destination: table.get("destination")?,
+            inputs: table.get("inputs")?,
+        })
+    }
+}
+
 #[derive(Default)]
 struct PlanPackages {
     concrete: Trie<PackageId, Package>,
+    templates: Trie<PackageId, PackageTemplate>,
 }
 
 #[derive(Default)]
@@ -80,6 +121,43 @@ impl PlanAPI {
         }
     }
 
+    fn profile(&self, lua: &Lua, profile: PackageProfile) -> Result<String, mlua::Error> {
+        let packages = self.packages.borrow();
+        let template = packages
+            .templates
+            .get(&profile.source)
+            .ok_or(PlanError::NotFound {
+                package: profile.source,
+            })
+            .into_lua_err();
+        let pkg = template?
+            .apply
+            .call((profile.destination, profile.inputs))?;
+        drop(packages);
+
+        self.package(lua, pkg)
+    }
+
+    fn template(&self, lua: &Lua, template: PackageTemplate) -> Result<String, mlua::Error> {
+        let id = template.id.clone();
+        let schema = template.schema.clone();
+
+        self.packages
+            .borrow_mut()
+            .templates
+            .insert(id.clone(), template);
+
+        self.profile(
+            lua,
+            PackageProfile {
+                source: id.clone(),
+                destination: id,
+                inputs: schema,
+            },
+        )
+    }
+
+    // TODO: make group's reusable by package and template/profile
     fn group(
         &self,
         _lua: &Lua,
@@ -108,5 +186,7 @@ impl_inject_api!(
     Plan,
     "xuehua.planner",
     (package, "package"),
+    (profile, "profile"),
+    (template, "template"),
     (group, "group"),
 );

@@ -1,43 +1,16 @@
 pub mod executor;
 pub mod logger;
+pub mod package;
 pub mod planner;
 pub mod utils;
 
 use std::{collections::HashMap, rc::Rc};
 
-use mlua::{FromLua, Function, Lua, LuaSerdeExt, Table, Value};
+use mlua::Lua;
 use radix_trie::TrieCommon;
-use serde::Deserialize;
 use thiserror::Error;
 
 use crate::utils::LuaError;
-
-pub type PackageId = String;
-
-#[derive(Deserialize, Debug)]
-pub struct PackageMetadata {}
-
-#[derive(Debug)]
-pub struct Package {
-    pub id: PackageId,
-    pub dependencies: Vec<PackageId>,
-    pub metadata: PackageMetadata,
-    // TODO: make this field private, and then create a wrapper function
-    pub build: Function,
-}
-
-impl FromLua for Package {
-    fn from_lua(value: Value, lua: &Lua) -> Result<Self, mlua::Error> {
-        let table = Table::from_lua(value, lua)?;
-
-        Ok(Self {
-            id: table.get("id")?,
-            dependencies: lua.from_value(table.get("dependencies")?)?,
-            metadata: lua.from_value(table.get("metadata")?)?,
-            build: table.get("build")?,
-        })
-    }
-}
 
 pub struct APIGuard<'a, A> {
     strong: Rc<A>,

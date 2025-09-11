@@ -1,4 +1,4 @@
-use crate::engine::PackageId;
+use crate::engine::package::PackageId;
 
 use clap::Parser;
 
