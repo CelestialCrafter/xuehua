@@ -4,61 +4,25 @@ pub mod package;
 pub mod planner;
 pub mod utils;
 
-use std::{collections::HashMap, rc::Rc};
+use std::path::Path;
 
 use mlua::Lua;
-use radix_trie::TrieCommon;
+use petgraph::dot::Dot;
 use thiserror::Error;
 
-use crate::utils::LuaError;
-
-pub struct APIGuard<'a, A> {
-    strong: Rc<A>,
-    lua: &'a Lua,
-}
-
-#[macro_export]
-macro_rules! impl_inject_api {
-    ($api:ident, $finalized:ident, $module:expr, $(($fn:ident, $lua:expr),)*) => {
-        impl<'a> APIGuard<'a, $api> {
-            pub fn inject(lua: &'a Lua) -> Result<Self, mlua::Error> {
-                let strong = Rc::new($api::default());
-                let weak = Rc::downgrade(&strong);
-
-                let module = lua.create_table()?;
-
-                $({
-                    let weak = weak.clone();
-                    module.set($lua, lua.create_function(move |lua, values| {
-                        weak.upgrade()
-                            .ok_or(PlanError::ModuleRestricted($module.to_string()))
-                            .into_lua_err()?
-                            .$fn(lua, values)
-                    })?)?;
-                })*
-
-                lua.register_module($module, module)?;
-
-                Ok(Self { strong, lua })
-            }
-
-            pub fn release(mut self) -> Result<$finalized, mlua::Error> {
-                let inner = Rc::try_unwrap(std::mem::take(&mut self.strong))
-                    .map_err(|_| "only one strong reference to the api should exist")
-                    .unwrap();
-
-
-                self.lua.unload_module($module)?;
-                Ok(inner.into_inner())
-            }
-        }
-    };
-}
+use crate::{
+    engine::planner::{Planner, PlannerError},
+    utils::LuaError,
+};
 
 #[derive(Error, Debug)]
 pub enum EngineError {
-    #[error("lua runtime error")]
-    LuaError(#[source] LuaError),
+    #[error("error running planner")]
+    PlannerError(
+        #[source]
+        #[from]
+        PlannerError,
+    ),
     #[error("injection failed for {api}")]
     InjectionFailed {
         api: String,
@@ -67,33 +31,24 @@ pub enum EngineError {
     },
 }
 
-impl From<mlua::Error> for EngineError {
-    fn from(err: mlua::Error) -> Self {
-        EngineError::LuaError(err.into())
-    }
-}
-
-fn convert_err<T>(api: &str, result: Result<T, mlua::Error>) -> Result<T, EngineError> {
+fn into_injection<T>(api: &str, result: Result<T, mlua::Error>) -> Result<T, EngineError> {
     result.map_err(|err| EngineError::InjectionFailed {
         api: api.to_string(),
         error: err.into(),
     })
 }
 
-pub fn run(source: &[u8]) -> Result<(), EngineError> {
+pub fn run(root: &Path) -> Result<(), EngineError> {
     // TODO: restrict stdlibs
     let lua = Lua::new();
 
     // inject apis
-    convert_err("logger", logger::inject(&lua))?;
-    convert_err("utils", utils::inject(&lua))?;
-    let plan = convert_err("plan", APIGuard::inject(&lua))?;
+    into_injection("logger", logger::inject(&lua))?;
+    into_injection("utils", utils::inject(&lua))?;
 
     // execute lua
-    lua.load(source).exec()?;
-    let plan = plan.release()?;
-    let plan: HashMap<_, _> = plan.packages.iter().collect();
-    dbg!(plan);
+    let planner = Planner::run(&lua, root)?;
+    println!("{:?}", Dot::new(&planner.plan()));
 
     Ok(())
 }

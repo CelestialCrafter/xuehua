@@ -1,32 +1,74 @@
+use std::hash::{self, Hash};
+
 use mlua::{FromLua, Function, Lua, LuaSerdeExt, Table, Value};
 use serde::Deserialize;
+use thiserror::Error;
+
+use crate::utils::LuaError;
 
 pub type PackageId = String;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, Hash, Eq, PartialEq)]
 pub struct PackageMetadata {}
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, Copy, Hash, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum DependencyType {
     Buildtime,
     Runtime,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct PackageDependency {
-    pub id: PackageId,
-    #[serde(rename = "type")]
-    pub dependency_type: DependencyType,
+#[derive(Error, Debug)]
+pub enum PackageConfigurationError {
+    #[error("package {0} does not support configuration")]
+    Unsupported(PackageId),
+    #[error(transparent)]
+    LuaError(LuaError),
 }
 
-#[derive(Debug)]
+impl From<mlua::Error> for PackageConfigurationError {
+    fn from(err: mlua::Error) -> Self {
+        PackageConfigurationError::LuaError(err.into())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Package {
     pub id: PackageId,
-    pub dependencies: Vec<PackageDependency>,
+    pub dependencies: Vec<(u32, DependencyType)>,
     pub metadata: PackageMetadata,
-    // TODO: make this field private, and then create a wrapper function
     pub build: Function,
+    pub configure: Option<Function>,
+}
+
+impl hash::Hash for Package {
+    // TODO: hash configure
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.dependencies.hash(state);
+        self.metadata.hash(state);
+
+        self.build.dump(true).hash(state);
+        if let Some(func) = self.configure.as_ref() {
+            func.dump(true).hash(state);
+        }
+    }
+}
+
+impl Package {
+    pub fn configure(mut self, inputs: Value) -> Result<Self, PackageConfigurationError> {
+        let new: Package = self
+            .configure
+            .as_ref()
+            .ok_or(PackageConfigurationError::Unsupported(self.id.clone()))?
+            .call(inputs)?;
+
+        self.dependencies = new.dependencies;
+        self.metadata = new.metadata;
+        self.build = new.build;
+
+        Ok(self)
+    }
 }
 
 impl FromLua for Package {
@@ -38,6 +80,7 @@ impl FromLua for Package {
             dependencies: lua.from_value(table.get("dependencies")?)?,
             metadata: lua.from_value(table.get("metadata")?)?,
             build: table.get("build")?,
+            configure: table.get("configure")?,
         })
     }
 }
