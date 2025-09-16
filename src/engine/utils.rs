@@ -7,7 +7,7 @@ pub fn inject(lua: &Lua) -> Result<(), mlua::Error> {
         "buildtime",
         lua.load(chunk! {
             function(id)
-                return { id = id, type = "buildtime" }
+                return { id, "buildtime" }
             end
         })
         .eval::<Function>()
@@ -18,7 +18,7 @@ pub fn inject(lua: &Lua) -> Result<(), mlua::Error> {
         "runtime",
         lua.load(chunk! {
             function(id)
-                return { id = id, type = "runtime" }
+                return { id, "runtime" }
             end
         })
         .eval::<Function>()

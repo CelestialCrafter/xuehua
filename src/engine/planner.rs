@@ -1,192 +1,133 @@
 use std::{
-    cell::{BorrowMutError, RefCell},
-    rc::Rc,
+    cell::RefCell,
+    collections::HashMap,
+    fs,
+    hash::{DefaultHasher, Hash, Hasher},
+    io,
+    path::Path,
 };
 
-use mlua::{ExternalResult, FromLua, Function, Lua, Table, Value};
-use radix_trie::Trie;
+use log::warn;
+use mlua::{ExternalResult, Lua};
+use petgraph::{
+    acyclic::Acyclic,
+    data::Build,
+    graph::{DiGraph, NodeIndex},
+};
 use thiserror::Error;
 
 use crate::{
-    engine::{
-        APIGuard,
-        package::{Package, PackageId},
-    },
-    impl_inject_api,
+    engine::package::{DependencyType, Package, PackageId},
     utils::LuaError,
 };
 
 #[derive(Error, Debug)]
-pub enum PlanError {
-    #[error("package not found: {package}")]
+pub enum PlannerError {
+    #[error("package {package} not found")]
     NotFound { package: PackageId },
-    #[error("conflicting package: {package}")]
+    #[error("package {package} has conflicting definitions")]
     Conflict { package: PackageId },
     #[error("cycle detected from {from} to {to}")]
     Cyclic { from: PackageId, to: PackageId },
-    #[error("module {0} restricted in current scope")]
-    ModuleRestricted(String),
-    #[error("nested calls to {func} are not allowed")]
-    NestedCall {
-        func: String,
-        #[source]
-        error: BorrowMutError,
-    },
-    #[error("lua runtime error")]
-    LuaError(#[source] LuaError),
+    #[error(transparent)]
+    IOError(io::Error),
+    #[error(transparent)]
+    LuaError(LuaError),
 }
 
-impl From<mlua::Error> for PlanError {
+impl From<mlua::Error> for PlannerError {
     fn from(err: mlua::Error) -> Self {
-        PlanError::LuaError(err.into())
+        PlannerError::LuaError(err.into())
     }
 }
 
-#[derive(Debug)]
-pub struct Plan {
-    pub packages: Trie<PackageId, Package>,
+pub type Plan = Acyclic<DiGraph<Package, DependencyType>>;
+
+#[derive(Default)]
+pub struct Planner {
+    plan: Plan,
+    cache: HashMap<u64, NodeIndex>,
 }
 
-struct PackageTemplate {
-    id: PackageId,
-    schema: Value,
-    apply: Function,
-}
+const MODULE_NAME: &str = "xuehua.planner";
 
-impl FromLua for PackageTemplate {
-    fn from_lua(value: Value, lua: &Lua) -> Result<Self, mlua::Error> {
-        let table = Table::from_lua(value, lua)?;
+impl Planner {
+    #[inline]
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
 
-        Ok(Self {
-            id: table.get("id")?,
-            schema: table.get("schema")?,
-            apply: table.get("apply")?,
+    pub fn run(lua: &Lua, root: &Path) -> Result<Self, PlannerError> {
+        let planner = RefCell::new(Planner::default());
+        let get_planner = || {
+            planner
+                .try_borrow_mut()
+                .map_err(|_| mlua::Error::RecursiveMutCallback)
+        };
+
+        lua.scope(|scope| {
+            let module = lua.create_table()?;
+            module.set(
+                "package",
+                scope.create_function(|_, pkg| {
+                    get_planner()?
+                        .package(pkg)
+                        .map(|node| node.index())
+                        .into_lua_err()
+                })?,
+            )?;
+            module.set(
+                "repository",
+                scope.create_function(|lua, source: u32| {
+                    get_planner()?
+                        .repository(lua, source.into())
+                        .map(|node| node.index())
+                        .into_lua_err()
+                })?,
+            )?;
+
+            lua.register_module(MODULE_NAME, module)?;
+            scope.add_destructor(|| {
+                if let Err(err) = lua.unload_module(MODULE_NAME) {
+                    warn!(error:? = err; "could not unregister {MODULE_NAME}");
+                }
+            });
+
+            lua.load(fs::read(root)?).exec()
+        })?;
+
+        Ok(planner.into_inner())
+    }
+
+    pub fn repository(&mut self, _lua: &Lua, _source: NodeIndex) -> Result<NodeIndex, PlannerError> {
+        todo!()
+    }
+
+    pub fn package(&mut self, pkg: Package) -> Result<NodeIndex, PlannerError> {
+        // check cache for node
+        let mut hasher = DefaultHasher::new();
+        pkg.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        Ok(match self.cache.get(&hash) {
+            Some(node) => *node,
+            None => {
+                // insert node if cache miss
+                let node = self.plan.add_node(pkg);
+                self.cache.insert(hash, node);
+
+                for (d_node, d_type) in self.plan[node].dependencies.clone() {
+                    self.plan
+                        .try_add_edge(node, NodeIndex::from(d_node), d_type)
+                        // TODO: add ids once id resolver done
+                        .map_err(|_| PlannerError::Cyclic {
+                            from: PackageId::default(),
+                            to: PackageId::default(),
+                        })?;
+                }
+
+                node
+            }
         })
     }
 }
-
-struct PackageProfile {
-    source: PackageId,
-    destination: PackageId,
-    inputs: Value,
-}
-
-impl FromLua for PackageProfile {
-    fn from_lua(value: Value, lua: &Lua) -> Result<Self, mlua::Error> {
-        let table = Table::from_lua(value, lua)?;
-
-        Ok(Self {
-            source: table.get("source")?,
-            destination: table.get("destination")?,
-            inputs: table.get("inputs")?,
-        })
-    }
-}
-
-#[derive(Default)]
-struct PlanPackages {
-    concrete: Trie<PackageId, Package>,
-    templates: Trie<PackageId, PackageTemplate>,
-}
-
-#[derive(Default)]
-pub struct PlanAPI {
-    packages: RefCell<PlanPackages>,
-    crumbs: RefCell<Vec<String>>,
-}
-
-impl PlanAPI {
-    fn package(&self, _lua: &Lua, mut pkg: Package) -> Result<String, mlua::Error> {
-        let mut crumbs = self.crumbs.borrow_mut();
-        crumbs.push(pkg.id);
-        pkg.id = crumbs.join("/");
-        crumbs.pop();
-
-        let name = pkg.id.clone();
-        let mut planner_packages = self
-            .packages
-            .try_borrow_mut()
-            .map_err(|err| PlanError::NestedCall {
-                func: "package".to_string(),
-                error: err,
-            })
-            .into_lua_err()?;
-
-        match planner_packages.concrete.insert(name.clone(), pkg) {
-            Some(conflicting) => Err(PlanError::Conflict {
-                package: conflicting.id,
-            })
-            .into_lua_err(),
-            None => Ok(name),
-        }
-    }
-
-    fn profile(&self, lua: &Lua, profile: PackageProfile) -> Result<String, mlua::Error> {
-        let packages = self.packages.borrow();
-        let template = packages
-            .templates
-            .get(&profile.source)
-            .ok_or(PlanError::NotFound {
-                package: profile.source,
-            })
-            .into_lua_err();
-        let pkg = template?
-            .apply
-            .call((profile.destination, profile.inputs))?;
-        drop(packages);
-
-        self.package(lua, pkg)
-    }
-
-    fn template(&self, lua: &Lua, template: PackageTemplate) -> Result<String, mlua::Error> {
-        let id = template.id.clone();
-        let schema = template.schema.clone();
-
-        self.packages
-            .borrow_mut()
-            .templates
-            .insert(id.clone(), template);
-
-        self.profile(
-            lua,
-            PackageProfile {
-                source: id.clone(),
-                destination: id,
-                inputs: schema,
-            },
-        )
-    }
-
-    // TODO: make group's reusable by package and template/profile
-    fn group(
-        &self,
-        _lua: &Lua,
-        (crumb, closure): (String, Function),
-    ) -> Result<String, mlua::Error> {
-        let mut crumbs = self.crumbs.borrow_mut();
-        crumbs.push(crumb);
-        let joined = crumbs.join("/");
-        drop(crumbs);
-
-        closure.call::<()>(joined.clone())?;
-
-        self.crumbs.borrow_mut().pop();
-        Ok(joined)
-    }
-
-    fn into_inner(self) -> Plan {
-        Plan {
-            packages: self.packages.into_inner().concrete,
-        }
-    }
-}
-
-impl_inject_api!(
-    PlanAPI,
-    Plan,
-    "xuehua.planner",
-    (package, "package"),
-    (profile, "profile"),
-    (template, "template"),
-    (group, "group"),
-);

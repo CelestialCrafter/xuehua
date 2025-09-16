@@ -3,14 +3,12 @@ pub mod options;
 pub mod store;
 pub mod utils;
 
-use std::{fs, io::stderr};
+use std::{io::stderr, path::Path};
 
 use eyre::{Context, DefaultHandler, Result};
 use log::LevelFilter;
 
-use crate::
-    options::{OPTIONS, cli::Subcommand}
-;
+use crate::options::{OPTIONS, cli::Subcommand};
 
 fn main() -> Result<()> {
     eyre::set_hook(Box::new(DefaultHandler::default_with))
@@ -32,7 +30,7 @@ fn main() -> Result<()> {
 
     match &OPTIONS.cli.subcommand {
         Subcommand::Build { package: _ } => {
-            engine::run(&fs::read("xuehua/main.lua")?)?;
+            engine::run(Path::new("xuehua/main.lua"))?;
         }
         Subcommand::Link {
             reverse: _,

@@ -19,4 +19,4 @@ log = { version = "0.4.27", features = ["kv", "kv_std"] }
 thiserror = "2.0.16"
 duct = "1.1.0"
 eyre = { version = "0.6.12", default-features = false, features = ["track-caller"] }
-radix_trie = "0.2.1"
+petgraph = "0.8.2"
