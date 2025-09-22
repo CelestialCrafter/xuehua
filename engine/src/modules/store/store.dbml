@@ -9,11 +9,11 @@ TablePartial include_time {
 }
 
 TablePartial include_artifact {
-  artifact_hash blob [not null, ref: > artifacts.hash]
+  artifact blob [not null, ref: > artifacts.hash]
 }
 
 TablePartial include_package {
-  package_hash blob [not null, ref: > packages.hash]
+  package blob [not null, ref: > packages.hash]
 }
 
 // artifacts
@@ -23,17 +23,9 @@ Table artifacts {
   Note: "a content-addressed build artifact"
 }
 
-Table links {
-  source text [not null]
-  destination text [unique, not null]
-  ~include_artifact
-  Note: "a link point for an artifact"
-}
-
 // packages
 Table packages {
   hash blob [primary key, not null]
-  manifest jsonb [not null]
   ~include_artifact
   ~include_time
   Note: "a pointer from a package manifest to an artifact"
