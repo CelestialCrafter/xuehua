@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+default = ["local-store"]
 bubblewrap-builder = ["dep:serde_json"]
+local-store = ["dep:rusqlite"]
 
 [dependencies]
 blake3 = "1.8.2"
@@ -14,3 +16,6 @@ log.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 serde_json = { version = "1.0.145", optional = true }
+rusqlite = { version = "0.37.0", features = ["jiff"], optional = true }
+jiff = { version = "0.2.15", default-features = false, features = ["alloc", "std", "perf-inline"] }
+walkdir = "2.5.0"
