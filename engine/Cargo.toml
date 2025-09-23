@@ -1,0 +1,12 @@
+[package]
+name = "xh-engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+blake3 = "1.8.2"
+mlua.workspace = true
+petgraph.workspace = true
+log.workspace = true
+serde.workspace = true
+thiserror.workspace = true

@@ -6,11 +6,8 @@ use petgraph::{Direction::Outgoing, graph::NodeIndex, visit::EdgeRef};
 use thiserror::Error;
 
 use crate::{
-    engine::{
-        package::{DependencyType, Package},
-        planner::Plan,
-    },
-    utils::LuaError,
+    modules::planner::Plan,
+    package::{DependencyType, Package},
 };
 
 const MODULE_NAME: &str = "xuehua.builder";
@@ -20,13 +17,7 @@ pub enum BuilderError {
     #[error("conflicting link point at {0}")]
     Conflict(PathBuf),
     #[error(transparent)]
-    LuaError(#[from] LuaError),
-}
-
-impl From<mlua::Error> for BuilderError {
-    fn from(err: mlua::Error) -> Self {
-        BuilderError::LuaError(err.into())
-    }
+    LuaError(#[from] mlua::Error),
 }
 
 type Source = PathBuf;

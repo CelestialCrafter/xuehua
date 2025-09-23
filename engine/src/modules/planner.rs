@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     fs,
     hash::{DefaultHasher, Hash, Hasher},
-    io,
     path::Path,
 };
 
@@ -16,10 +15,7 @@ use petgraph::{
 };
 use thiserror::Error;
 
-use crate::{
-    engine::package::{DependencyType, Package, PackageId},
-    utils::LuaError,
-};
+use crate::package::{DependencyType, Package, PackageId};
 
 #[derive(Error, Debug)]
 pub enum PlannerError {
@@ -30,15 +26,7 @@ pub enum PlannerError {
     #[error("cycle detected from {from} to {to}")]
     Cyclic { from: PackageId, to: PackageId },
     #[error(transparent)]
-    IOError(io::Error),
-    #[error(transparent)]
-    LuaError(LuaError),
-}
-
-impl From<mlua::Error> for PlannerError {
-    fn from(err: mlua::Error) -> Self {
-        PlannerError::LuaError(err.into())
-    }
+    LuaError(#[from] mlua::Error),
 }
 
 pub type Plan = Acyclic<DiGraph<Package, DependencyType>>;
@@ -114,7 +102,6 @@ impl Planner {
     }
 
     pub fn package(&mut self, pkg: Package) -> Result<NodeIndex, PlannerError> {
-        // check cache for node
         let mut hasher = DefaultHasher::new();
         pkg.hash(&mut hasher);
         let hash = hasher.finish();
@@ -122,7 +109,6 @@ impl Planner {
         Ok(match self.cache.get(&hash) {
             Some(node) => *node,
             None => {
-                // insert node if cache miss
                 let node = self.plan.add_node(pkg);
                 self.cache.insert(hash, node);
 

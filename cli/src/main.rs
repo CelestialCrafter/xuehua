@@ -1,13 +1,14 @@
-pub mod engine;
 pub mod options;
-pub mod utils;
 
 use std::{io::stderr, path::Path};
 
 use eyre::{Context, DefaultHandler, Result};
 use log::LevelFilter;
+use mlua::Lua;
+use petgraph::dot::Dot;
+use xh_engine::modules::{builder::Builder, logger, planner::Planner, utils};
 
-use crate::options::{OPTIONS, cli::Subcommand};
+use crate::options::{get_options, Subcommand};
 
 fn main() -> Result<()> {
     eyre::set_hook(Box::new(DefaultHandler::default_with))
@@ -27,9 +28,22 @@ fn main() -> Result<()> {
         .apply()
         .wrap_err("error installing logger")?;
 
-    match &OPTIONS.cli.subcommand {
+    match get_options().cli.subcommand {
         Subcommand::Build { package: _ } => {
-            engine::run(Path::new("xuehua/main.lua"), 2.into())?;
+            // TODO: restrict stdlibs
+            let lua = Lua::new();
+
+            // inject apis
+            logger::inject(&lua)?;
+            utils::inject(&lua)?;
+
+            let builder = Builder::new();
+            let mut planner = Planner::new();
+
+            planner.run(&lua, Path::new("xuehua/main.lua"))?;
+            println!("{:?}", Dot::new(&planner.plan()));
+            let output = builder.link(&lua, planner.plan(), 2.into())?;
+            println!("{:?}", output);
         }
         Subcommand::Link {
             reverse: _,
