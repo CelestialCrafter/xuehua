@@ -6,7 +6,7 @@ use eyre::{Context, DefaultHandler, Result};
 use log::LevelFilter;
 use mlua::Lua;
 use petgraph::dot::Dot;
-use xh_engine::modules::{builder::Builder, logger, planner::Planner, utils};
+use xh_engine::modules::{linker::Linker, logger, planner::Planner, utils};
 
 use crate::options::{get_options, Subcommand};
 
@@ -37,12 +37,12 @@ fn main() -> Result<()> {
             logger::inject(&lua)?;
             utils::inject(&lua)?;
 
-            let builder = Builder::new();
+            let linker = Linker::new();
             let mut planner = Planner::new();
 
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
             println!("{:?}", Dot::new(&planner.plan()));
-            let output = builder.link(&lua, planner.plan(), 2.into())?;
+            let output = linker.link(&lua, planner.plan(), 2.into())?;
             println!("{:?}", output);
         }
         Subcommand::Link {

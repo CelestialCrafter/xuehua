@@ -10,10 +10,10 @@ use crate::{
     package::{DependencyType, Package},
 };
 
-const MODULE_NAME: &str = "xuehua.builder";
+const MODULE_NAME: &str = "xuehua.linker";
 
 #[derive(Error, Debug)]
-pub enum BuilderError {
+pub enum LinkerError {
     #[error("conflicting link point at {0}")]
     Conflict(PathBuf),
     #[error(transparent)]
@@ -25,7 +25,7 @@ type Destination = PathBuf;
 type Output = HashMap<Destination, Source>;
 
 #[derive(Default)]
-pub struct Builder;
+pub struct Linker;
 
 fn get_store(node: NodeIndex, store: &HashMap<NodeIndex, Output>) -> Output {
     store
@@ -35,7 +35,7 @@ fn get_store(node: NodeIndex, store: &HashMap<NodeIndex, Output>) -> Output {
         .clone()
 }
 
-impl Builder {
+impl Linker {
     pub fn new() -> Self {
         Self
     }
@@ -45,7 +45,7 @@ impl Builder {
         lua: &Lua,
         plan: &Plan,
         root: NodeIndex,
-    ) -> Result<Vec<Output>, BuilderError> {
+    ) -> Result<Vec<Output>, LinkerError> {
         let mut store: HashMap<NodeIndex, Output> = HashMap::new();
         let mut runtime = Vec::new();
 
