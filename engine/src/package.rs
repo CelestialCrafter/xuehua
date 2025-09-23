@@ -4,8 +4,6 @@ use mlua::{FromLua, Function, Lua, LuaSerdeExt, Table, Value};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::utils::LuaError;
-
 pub type PackageId = String;
 
 #[derive(Deserialize, Debug, Clone, Hash, Eq, PartialEq)]
@@ -23,13 +21,7 @@ pub enum PackageConfigurationError {
     #[error("package {0} does not support configuration")]
     Unsupported(PackageId),
     #[error(transparent)]
-    LuaError(LuaError),
-}
-
-impl From<mlua::Error> for PackageConfigurationError {
-    fn from(err: mlua::Error) -> Self {
-        PackageConfigurationError::LuaError(err.into())
-    }
+    LuaError(#[from] mlua::Error),
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +34,6 @@ pub struct Package {
 }
 
 impl hash::Hash for Package {
-    // TODO: hash configure
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
         self.dependencies.hash(state);

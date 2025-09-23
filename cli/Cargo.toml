@@ -1,0 +1,17 @@
+[package]
+name = "xh-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "xh"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5.45", features = ["derive", "wrap_help"] }
+fern = "0.7.1"
+eyre = { version = "0.6.12", default-features = false, features = ["track-caller"] }
+xh-engine = { path = "../engine" }
+log.workspace = true
+petgraph.workspace = true
+mlua.workspace = true
