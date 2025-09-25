@@ -50,6 +50,14 @@ pub struct StoreArtifact {
     pub created_at: Timestamp,
 }
 
+// TODO: add examples for store implementation and usage
+/// Content-addressed append-only repository for packages and artifacts
+///
+/// # Implementation Guidelines
+/// - Once something is registered into the store, its contents **must** never change.
+/// - Stores **must** ensure that [`Self::register_package`] and [`Self::register_artifact`] are idempotent. Registering the same thing twice should be a no-op
+/// - Stores **must** use directories for all content inputs and outputs. If contents need to be packed or unpacked (eg. downloading package contents over the network), the store needs to handle it.
+/// - The returned ArtifactHash **must** be a secure hash of the contents. The [`hash_directory`] utility function can be used as the canonical implementation.
 pub trait Store {
     fn register_package(
         &mut self,
@@ -61,9 +69,6 @@ pub trait Store {
     fn register_artifact(&mut self, content: &Path) -> Result<ArtifactHash, Error>;
     fn artifact(&self, artifact: &ArtifactHash) -> Result<StoreArtifact, Error>;
     fn content(&self, artifact: &ArtifactHash) -> Result<PathBuf, Error>;
-
-    // TODO: artifact/package deletion
-    // TODO: operation log actions
 }
 
 pub fn hash_directory(dir: &Path) -> io::Result<Hash> {

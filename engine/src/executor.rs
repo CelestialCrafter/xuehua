@@ -107,6 +107,15 @@ impl UserData for LuaOutput {
     }
 }
 
+// TODO: add examples for executor implementation and usage
+/// A controlled gateway for executing side-effects of a package build
+///
+/// An [`Executor`] is the bridge between an isolated [`Package`](crate::package::Package) definition,
+/// and messy real-world actions package builds need to do.
+/// Its responsibility is to provide a secure, isolated, and reproducable environment for package builds to actually do things.
+///
+/// By nature, executors are full of side effects (fetching data, running processes, creating files, etc),
+/// but they must strive to be deterministic.
 pub trait Executor: Sized {
     fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), Error>;
     fn run(&mut self, command: &Command) -> Result<Output, Error>;

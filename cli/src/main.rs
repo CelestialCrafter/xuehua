@@ -8,7 +8,12 @@ use mlua::Lua;
 use petgraph::dot::Dot;
 use tempfile::tempdir_in;
 use xh_engine::{
-    builder::Builder, executor::bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions}, logger, planner::Planner, store::local::LocalStore, utils
+    builder::Builder,
+    executor::bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
+    logger,
+    planner::Planner,
+    store::local::LocalStore,
+    utils,
 };
 
 use crate::options::{Subcommand, get_options};
@@ -47,7 +52,11 @@ fn main() -> Result<()> {
 
             let mut planner = Planner::new();
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
-            println!("{:?}", Dot::new(&planner.plan()));
+
+            let simplified_plan = planner
+                .plan()
+                .map(|_, weight| weight.id.clone(), |_, weight| weight);
+            println!("{:?}", Dot::new(&simplified_plan));
 
             let mut builder = Builder::new(&mut store, &planner);
 

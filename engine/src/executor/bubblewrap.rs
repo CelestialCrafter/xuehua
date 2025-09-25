@@ -64,6 +64,23 @@ pub struct BubblewrapExecutorOptions {
     drop_capabilities: Vec<String>,
 }
 
+/// A command executor using [`bubblewrap`](https://github.com/containers/bubblewrap) for sandboxing
+///
+/// # Security/Sandboxing
+///
+/// This executor attempts to enforce a security boundary to ensure reproducability
+/// and minimize the impact of malicious build scripts on the host system.
+///
+// NOTE: ensure this list stays in sync with the code
+/// By default, the following safety related `bubblewrap` flags are enabled by default:
+/// - `--new-session`
+/// - `--unshare-all`
+/// - `--clearenv`
+///
+/// # Command Runner
+///
+/// To execute multiple commands within the sandbox, this executor bundles a command runner.
+/// The runner is embedded within the library at compile-time, and is controlled via stdin/stdout.
 pub struct BubblewrapExecutor {
     options: BubblewrapExecutorOptions,
     output: PathBuf,
