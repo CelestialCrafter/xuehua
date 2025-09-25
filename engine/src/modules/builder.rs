@@ -1,3 +1,4 @@
+#[cfg(feature = "sandbox_builder")]
 pub mod sandboxed;
 
 use std::{
@@ -13,6 +14,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum BuilderError {
+    #[cfg(feature = "sandbox_builder")]
     #[error(transparent)]
     JSONSerializationError(#[from] serde_json::Error),
     #[error(transparent)]
