@@ -41,6 +41,7 @@ fn row_to_artifact(row: &Row<'_>) -> Result<StoreArtifact, rusqlite::Error> {
     })
 }
 
+/// A local store using SQLite as a database, and locally stored contents
 pub struct LocalStore<'a> {
     root: &'a Path,
     db: Connection,

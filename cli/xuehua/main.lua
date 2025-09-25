@@ -1,40 +1,16 @@
 local plan = require("xuehua.planner")
 local utils = require("xuehua.utils")
 
-local build = function(id)
-  return function()
-    local builder = require("xuehua.builder")
-    local command = builder.Command("/busybox");
-    command.arguments = { "touch", "/output/wawa/from-" .. id }
-    builder.run(command)
-  end
-end
-
-
-local p3 = plan.package {
-  id = "p3",
+local package_2 = plan.package {
+  id = "package-2",
   dependencies = {},
   metadata = {},
-  build = build("p3")
-}
-
-local p3a = plan.package {
-  id = "p3",
-  dependencies = {},
-  metadata = {},
-  build = build("p3")
-}
-
-local p2 = plan.package {
-  id = "p2",
-  dependencies = { utils.buildtime(p3a) },
-  metadata = {},
-  build = build("p2")
+  build = function() end
 }
 
 plan.package {
-  id = "p1",
-  dependencies = { utils.runtime(p2), utils.buildtime(p3) },
+  id = "package-1",
+  dependencies = { utils.runtime(package_2) },
   metadata = {},
-  build = build("p1")
+  build = function() end
 }

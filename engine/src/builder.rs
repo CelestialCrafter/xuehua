@@ -29,6 +29,9 @@ pub enum Error {
     LuaError(#[from] mlua::Error),
 }
 
+/// Package build runner
+///
+/// The builder traverses thru a [`Planner`]'s, instructions, and builds out all of the contents needed to link a package, while using a [`Store`](store::Store) as a build cache.
 pub struct Builder<'a, S: store::Store> {
     store: &'a mut S,
     planner: &'a Planner,
@@ -42,7 +45,7 @@ impl<'a, S: store::Store> Builder<'a, S> {
     pub fn build<E: executor::Executor, F: FnMut() -> Result<E, executor::Error>>(
         &mut self,
         lua: &Lua,
-        root: NodeIndex,
+        node: NodeIndex,
         mut make_executor: F,
     ) -> Result<HashSet<PathBuf>, Error> {
         let plan = self.planner.plan();
@@ -55,7 +58,7 @@ impl<'a, S: store::Store> Builder<'a, S> {
             Ok::<_, store::Error>(content)
         };
 
-        let mut order: Vec<_> = plan.range(plan.get_position(root)..).collect();
+        let mut order: Vec<_> = plan.range(plan.get_position(node)..).collect();
         // for some reason, Acyclic::range returns in reverse topological order
         order.reverse();
 
@@ -80,7 +83,7 @@ impl<'a, S: store::Store> Builder<'a, S> {
 
             let content = match pkg_content(self.store, node) {
                 Ok(content) => {
-                    debug!("using cached package {node:?}");
+                    info!("using cached package {node:?}");
                     content
                 }
                 // cache miss, build package
@@ -97,7 +100,7 @@ impl<'a, S: store::Store> Builder<'a, S> {
                 Err(err) => return Err(err.into()),
             };
 
-            if node == root {
+            if node == node {
                 runtime.insert(content);
             }
         }
