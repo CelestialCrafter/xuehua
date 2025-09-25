@@ -6,9 +6,11 @@ use eyre::{Context, DefaultHandler, Result};
 use log::LevelFilter;
 use mlua::Lua;
 use petgraph::dot::Dot;
-use xh_engine::modules::{builder::sandboxed::SandboxedBuilder, linker::Linker, logger, planner::Planner, utils};
+use xh_engine::modules::{
+    builder::bubblewrap::BubblewrapBuilder, linker::Linker, logger, planner::Planner, utils,
+};
 
-use crate::options::{get_options, Subcommand};
+use crate::options::{Subcommand, get_options};
 
 fn main() -> Result<()> {
     eyre::set_hook(Box::new(DefaultHandler::default_with))
@@ -37,7 +39,7 @@ fn main() -> Result<()> {
             logger::inject(&lua)?;
             utils::inject(&lua)?;
 
-            let linker = Linker::new(|| SandboxedBuilder::new());
+            let linker = Linker::new(|| BubblewrapBuilder::new(Path::new("")));
             let mut planner = Planner::new();
 
             planner.run(&lua, Path::new("xuehua/main.lua"))?;

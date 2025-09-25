@@ -1,10 +1,11 @@
-#[cfg(feature = "sandbox_builder")]
-pub mod sandboxed;
+#[cfg(feature = "bubblewrap-builder")]
+pub mod bubblewrap;
 
 use std::{
     collections::HashMap,
     ffi::OsString,
     io,
+    path::Path,
     process::{Command, Output},
     string::FromUtf8Error,
 };
@@ -14,9 +15,11 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum BuilderError {
-    #[cfg(feature = "sandbox_builder")]
+    #[cfg(feature = "bubblewrap-builder")]
     #[error(transparent)]
     JSONSerializationError(#[from] serde_json::Error),
+    #[error("builder is uninitialized")]
+    Uninitialized,
     #[error(transparent)]
     IOError(#[from] io::Error),
 }
@@ -98,5 +101,7 @@ impl UserData for LuaOutput {
 }
 
 pub trait Builder: Sized {
+    fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), BuilderError>;
     fn run(&mut self, command: &Command) -> Result<Output, BuilderError>;
+    fn output(&self) -> &Path;
 }
