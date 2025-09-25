@@ -3,6 +3,9 @@ name = "xh-engine"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+sandbox_builder = ["dep:serde_json"]
+
 [dependencies]
 blake3 = "1.8.2"
 mlua.workspace = true
@@ -10,4 +13,4 @@ petgraph.workspace = true
 log.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-serde_json = "1.0.145"
+serde_json = { version = "1.0.145", optional = true }
