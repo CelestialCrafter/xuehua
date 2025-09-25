@@ -1,5 +1,5 @@
 fn main() {
-    #[cfg(feature = "sandbox_builder")]
+    #[cfg(feature = "bubblewrap-builder")]
     {
         use std::{env, process::Command};
 

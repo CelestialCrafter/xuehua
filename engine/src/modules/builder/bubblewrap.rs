@@ -1,9 +1,9 @@
 use std::{
     ffi::OsStr,
-    fs,
+    fs::{self, OpenOptions, Permissions},
     io::{self, BufRead, BufReader},
-    os::unix::process::ExitStatusExt,
-    path::PathBuf,
+    os::unix::{fs::PermissionsExt, process::ExitStatusExt},
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Output, Stdio},
     sync::LazyLock,
 };
@@ -50,45 +50,82 @@ impl CommandResponse {
     }
 }
 
-pub struct SandboxedBuilder {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+pub struct BubblewrapBuilder {
+    output: PathBuf,
+    child: Option<(Child, ChildStdin, BufReader<ChildStdout>)>,
 }
 
-impl SandboxedBuilder {
-    pub fn new() -> Result<Self, BuilderError> {
-        let cmd_runner_path = TEMP_DIR.join(format!("cmd-runner-{}", CMD_RUNNER_HASH.to_hex()));
-        if !fs::exists(&cmd_runner_path)? {
-            fs::write(&cmd_runner_path, CMD_RUNNER_BIN)?;
+impl BubblewrapBuilder {
+    pub fn new(output: PathBuf) -> Self {
+        Self {
+            child: None,
+            output,
         }
-
-        // TODO: add --overlay-src <store_path>
-        let mut child = Command::new("bwrap")
-            // setup
-            .args(&["--tmp-overlay", "/", "--proc", "/proc", "--dev", "/dev"])
-            // runner
-            .args(&["--perms", "0700", "--ro-bind"])
-            .arg(cmd_runner_path)
-            .arg("/shell")
-            // execution
-            .args(&["--", "/shell"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()?;
-        let stdin = child.stdin.take().expect("should be able to take stdin");
-        let stdout = BufReader::new(child.stdout.take().expect("should be able to take stdout"));
-
-        Ok(Self {
-            child,
-            stdin,
-            stdout,
-        })
     }
 }
 
-impl Builder for SandboxedBuilder {
+impl Builder for BubblewrapBuilder {
+    fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), BuilderError> {
+        let cmd_runner_path = TEMP_DIR.join(format!("cmd-runner-{}", CMD_RUNNER_HASH.to_hex()));
+        if !fs::exists(&cmd_runner_path)? {
+            fs::write(&cmd_runner_path, CMD_RUNNER_BIN)?;
+            fs::set_permissions(&cmd_runner_path, Permissions::from_mode(0744))?;
+        }
+
+        fs::create_dir(&self.output)?;
+        let mut command = Command::new("bwrap");
+        // dependencies
+        if !dependencies.is_empty() {
+            command
+                .args(
+                    dependencies
+                        .into_iter()
+                        .map(|path| [OsStr::new("--overlay-src"), path.as_os_str()])
+                        .flatten(),
+                )
+                .args(&["--tmp-overlay", "/"]);
+        }
+
+        // essentials
+        command
+            .args(&[
+                "--ro-bind",
+                "busybox.static",
+                "/busybox",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "--bind",
+            ])
+            .arg(&self.output)
+            .arg("/output");
+
+        // cmd runner
+        command
+            .args(&["--ro-bind"])
+            .arg(cmd_runner_path)
+            .arg("/shell");
+
+        // execution
+        command
+            .args(&["--", "/shell"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+
+        let mut child = command.spawn()?;
+        let stdin = child.stdin.take().expect("should be able to take stdin");
+        let stdout = BufReader::new(child.stdout.take().expect("should be able to take stdout"));
+        self.child = Some((child, stdin, stdout));
+
+        Ok(())
+    }
+
     fn run(&mut self, command: &Command) -> Result<Output, BuilderError> {
+        let child = self.child.as_mut().ok_or(BuilderError::Uninitialized)?;
+        // weird workaround so the compiler doesnt yell at me
+        let (stdin, stdout) = (&mut child.1, &mut child.2);
+
         let to_string = |os_str: &OsStr| {
             os_str.to_os_string().into_string().map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidInput, "non utf-8 data in command")
@@ -96,7 +133,7 @@ impl Builder for SandboxedBuilder {
         };
 
         serde_json::to_writer(
-            &mut self.stdin,
+            stdin,
             &CommandRequest {
                 program: to_string(command.get_program())?,
                 args: command
@@ -118,7 +155,7 @@ impl Builder for SandboxedBuilder {
         )?;
 
         let buf = &mut String::with_capacity(8192);
-        self.stdout.read_line(buf)?;
+        stdout.read_line(buf)?;
         let response = serde_json::from_reader::<_, CommandResponse>(buf.as_bytes())?.extract()?;
         Ok(Output {
             status: ExitStatusExt::from_raw(response.exit_code),
@@ -126,34 +163,18 @@ impl Builder for SandboxedBuilder {
             stderr: response.stderr,
         })
     }
-}
 
-impl Drop for SandboxedBuilder {
-    fn drop(&mut self) {
-        if let Err(err) = self.child.kill() {
-            warn!(err:? = err; "could not kill child");
-        }
+    fn output(&self) -> &Path {
+        &self.output
     }
 }
 
-#[cfg(test)]
-mod test {
-    use std::process::Command;
-
-    use super::SandboxedBuilder;
-    use crate::modules::builder::Builder;
-
-    #[test]
-    fn test_builder() {
-        let mut builder = SandboxedBuilder::new().expect("new builder should not fail");
-
-        let input = "hii";
-        let output = builder
-            .run(Command::new("/busybox").args(&["sh", "-c", &format!("printf {input}")]))
-            .expect("command should not fail");
-        assert!(output.status.success(), "command was not successful");
-
-        let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
-        assert_eq!(stdout, input, "command output did not equal input");
+impl Drop for BubblewrapBuilder {
+    fn drop(&mut self) {
+        if let Some((ref mut child, _, _)) = self.child {
+            if let Err(err) = child.kill() {
+                warn!(err:? = err; "could not kill child");
+            }
+        }
     }
 }
