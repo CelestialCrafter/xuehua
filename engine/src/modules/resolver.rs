@@ -20,7 +20,7 @@ type Destination = PathBuf;
 type Output = HashMap<Destination, Source>;
 
 #[derive(Error, Debug)]
-pub enum LinkerError {
+pub enum ResolverError {
     #[error("conflicting link point at {0}")]
     Conflict(PathBuf),
     #[error(transparent)]
@@ -29,10 +29,8 @@ pub enum LinkerError {
     LuaError(#[from] mlua::Error),
 }
 
-type MakeBuilder<B> = fn() -> Result<B, BuilderError>;
-
-pub struct Linker<B: Builder> {
-    make_builder: MakeBuilder<B>,
+pub struct Resolver<B: Builder> {
+    make_builder: fn() -> B,
 }
 
 fn get_store(node: NodeIndex, store: &HashMap<NodeIndex, Output>) -> Output {
@@ -43,8 +41,8 @@ fn get_store(node: NodeIndex, store: &HashMap<NodeIndex, Output>) -> Output {
         .clone()
 }
 
-impl<B: Builder> Linker<B> {
-    pub fn new(make_builder: MakeBuilder<B>) -> Self {
+impl<B: Builder> Resolver<B> {
+    pub fn new(make_builder: fn() -> B) -> Self {
         Self { make_builder }
     }
 
@@ -53,7 +51,7 @@ impl<B: Builder> Linker<B> {
         lua: &Lua,
         plan: &Plan,
         root: NodeIndex,
-    ) -> Result<Vec<Output>, LinkerError> {
+    ) -> Result<Vec<Output>, ResolverError> {
         let mut store: HashMap<NodeIndex, Output> = HashMap::new();
         let mut runtime = Vec::new();
 
@@ -86,8 +84,8 @@ impl<B: Builder> Linker<B> {
         package: &Package,
         _runtime: &[Output],
         _buildtime: &[Output],
-    ) -> Result<Output, LinkerError> {
-        let mut builder = (self.make_builder)()?;
+    ) -> Result<Output, ResolverError> {
+        let mut builder = (self.make_builder)();
 
         let mut output: Output = lua.scope(|scope| {
             let module = lua.create_table()?;
