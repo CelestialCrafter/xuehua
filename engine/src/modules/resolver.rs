@@ -1,6 +1,9 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
-use log::warn;
+use log::{debug, info, warn};
 use mlua::{AnyUserData, ExternalResult, Lua};
 use petgraph::{Direction::Outgoing, graph::NodeIndex, visit::EdgeRef};
 use thiserror::Error;
@@ -8,86 +11,113 @@ use thiserror::Error;
 use crate::{
     modules::{
         builder::{Builder, BuilderError, LuaCommand, LuaOutput},
-        planner::Plan,
+        planner::Planner,
+        store::{Store, StoreError},
     },
     package::{DependencyType, Package},
 };
 
-const MODULE_NAME: &str = "xuehua.linker";
-
-type Source = PathBuf;
-type Destination = PathBuf;
-type Output = HashMap<Destination, Source>;
+const MODULE_NAME: &str = "xuehua.resolver";
 
 #[derive(Error, Debug)]
 pub enum ResolverError {
     #[error("conflicting link point at {0}")]
     Conflict(PathBuf),
     #[error(transparent)]
+    StoreError(#[from] StoreError),
+    #[error(transparent)]
     BuilderError(#[from] BuilderError),
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
 
-pub struct Resolver<B: Builder> {
-    make_builder: fn() -> B,
+pub struct Resolver<'a, S: Store> {
+    store: &'a mut S,
+    planner: &'a Planner,
 }
 
-fn get_store(node: NodeIndex, store: &HashMap<NodeIndex, Output>) -> Output {
-    store
-        .get(&node)
-        .expect("dependency should already be built")
-        // real store should return owned output
-        .clone()
-}
-
-impl<B: Builder> Resolver<B> {
-    pub fn new(make_builder: fn() -> B) -> Self {
-        Self { make_builder }
+impl<'a, S: Store> Resolver<'a, S> {
+    pub fn new(store: &'a mut S, planner: &'a Planner) -> Self {
+        Self { store, planner }
     }
 
-    pub fn link(
-        &self,
+    pub fn resolve<B: Builder, F: FnMut() -> Result<B, BuilderError>>(
+        &mut self,
         lua: &Lua,
-        plan: &Plan,
         root: NodeIndex,
-    ) -> Result<Vec<Output>, ResolverError> {
-        let mut store: HashMap<NodeIndex, Output> = HashMap::new();
-        let mut runtime = Vec::new();
+        mut make_builder: F,
+    ) -> Result<HashSet<PathBuf>, ResolverError> {
+        let plan = self.planner.plan();
+        let mut runtime = HashSet::new();
+
+        let pkg_content = |store: &S, node: NodeIndex| {
+            let pkg = store.package(&plan[node])?;
+            let content = store.content(&pkg.artifact)?;
+
+            Ok::<_, StoreError>(content)
+        };
 
         let mut order: Vec<_> = plan.range(plan.get_position(root)..).collect();
         // for some reason, Acyclic::range returns in reverse topological order
         order.reverse();
 
         for node in order {
+            debug!("resolving {node:?}");
             // add dependency outputs to their coresponding locations
-            let mut buildtime = Vec::new();
+            let mut buildtime = HashSet::new();
             for edge in plan.edges_directed(node, Outgoing) {
-                let output = get_store(edge.target(), &store);
+                let target = edge.target();
+                let content = pkg_content(self.store, target)?;
                 match edge.weight() {
-                    DependencyType::Buildtime => buildtime.push(output),
-                    DependencyType::Runtime => runtime.push(output),
+                    DependencyType::Buildtime => {
+                        debug!("adding {target:?} to buildtime closure");
+                        buildtime.insert(content);
+                    }
+                    DependencyType::Runtime => {
+                        debug!("adding {target:?} to runtime closure");
+                        runtime.insert(content);
+                    }
                 }
             }
 
-            let output = self.build(lua, &plan[node], &runtime, &buildtime)?;
-            store.insert(node, output);
+            let content = match pkg_content(self.store, node) {
+                Ok(content) => {
+                    debug!("using cached package {node:?}");
+                    content
+                }
+                // cache miss, build package
+                Err(StoreError::PackageNotFound(_)) => {
+                    info!("building package {node:?}");
+                    let package = &plan[node];
+                    let dependencies = runtime.union(&buildtime).map(|v| v.as_path()).collect();
+                    let content = self.build(lua, package, dependencies, &mut make_builder)?;
+                    let artifact = self.store.register_artifact(&content)?;
+                    self.store.register_package(package, &artifact)?;
+
+                    content
+                }
+                Err(err) => return Err(err.into()),
+            };
+
+            if node == root {
+                runtime.insert(content);
+            }
         }
 
-        runtime.push(get_store(root, &store));
         Ok(runtime)
     }
 
-    fn build(
+    fn build<B: Builder, F: FnMut() -> Result<B, BuilderError>>(
         &self,
         lua: &Lua,
         package: &Package,
-        _runtime: &[Output],
-        _buildtime: &[Output],
-    ) -> Result<Output, ResolverError> {
-        let mut builder = (self.make_builder)();
+        dependencies: Vec<&Path>,
+        mut make_builder: F,
+    ) -> Result<PathBuf, ResolverError> {
+        let mut builder = (make_builder)()?;
+        builder.init(dependencies)?;
 
-        let mut output: Output = lua.scope(|scope| {
+        lua.scope(|scope| {
             let module = lua.create_table()?;
             module.set(
                 "run",
@@ -97,6 +127,7 @@ impl<B: Builder> Resolver<B> {
                     LuaOutput::try_from(output).into_lua_err()
                 })?,
             )?;
+            module.set("Command", lua.create_proxy::<LuaCommand>()?)?;
 
             lua.register_module(MODULE_NAME, module)?;
             scope.add_destructor(|| {
@@ -105,10 +136,9 @@ impl<B: Builder> Resolver<B> {
                 }
             });
 
-            package.build.call(())
+            package.build.call::<()>(())
         })?;
-        output.insert("/package-id".into(), "/package-id".into());
 
-        Ok(output)
+        Ok(builder.output().to_path_buf())
     }
 }

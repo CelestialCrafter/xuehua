@@ -10,7 +10,7 @@ use std::{
     string::FromUtf8Error,
 };
 
-use mlua::{MetaMethod, UserData};
+use mlua::{FromLua, MetaMethod, UserData, Value};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -68,9 +68,13 @@ impl UserData for LuaCommand {
     }
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_meta_function(MetaMethod::Call, |_, program: OsString| {
-            Ok(Self(Command::new(program)))
-        });
+        methods.add_meta_function(
+            MetaMethod::Call,
+            |lua, (_proxy, program): (Value, Value)| {
+                let program = OsString::from_lua(program, lua)?;
+                Ok(Self(Command::new(program)))
+            },
+        );
     }
 }
 

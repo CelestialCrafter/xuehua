@@ -7,7 +7,7 @@ use log::LevelFilter;
 use mlua::Lua;
 use petgraph::dot::Dot;
 use xh_engine::modules::{
-    builder::bubblewrap::BubblewrapBuilder, resolver::Resolver, logger, planner::Planner, utils,
+    builder::bubblewrap::BubblewrapBuilder, logger, planner::Planner, resolver::Resolver, store::local::LocalStore, utils
 };
 
 use crate::options::{Subcommand, get_options};
@@ -39,11 +39,13 @@ fn main() -> Result<()> {
             logger::inject(&lua)?;
             utils::inject(&lua)?;
 
-            let linker = Resolver::new(|| BubblewrapBuilder::new(Path::new("")));
-            let mut planner = Planner::new();
+            let mut store = LocalStore::new(Path::new(s), in_memory)
 
+            let mut planner = Planner::new();
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
             println!("{:?}", Dot::new(&planner.plan()));
+
+            let linker = Resolver::new(|| BubblewrapBuilder::new(Path::new("")));
             let output = linker.link(&lua, planner.plan(), 2.into())?;
             println!("{:?}", output);
         }

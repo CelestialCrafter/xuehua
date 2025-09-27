@@ -1,6 +1,6 @@
 use std::{
     ffi::OsStr,
-    fs::{self, OpenOptions, Permissions},
+    fs::{self, Permissions},
     io::{self, BufRead, BufReader},
     os::unix::{fs::PermissionsExt, process::ExitStatusExt},
     path::{Path, PathBuf},
