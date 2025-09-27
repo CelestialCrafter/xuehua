@@ -1183,6 +1183,7 @@ dependencies = [
  "log",
  "mlua",
  "petgraph",
+ "tempfile",
  "xh-engine",
 ]
 

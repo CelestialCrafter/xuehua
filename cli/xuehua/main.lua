@@ -1,14 +1,12 @@
-local log = require("xuehua.logger")
 local plan = require("xuehua.planner")
 local utils = require("xuehua.utils")
 
 local build = function(id)
   return function()
-    log.info(string.format("im building " .. id))
-    local path = "/" .. id
-    return {
-      [path] = path
-    }
+    local resolver = require("xuehua.resolver")
+    local command = resolver.Command("/busybox");
+    command.arguments = { "touch", "/output/wawa/from-" .. id }
+    resolver.run(command)
   end
 end
 
