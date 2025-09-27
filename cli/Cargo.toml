@@ -13,5 +13,6 @@ fern = "0.7.1"
 eyre = { version = "0.6.12", default-features = false, features = ["track-caller"] }
 xh-engine = { path = "../engine", features = ["bubblewrap-builder", "local-store"] }
 log.workspace = true
+tempfile.workspace = true
 petgraph.workspace = true
 mlua.workspace = true

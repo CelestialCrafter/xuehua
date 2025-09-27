@@ -6,8 +6,13 @@ use eyre::{Context, DefaultHandler, Result};
 use log::LevelFilter;
 use mlua::Lua;
 use petgraph::dot::Dot;
-use xh_engine::modules::{
-    builder::bubblewrap::BubblewrapBuilder, logger, planner::Planner, resolver::Resolver, store::local::LocalStore, utils
+use tempfile::tempdir_in;
+use xh_engine::{
+    modules::{
+        builder::bubblewrap::BubblewrapBuilder, logger, planner::Planner, resolver::Resolver,
+        store::local::LocalStore, utils,
+    },
+    utils::ensure_dir,
 };
 
 use crate::options::{Subcommand, get_options};
@@ -39,14 +44,26 @@ fn main() -> Result<()> {
             logger::inject(&lua)?;
             utils::inject(&lua)?;
 
-            let mut store = LocalStore::new(Path::new(s), in_memory)
+            let store_path = Path::new("store");
+            ensure_dir(store_path)?;
+            let mut store = LocalStore::new(store_path, false)?;
 
             let mut planner = Planner::new();
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
             println!("{:?}", Dot::new(&planner.plan()));
 
-            let linker = Resolver::new(|| BubblewrapBuilder::new(Path::new("")));
-            let output = linker.link(&lua, planner.plan(), 2.into())?;
+            let mut resolver = Resolver::new(&mut store, &planner);
+
+            // hold tempdirs until they need to be dropped
+            let mut temp_paths = Vec::with_capacity(64);
+            let base: &'static Path = Path::new("builds");
+            ensure_dir(base)?;
+            let output = resolver.resolve(&lua, 2.into(), || {
+                temp_paths.push(tempdir_in(base)?);
+                let path = temp_paths.last().unwrap().path().to_path_buf();
+                Ok(BubblewrapBuilder::new(path))
+            });
+
             println!("{:?}", output);
         }
         Subcommand::Link {
