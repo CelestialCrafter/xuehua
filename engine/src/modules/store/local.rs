@@ -1,17 +1,18 @@
 use std::{
     fs,
     hash::{DefaultHasher, Hash, Hasher},
-    io,
     path::{Path, PathBuf},
 };
 
 use jiff::Timestamp;
 use rusqlite::{Connection, OptionalExtension, Row, named_params};
-use walkdir::WalkDir;
 
 use crate::{
-    modules::store::{ArtifactHash, PackageHash, Store, StoreArtifact, StoreError, StorePackage},
+    modules::store::{
+        ArtifactHash, PackageHash, Store, StoreArtifact, StoreError, StorePackage, hash_directory,
+    },
     package::Package,
+    utils::ensure_dir,
 };
 
 const DATABASE_NAME: &str = "store.sqlite";
@@ -53,6 +54,7 @@ impl<'a> LocalStore<'a> {
             Connection::open(root.join(DATABASE_NAME))
         }?;
 
+        ensure_dir(&root.join("content"))?;
         db.execute_batch(include_str!("local/initialize.sql"))?;
         Ok(Self { root, db })
     }
@@ -100,19 +102,8 @@ impl Store for LocalStore<'_> {
     }
 
     fn register_artifact(&mut self, content: &Path) -> Result<ArtifactHash, StoreError> {
-        let mut hasher = blake3::Hasher::new();
-        for entry in WalkDir::new(content) {
-            let entry = entry.map_err(|err| {
-                let fallback = io::Error::new(io::ErrorKind::Other, err.to_string());
-                err.into_io_error().unwrap_or(fallback)
-            })?;
+        let hash = hash_directory(content)?;
 
-            if entry.file_type().is_file() {
-                hasher.update_reader(&mut fs::File::open(entry.path())?)?;
-            }
-        }
-
-        let hash = hasher.finalize();
         self.db.execute(
             Queries::REGISTER_ARTIFACT,
             named_params! { ":hash": hash.as_bytes(), ":timestamp": Timestamp::now() },
