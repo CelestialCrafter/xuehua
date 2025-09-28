@@ -6,5 +6,6 @@ members = ["cli", "engine"]
 log = { version = "0.4.27", features = ["kv", "kv_std"] }
 serde = { version = "1.0.219", features = ["derive"] }
 mlua = { version = "0.11.2", features = ["lua54", "macros", "serde", "send"] }
+tempfile = "3.23.0"
 petgraph = "0.8.2"
 thiserror = "2.0.16"

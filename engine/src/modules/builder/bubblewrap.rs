@@ -1,24 +1,25 @@
 use std::{
     ffi::OsStr,
-    fs::{self, Permissions},
-    io::{self, BufRead, BufReader},
-    os::unix::{fs::PermissionsExt, process::ExitStatusExt},
+    io::{self, BufRead, BufReader, Seek, Write},
+    mem::forget,
+    os::{
+        fd::{FromRawFd, OwnedFd},
+        unix::process::{CommandExt, ExitStatusExt},
+    },
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, ChildStdout, Command, Output, Stdio},
-    sync::LazyLock,
+    process,
 };
 
-use blake3::{Hash, hash};
 use log::warn;
+use once_cell::sync::OnceCell;
+use rustix::io::dup2;
 use serde::{Deserialize, Serialize};
+use tempfile::tempfile;
 
-use crate::{
-    TEMP_DIR,
-    modules::builder::{Builder, BuilderError},
-};
+use crate::modules::builder::{Builder, BuilderError};
 
-const CMD_RUNNER_BIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/cmd-runner"));
-static CMD_RUNNER_HASH: LazyLock<Hash> = LazyLock::new(|| hash(CMD_RUNNER_BIN));
+static PARENT_FD: OnceCell<OwnedFd> = OnceCell::new();
+const CHILD_FD: i32 = 10;
 
 #[derive(Serialize, Debug)]
 struct CommandRequest {
@@ -50,30 +51,38 @@ impl CommandResponse {
     }
 }
 
+struct InitData {
+    child: process::Child,
+    stdin: process::ChildStdin,
+    stdout: BufReader<process::ChildStdout>,
+}
+
+#[derive(Default, Debug)]
+pub struct BubblewrapBuilderOptions {
+    network: bool,
+    add_capabilities: Vec<String>,
+    drop_capabilities: Vec<String>,
+}
+
 pub struct BubblewrapBuilder {
+    options: BubblewrapBuilderOptions,
     output: PathBuf,
-    child: Option<(Child, ChildStdin, BufReader<ChildStdout>)>,
+    init: Option<InitData>,
 }
 
 impl BubblewrapBuilder {
-    pub fn new(output: PathBuf) -> Self {
+    pub fn new(output: PathBuf, options: BubblewrapBuilderOptions) -> Self {
         Self {
-            child: None,
+            init: None,
             output,
+            options,
         }
     }
 }
 
 impl Builder for BubblewrapBuilder {
     fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), BuilderError> {
-        let cmd_runner_path = TEMP_DIR.join(format!("cmd-runner-{}", CMD_RUNNER_HASH.to_hex()));
-        if !fs::exists(&cmd_runner_path)? {
-            fs::write(&cmd_runner_path, CMD_RUNNER_BIN)?;
-            fs::set_permissions(&cmd_runner_path, Permissions::from_mode(0744))?;
-        }
-
-        fs::create_dir(&self.output)?;
-        let mut command = Command::new("bwrap");
+        let mut command = process::Command::new("bwrap");
         // dependencies
         if !dependencies.is_empty() {
             command
@@ -101,30 +110,83 @@ impl Builder for BubblewrapBuilder {
             .arg(&self.output)
             .arg("/output");
 
+        // restrictions
+        command.args([
+            "--new-session",
+            "--die-with-parent",
+            "--clearenv",
+            "--unshare-all",
+        ]);
+
+        command.args(
+            self.options
+                .add_capabilities
+                .iter()
+                .map(|cap| ["--cap-add", cap])
+                .flatten(),
+        );
+
+        command.args(
+            self.options
+                .drop_capabilities
+                .iter()
+                .map(|cap| ["--cap-drop", cap])
+                .flatten(),
+        );
+
+        if self.options.network {
+            command.arg("--share-net");
+        }
+
         // cmd runner
-        command
-            .args(&["--ro-bind"])
-            .arg(cmd_runner_path)
-            .arg("/shell");
+        command.args(&[
+            "--perms",
+            "0744",
+            "--ro-bind-data",
+            &CHILD_FD.to_string(),
+            "/shell",
+        ]);
+
+        unsafe {
+            command.pre_exec(|| {
+                let mut fd = OwnedFd::from_raw_fd(CHILD_FD);
+                dup2(
+                    PARENT_FD.get_or_try_init(|| {
+                        let mut file = tempfile()?;
+                        file.write_all(include_bytes!(concat!(env!("OUT_DIR"), "/cmd-runner")))?;
+                        file.rewind()?;
+                        Ok::<_, io::Error>(OwnedFd::from(file))
+                    })?,
+                    &mut fd,
+                )?;
+                forget(fd);
+
+                Ok(())
+            });
+        };
 
         // execution
         command
             .args(&["--", "/shell"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped());
+            .stdin(process::Stdio::piped())
+            .stdout(process::Stdio::piped());
 
         let mut child = command.spawn()?;
         let stdin = child.stdin.take().expect("should be able to take stdin");
         let stdout = BufReader::new(child.stdout.take().expect("should be able to take stdout"));
-        self.child = Some((child, stdin, stdout));
+        self.init = Some(InitData {
+            child,
+            stdin,
+            stdout,
+        });
 
         Ok(())
     }
 
-    fn run(&mut self, command: &Command) -> Result<Output, BuilderError> {
-        let child = self.child.as_mut().ok_or(BuilderError::Uninitialized)?;
+    fn run(&mut self, command: &process::Command) -> Result<process::Output, BuilderError> {
+        let child = self.init.as_mut().ok_or(BuilderError::Uninitialized)?;
         // weird workaround so the compiler doesnt yell at me
-        let (stdin, stdout) = (&mut child.1, &mut child.2);
+        let (stdin, stdout) = (&mut child.stdin, &mut child.stdout);
 
         let to_string = |os_str: &OsStr| {
             os_str.to_os_string().into_string().map_err(|_| {
@@ -157,7 +219,7 @@ impl Builder for BubblewrapBuilder {
         let buf = &mut String::with_capacity(8192);
         stdout.read_line(buf)?;
         let response = serde_json::from_reader::<_, CommandResponse>(buf.as_bytes())?.extract()?;
-        Ok(Output {
+        Ok(process::Output {
             status: ExitStatusExt::from_raw(response.exit_code),
             stdout: response.stdout,
             stderr: response.stderr,
@@ -171,7 +233,7 @@ impl Builder for BubblewrapBuilder {
 
 impl Drop for BubblewrapBuilder {
     fn drop(&mut self) {
-        if let Some((ref mut child, _, _)) = self.child {
+        if let Some(InitData { ref mut child, .. }) = self.init {
             if let Err(err) = child.kill() {
                 warn!(err:? = err; "could not kill child");
             }
