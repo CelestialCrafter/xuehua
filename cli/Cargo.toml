@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 fern = { version = "0.7.1", features = ["colored"] }
 eyre = { version = "0.6.12", default-features = false, features = ["track-caller"] }
-xh-engine = { path = "../engine", features = ["bubblewrap-executor", "local-store"] }
+xh-engine = { path = "../engine", features = ["bubblewrap-executor", "http-executor", "local-store"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 log.workspace = true
 petgraph.workspace = true

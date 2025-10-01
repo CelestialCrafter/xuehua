@@ -17,8 +17,6 @@ use thiserror::Error;
 
 use crate::package::{Package, PackageId};
 
-pub const MODULE_NAME: &str = "xuehua.planner";
-
 #[derive(Debug, Clone, Copy)]
 pub enum LinkTime {
     Runtime,

@@ -12,10 +12,13 @@ use petgraph::{dot, graph::NodeIndex};
 use tokio::runtime::Runtime;
 use xh_engine::{
     builder::Builder,
-    executor::bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
+    executor::{
+        bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
+        http::HttpExecutor,
+    },
     logger, planner,
     scheduler::Scheduler,
-    utils,
+    utils::{self, BoxDynError},
 };
 
 use crate::options::{Action, InspectAction, OPTIONS, ProjectFormat};
@@ -42,7 +45,7 @@ fn main() -> Result<()> {
                 message
             ))
         })
-        .level(LevelFilter::Trace)
+        .level(LevelFilter::Debug)
         .chain(stderr())
         .apply()
         .wrap_err("error installing logger")?;
@@ -57,12 +60,17 @@ fn main() -> Result<()> {
             utils::ensure_dir(build_root)?;
 
             let mut scheduler = Scheduler::new(planner.into_inner());
-            let builder =
-                Builder::new(Path::new("builds"), &lua).register("runner".to_string(), 2, |env| {
+            let builder = Builder::new(Path::new("builds"), &lua)
+                .register("bubblewrap".to_string(), 2, |env| {
                     Ok(BubblewrapExecutor::new(
                         env,
                         BubblewrapExecutorOptions::default(),
                     ))
+                })
+                .register("http".to_string(), 2, |env| {
+                    HttpExecutor::new(env)
+                        .map_err(BoxDynError::from)
+                        .map_err(Into::into)
                 });
 
             let (results_tx, results_rx) = mpsc::channel();
@@ -76,7 +84,7 @@ fn main() -> Result<()> {
                 // TODO: add resolver api
                 // for i in 0..4 {
                 scheduler
-                    .schedule(&[NodeIndex::from(3)], &builder, results_tx.clone())
+                    .schedule(&[NodeIndex::from(0)], &builder, results_tx.clone())
                     .await;
                 // }
             });

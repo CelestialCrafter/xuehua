@@ -6,7 +6,7 @@ use petgraph::graph::NodeIndex;
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
-use crate::{executor::Executor, package::Package};
+use crate::{executor::Executor, package::Package, utils::BoxDynError};
 
 pub struct BuildInfo {
     pub node: NodeIndex,
@@ -46,6 +46,8 @@ pub enum Error {
     IOError(#[from] io::Error),
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
+    #[error(transparent)]
+    ExternalError(#[from] BoxDynError)
 }
 
 pub struct Builder<'a> {
