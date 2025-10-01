@@ -5,11 +5,14 @@ use std::{io::stderr, path::Path};
 use eyre::{Context, DefaultHandler, Result};
 use log::LevelFilter;
 use mlua::Lua;
-use petgraph::dot::Dot;
+use petgraph::{dot::Dot, graph::NodeIndex};
 use xh_engine::{
+    builder::{Builder, BuilderOptions},
+    executor::{BubblewrapExecutor, Manager, bubblewrap::BubblewrapExecutorOptions},
     logger,
-    planner::Planner,
     utils,
+    planner::Planner,
+    store::LocalStore,
 };
 
 use crate::options::{Subcommand, get_options};
@@ -42,13 +45,34 @@ fn main() -> Result<()> {
             utils::register_module(&lua)?;
 
             // setup engine modules
-            let store_path = Path::new("store");
-            utils::ensure_dir(store_path)?;
+            let store_dir = Path::new("store");
+            utils::ensure_dir(store_dir)?;
+            let mut store = LocalStore::new(store_dir)?;
 
             let mut planner = Planner::default();
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
-
             println!("{:?}", Dot::new(planner.plan()));
+
+            let mut manager = Manager::default();
+            manager.register("runner".to_string(), |env| {
+                let executor = BubblewrapExecutor::new(env, BubblewrapExecutorOptions::default())?;
+                Ok(Box::new(executor))
+            });
+
+            let build_dir = Path::new("builds");
+            utils::ensure_dir(build_dir)?;
+            let mut builder = Builder::new(
+                &mut store,
+                planner.plan(),
+                manager,
+                BuilderOptions {
+                    build_dir: build_dir.to_path_buf(),
+                },
+            );
+
+            // run build
+            let runtime = builder.build(&lua, NodeIndex::from(2))?;
+            dbg!(runtime);
         }
         Subcommand::Link {
             reverse: _,

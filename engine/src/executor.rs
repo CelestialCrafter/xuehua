@@ -1,119 +1,68 @@
-#[cfg(feature = "bubblewrap-builder")]
-pub mod bubblewrap;
+pub mod runner;
+use std::{collections::HashMap, path::PathBuf};
 
-#[cfg(feature = "bubblewrap-builder")]
-pub use bubblewrap::BubblewrapExecutor;
+pub use runner::*;
 
-use std::{
-    collections::HashMap,
-    ffi::OsString,
-    path::Path,
-    process::{Command, Output},
-    string::FromUtf8Error,
-};
-
-use mlua::{FromLua, MetaMethod, UserData, Value};
+use mlua::{AnyUserData, ExternalResult, Lua, MultiValue, UserData};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("builder is uninitialized")]
-    Uninitialized,
+    #[error("executor {0} not found")]
+    ExecutorNotFound(String),
     #[error(transparent)]
-    ExternalError(#[from] Box<dyn std::error::Error + Send + Sync>)
-}
-
-pub struct LuaCommand(pub Command);
-
-impl UserData for LuaCommand {
-    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
-        // arguments
-        fields.add_field_method_set("arguments", |_, this, args: Vec<OsString>| {
-            this.0.args(args);
-            Ok(())
-        });
-        fields.add_field_method_get("arguments", |_, this| {
-            Ok(this
-                .0
-                .get_args()
-                .map(|v| v.to_os_string())
-                .collect::<Vec<_>>())
-        });
-
-        // environment
-        fields.add_field_method_set(
-            "environment",
-            |_, this, envs: HashMap<OsString, OsString>| {
-                this.0.envs(envs);
-                Ok(())
-            },
-        );
-        fields.add_field_method_get("environment", |_, this| {
-            Ok(this
-                .0
-                .get_envs()
-                .map(|(k, v)| (k.to_os_string(), v.map(|v| v.to_os_string())))
-                .collect::<HashMap<_, _>>())
-        });
-
-        // working dir
-        fields.add_field_method_set("working_dir", |_, this, dir: OsString| {
-            this.0.current_dir(dir);
-            Ok(())
-        });
-        fields.add_field_method_get("working_dir", |_, this| {
-            Ok(this.0.get_current_dir().map(|p| p.to_path_buf()))
-        });
-    }
-
-    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_meta_function(
-            MetaMethod::Call,
-            |lua, (_proxy, program): (Value, Value)| {
-                let program = OsString::from_lua(program, lua)?;
-                Ok(Self(Command::new(program)))
-            },
-        );
-    }
-}
-
-pub struct LuaOutput {
-    stdout: String,
-    stderr: String,
-    exit_code: Option<i32>,
-}
-
-impl TryFrom<Output> for LuaOutput {
-    type Error = FromUtf8Error;
-
-    fn try_from(value: Output) -> Result<Self, Self::Error> {
-        Ok(Self {
-            exit_code: value.status.code(),
-            stdout: String::from_utf8(value.stdout)?,
-            stderr: String::from_utf8(value.stderr)?,
-        })
-    }
-}
-
-impl UserData for LuaOutput {
-    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
-        fields.add_field_method_get("stdout", |_, this| Ok(this.stdout.clone()));
-        fields.add_field_method_get("stderr", |_, this| Ok(this.stderr.clone()));
-        fields.add_field_method_get("exit_code", |_, this| Ok(this.exit_code));
-    }
+    LuaError(#[from] mlua::Error),
+    #[error(transparent)]
+    ExternalError(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
 // TODO: add examples for executor implementation and usage
 /// A controlled gateway for executing side-effects of a package build
 ///
-/// An [`Executor`] is the bridge between an isolated [`Package`](crate::package::Package) definition,
+/// An [`Executor`] is the bridge between an isolated and pure [`Package`](crate::package::Package) definition,
 /// and messy real-world actions package builds need to do.
 /// Its responsibility is to provide a secure, isolated, and reproducable environment for package builds to actually do things.
 ///
 /// By nature, executors are full of side effects (fetching data, running processes, creating files, etc),
 /// but they must strive to be deterministic.
-pub trait Executor: Sized {
-    fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), Error>;
-    fn run(&mut self, command: &Command) -> Result<Output, Error>;
-    fn output(&self) -> &Path;
+pub trait Executor {
+    fn create(&self, lua: &Lua, value: MultiValue) -> Result<AnyUserData, Error>;
+    fn dispatch(&mut self, lua: &Lua, data: AnyUserData) -> Result<MultiValue, Error>;
+}
+
+type BoxDynExec = Box<dyn Executor + Send>;
+
+type ExecFuncReturn = Result<BoxDynExec, Error>;
+
+#[derive(Default)]
+pub struct Manager(HashMap<String, Box<dyn Fn(PathBuf) -> ExecFuncReturn>>);
+
+impl<'a> Manager {
+    pub fn register<F: Fn(PathBuf) -> ExecFuncReturn + 'static>(&mut self, name: String, func: F) {
+        self.0.insert(name, Box::new(func));
+    }
+
+    pub fn create(&self, name: &str, environment: PathBuf) -> ExecFuncReturn {
+        self.0
+            .get(name)
+            .ok_or(Error::ExecutorNotFound(name.to_string()))?(environment)
+    }
+
+    pub fn registered(&'a self) -> Vec<&'a str> {
+        self.0.keys().map(|v| v.as_str()).collect()
+    }
+}
+
+pub struct LuaExecutor(pub BoxDynExec);
+
+impl UserData for LuaExecutor {
+    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("create", |lua, this, args| {
+            this.0.create(lua, args).into_lua_err()
+        });
+
+        methods.add_method_mut("dispatch", |lua, this, args| {
+            this.0.dispatch(lua, args).into_lua_err()
+        });
+    }
 }

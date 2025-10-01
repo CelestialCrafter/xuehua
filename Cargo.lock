@@ -1190,7 +1190,6 @@ dependencies = [
  "once_cell",
  "petgraph",
  "rusqlite",
- "rustix",
  "serde",
  "serde_json",
  "tempfile",
