@@ -886,6 +886,7 @@ dependencies = [
  "bpaf",
  "eyre",
  "fern",
+ "jiff",
  "log",
  "mlua",
  "petgraph",

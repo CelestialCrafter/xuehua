@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use log::info;
+use log::trace;
 use mlua::{
     AnyUserData, ExternalResult, FromLua, Function, Lua, Table, UserData, UserDataFields, Value,
 };
@@ -16,6 +16,8 @@ use petgraph::{
 use thiserror::Error;
 
 use crate::package::{Package, PackageId};
+
+pub const MODULE_NAME: &str = "xuehua.planner";
 
 #[derive(Debug, Clone, Copy)]
 pub enum LinkTime {
@@ -182,8 +184,6 @@ pub struct Planner {
     namespace: Namespace,
 }
 
-pub const MODULE_NAME: &str = "xuehua.planner";
-
 impl Planner {
     pub fn new() -> Self {
         Self {
@@ -208,15 +208,17 @@ impl Planner {
         destination: String,
         modify: Function,
     ) -> Result<NodeIndex, Error> {
-        let mut pkg = self
+        let source_pkg = self
             .plan
             .node_weight(source)
-            .ok_or(Error::NotFound(source))?
-            .clone();
-        pkg.id.name = destination;
-        pkg.configure(lua, modify)?;
+            .ok_or(Error::NotFound(source))?;
 
-        Ok(self.plan.add_node(pkg))
+        let mut dest_pkg = source_pkg.clone();
+        dest_pkg.id.name = destination;
+        trace!("configuring package {} into {}", source_pkg.id, dest_pkg.id);
+
+        dest_pkg.configure(lua, modify)?;
+        Ok(self.plan.add_node(dest_pkg))
     }
 
     pub fn package(
@@ -225,7 +227,7 @@ impl Planner {
         dependencies: Vec<Dependency>,
     ) -> Result<NodeIndex, Error> {
         pkg.id.namespace = self.namespace.current();
-        info!("registering package {}", pkg.id);
+        trace!("registering package {}", pkg.id);
 
         // ensure no conflicts
         if !self.registered.insert(pkg.id.clone()) {
