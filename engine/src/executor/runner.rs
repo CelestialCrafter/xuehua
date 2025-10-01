@@ -10,6 +10,7 @@ use std::{
 
 use mlua::{FromLua, Lua, UserData, Value};
 
+#[derive(Debug)]
 pub struct LuaOutput {
     stdout: String,
     stderr: String,
@@ -36,6 +37,7 @@ impl UserData for LuaOutput {
     }
 }
 
+#[derive(Debug)]
 pub struct LuaCommand(pub Command);
 
 impl FromLua for LuaCommand {

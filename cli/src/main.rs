@@ -5,16 +5,17 @@ use std::{fs, io::stderr, path::Path, sync::mpsc};
 use eyre::{Context, DefaultHandler, Result};
 
 use fern::colors::{Color, ColoredLevelConfig};
+use jiff::Timestamp;
 use log::{LevelFilter, warn};
-
 use mlua::Lua;
 use petgraph::{dot, graph::NodeIndex};
 use tokio::runtime::Runtime;
 use xh_engine::{
     builder::Builder,
-    scheduler::Scheduler,
     executor::bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
-    logger, planner, utils,
+    logger, planner,
+    scheduler::Scheduler,
+    utils,
 };
 
 use crate::options::{Action, InspectAction, OPTIONS, ProjectFormat};
@@ -33,13 +34,15 @@ fn main() -> Result<()> {
     fern::Dispatch::new()
         .format(move |out, message, record| {
             out.finish(format_args!(
-                "({}) {} {}",
+                "({}) ({}) {} {}",
+                // TODO: color timestamp as trace
+                Timestamp::now().strftime("%T"),
                 colors.color(record.level()).to_string().to_lowercase(),
                 record.target(),
                 message
             ))
         })
-        .level(LevelFilter::Debug)
+        .level(LevelFilter::Trace)
         .chain(stderr())
         .apply()
         .wrap_err("error installing logger")?;
@@ -55,24 +58,24 @@ fn main() -> Result<()> {
 
             let mut scheduler = Scheduler::new(planner.into_inner());
             let builder =
-                Builder::new(Path::new("builds"), &lua).register("runner".to_string(), 12, |env| {
+                Builder::new(Path::new("builds"), &lua).register("runner".to_string(), 2, |env| {
                     BubblewrapExecutor::new(env, BubblewrapExecutorOptions::default())
                 });
 
             let (results_tx, results_rx) = mpsc::channel();
             let handle = runtime.spawn(async move {
-                while let Ok(result) = results_rx.recv() {
-                    warn!("build result streamed: {result:?}");
+                while let Ok((id, result)) = results_rx.recv() {
+                    warn!("package {id} build result streamed: {result:?}");
                 }
             });
 
             runtime.block_on(async move {
                 // TODO: add resolver api
-                for i in 0..4 {
-                    scheduler
-                        .schedule(&[NodeIndex::from(i)], &builder, results_tx.clone())
-                        .await;
-                }
+                // for i in 0..4 {
+                scheduler
+                    .schedule(&[NodeIndex::from(3)], &builder, results_tx.clone())
+                    .await;
+                // }
             });
 
             runtime.block_on(handle)?;

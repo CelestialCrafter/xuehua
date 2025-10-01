@@ -1,9 +1,11 @@
 use std::{
+    fmt::Debug,
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
+use log::trace;
 use mlua::{AnyUserData, ExternalResult, FromLua, IntoLua, Lua, Table, UserData};
 use petgraph::graph::NodeIndex;
 use thiserror::Error;
@@ -26,16 +28,22 @@ pub struct LuaExecutor<E>(Arc<Semaphore>, E);
 impl<E> UserData for LuaExecutor<E>
 where
     E: Executor + Send + 'static,
-    E::Request: FromLua + IntoLua,
-    E::Response: IntoLua,
+    E::Request: FromLua + IntoLua + Debug + Send,
+    E::Response: IntoLua + Debug,
 {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_function("create", |lua, value| E::Request::from_lua(value, lua));
 
         methods.add_async_method_mut("dispatch", async |_, mut this, request: AnyUserData| {
-            let _ = this.0.acquire().await.into_lua_err()?;
+            let semaphore = this.0.clone();
+            let _permit = semaphore.acquire().await.into_lua_err()?;
             let request = request.take()?;
-            this.1.dispatch(request).await.into_lua_err()
+
+            trace!("dispatching request: {request:?}");
+            let response = this.1.dispatch(request).await.into_lua_err();
+            trace!("received response: {response:?}");
+
+            response
         });
     }
 }
@@ -70,8 +78,8 @@ impl<'a> Builder<'a> {
     where
         F: Fn(Arc<Path>) -> E + Send + 'static,
         E: Executor + Send + 'static,
-        E::Request: FromLua + IntoLua,
-        E::Response: IntoLua,
+        E::Request: FromLua + IntoLua + Send + Debug,
+        E::Response: IntoLua + Send + Debug,
     {
         let semaphore = Arc::new(Semaphore::new(concurrent));
         let wrapped = move |lua: &Lua, environment| {

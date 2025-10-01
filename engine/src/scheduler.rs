@@ -1,7 +1,7 @@
 use std::{mem, sync::mpsc};
 
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use log::debug;
+use log::{debug, trace};
 use petgraph::{
     Direction,
     graph::{DiGraph, NodeIndex},
@@ -9,7 +9,10 @@ use petgraph::{
 };
 
 use crate::{
-    builder::{BuildInfo, Builder, Error}, package::{Package, PackageId}, planner::{LinkTime, Plan}, utils::passthru::PassthruHashSet
+    builder::{BuildInfo, Builder, Error},
+    package::{Package, PackageId},
+    planner::{LinkTime, Plan},
+    utils::passthru::PassthruHashSet,
 };
 
 #[derive(Debug)]
@@ -83,7 +86,7 @@ impl Scheduler {
             while let Some(node) = visitor.next(&self.state) {
                 subset.insert(node);
                 if let Some(info) = self.prepare_info(node) {
-                    debug!("adding package {} as a leaf", info.package.id);
+                    trace!("adding package {} as a leaf", info.package.id);
                     futures.push(run_builder(info));
                 }
             }

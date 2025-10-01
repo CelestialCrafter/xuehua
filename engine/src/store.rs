@@ -64,6 +64,7 @@ pub trait Store {
         package: &Package,
         artifact: &ArtifactId,
     ) -> impl Future<Output = Result<PackageId, Error>> + Send;
+
     fn packages(
         &self,
         package: &PackageId,
@@ -73,10 +74,12 @@ pub trait Store {
         &mut self,
         content: &Path,
     ) -> impl Future<Output = Result<ArtifactId, Error>> + Send;
+
     fn artifact(
         &self,
         artifact: &ArtifactId,
     ) -> impl Future<Output = Result<Option<StoreArtifact>, Error>> + Send;
+
     fn content(
         &self,
         artifact: &ArtifactId,

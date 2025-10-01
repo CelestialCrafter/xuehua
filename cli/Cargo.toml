@@ -16,3 +16,4 @@ log.workspace = true
 petgraph.workspace = true
 mlua.workspace = true
 bpaf = { version = "0.9.20", features = ["bright-color"] }
+jiff.workspace = true
