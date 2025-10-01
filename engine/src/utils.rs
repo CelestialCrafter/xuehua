@@ -7,13 +7,24 @@ macro_rules! impl_into_err {
     ($(($error:ty, $fn:ident)),*) => {
         /// Trait for converting [`std::result::Result`] into Lua [`Result`].
         pub trait ExternalResult<T> {
-            $(fn $fn(self) -> Result<T, $error>; )*
+            $(fn $fn(self) -> Result<T, $error>;)*
+        }
+
+        pub trait ExternalError {
+            $(fn $fn(self) -> $error;)*
         }
 
         impl<T, E: Into<Box<dyn std::error::Error + Send + Sync>>> ExternalResult<T> for Result<T, E>
         {
             $(fn $fn(self) -> Result<T, $error> {
-                self.map_err(|err| <$error>::ExternalError(err.into()))
+                self.map_err(|err| err.$fn())
+            })*
+        }
+
+        impl<E: Into<Box<dyn std::error::Error + Send + Sync>>> ExternalError for E
+        {
+            $(fn $fn(self) -> $error {
+                <$error>::ExternalError(self.into())
             })*
         }
     };
@@ -27,7 +38,7 @@ pub fn ensure_dir(path: &Path) -> io::Result<()> {
     }
 }
 
-pub fn inject(lua: &Lua) -> Result<(), mlua::Error> {
+pub fn register_module(lua: &Lua) -> Result<(), mlua::Error> {
     let module = lua.create_table()?;
 
     let [runtime, buildtime, no_config] = lua

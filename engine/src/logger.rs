@@ -12,7 +12,7 @@ fn log(level: Level, message: String) {
     );
 }
 
-pub fn inject(lua: &Lua) -> Result<(), mlua::Error> {
+pub fn register_module(lua: &Lua) -> Result<(), mlua::Error> {
     let module = lua.create_table()?;
     let add_level = |name, level| {
         module.set(

@@ -37,9 +37,9 @@ fn main() -> Result<()> {
             // TODO: restrict stdlibs
             let lua = Lua::new();
 
-            // inject apis
-            logger::inject(&lua)?;
-            utils::inject(&lua)?;
+            // register apis
+            logger::register_module(&lua)?;
+            utils::register_module(&lua)?;
 
             // setup engine modules
             let store_path = Path::new("store");
