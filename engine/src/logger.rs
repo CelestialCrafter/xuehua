@@ -7,6 +7,7 @@ fn log(level: Level, message: String) {
     logger().log(
         &Record::builder()
             .level(level)
+            .target("xh_engine::lua")
             .args(format_args!("{}", message))
             .build(),
     );
