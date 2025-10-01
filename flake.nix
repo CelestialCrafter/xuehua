@@ -15,8 +15,7 @@
           bubblewrap
           lua54Packages.lua
           sqlite
-          go
-          curl
+          openssl
         ];
       };
     };

@@ -1,11 +1,11 @@
-pub mod runner;
+#[cfg(feature = "http-executor")]
+pub mod http;
 
+pub mod runner;
 #[cfg(feature = "bubblewrap-executor")]
 pub use runner::bubblewrap;
 
 use crate::utils::BoxDynError;
-
-pub const MODULE_NAME: &str = "xuehua.executor";
 
 // TODO: add examples for executor implementation and usage
 /// A controlled gateway for executing side-effects of a package build
