@@ -77,9 +77,9 @@ impl Executor for BubblewrapExecutor {
             .arg(&*self.environment)
             .arg("/")
             .args(&[
-                // TODO: remove busybox
+                // TODO: move busybox bootstrap to its own package
                 "--ro-bind",
-                "busybox.static",
+                "busybox-bootstrap",
                 "/busybox",
                 "--proc",
                 "/proc",
