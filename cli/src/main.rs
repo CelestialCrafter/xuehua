@@ -10,9 +10,10 @@ use xh_engine::{
     builder::{Builder, BuilderOptions},
     executor::{BubblewrapExecutor, Manager, bubblewrap::BubblewrapExecutorOptions},
     logger,
-    utils,
+    package::manifest::Manifest,
     planner::Planner,
     store::LocalStore,
+    utils,
 };
 
 use crate::options::{Subcommand, get_options};
@@ -52,6 +53,9 @@ fn main() -> Result<()> {
             let mut planner = Planner::new(&lua);
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
             println!("{:?}", Dot::new(planner.plan()));
+            let plan = planner.plan();
+
+            let manifest = Manifest::create(plan, &store)?;
 
             let mut manager = Manager::default();
             manager.register("runner".to_string(), |env| {
@@ -61,9 +65,11 @@ fn main() -> Result<()> {
 
             let build_dir = Path::new("builds");
             utils::ensure_dir(build_dir)?;
+
             let mut builder = Builder::new(
                 &mut store,
-                planner.plan(),
+                &manifest,
+                plan,
                 manager,
                 BuilderOptions {
                     build_dir: build_dir.to_path_buf(),

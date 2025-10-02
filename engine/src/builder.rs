@@ -108,7 +108,7 @@ impl<'a, S: store::Store> Builder<'a, S> {
                     let dependencies = runtime.union(&buildtime).map(|v| v.as_path()).collect();
                     let environment = self.build_one(lua, &module, package, dependencies)?;
 
-                    let store::StoreArtifact { artifact, .. } = self
+                    let artifact = self
                         .store
                         .register_artifact(&environment.path().join("output"))?;
                     self.store.register_package(package, &artifact)?;

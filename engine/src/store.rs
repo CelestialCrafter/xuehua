@@ -32,7 +32,7 @@ pub enum Error {
 }
 
 pub type ArtifactId = blake3::Hash;
-pub type PackageId = package::Id;
+pub type PackageId = package::id::Id;
 
 #[derive(Debug)]
 pub struct StorePackage {
@@ -60,10 +60,13 @@ pub trait Store {
         &mut self,
         package: &package::Package,
         artifact: &ArtifactId,
-    ) -> Result<StorePackage, Error>;
-    fn package(&self, package: &PackageId) -> Result<StorePackage, Error>;
+    ) -> Result<PackageId, Error>;
+    fn packages(
+        &self,
+        package: &PackageId,
+    ) -> Result<impl Iterator<Item = StorePackage>, Error>;
 
-    fn register_artifact(&mut self, content: &Path) -> Result<StoreArtifact, Error>;
+    fn register_artifact(&mut self, content: &Path) -> Result<ArtifactId, Error>;
     fn artifact(&self, artifact: &ArtifactId) -> Result<StoreArtifact, Error>;
     fn content(&self, artifact: &ArtifactId) -> Result<PathBuf, Error>;
 }

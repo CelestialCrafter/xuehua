@@ -8,7 +8,7 @@ use jiff::Timestamp;
 use rusqlite::{Connection, OptionalExtension, named_params, types::FromSqlError};
 
 use crate::{
-    ExternalResult,
+    ExternalError, ExternalResult,
     package::Package,
     store::{ArtifactId, Error, PackageId, Store, StoreArtifact, StorePackage, hash_directory},
     utils::ensure_dir,
@@ -19,10 +19,12 @@ const DATABASE_NAME: &str = "store.db";
 struct Queries;
 
 impl Queries {
-    pub const REGISTER_ARTIFACT: &'static str = "INSERT INTO artifacts (artifact, created_at) VALUES (:artifact, :created_at) ON CONFLICT DO NOTHING";
-    pub const REGISTER_PACKAGE: &'static str = "INSERT INTO packages (package, artifact, created_at) VALUES (:package, :artifact, :created_at) ON CONFLICT DO NOTHING";
-    pub const GET_PACKAGE: &'static str = "SELECT * FROM packages WHERE package IS :package";
-    pub const GET_ARTIFACT: &'static str = "SELECT * FROM artifacts WHERE artifact IS :artifact";
+    pub const REGISTER_ARTIFACT: &'static str =
+        "INSERT INTO artifacts (artifact, created_at) VALUES (:artifact, :created_at)";
+    pub const REGISTER_PACKAGE: &'static str = "INSERT INTO packages (package, artifact, created_at) VALUES (:package, :artifact, :created_at)";
+    pub const GET_PACKAGE: &'static str =
+        "SELECT * FROM packages WHERE package IS :package ORDER BY created_at DESC";
+    pub const GET_ARTIFACT: &'static str = "SELECT 1 FROM artifacts WHERE artifact IS :artifact";
 }
 
 /// A local store using SQLite as a database, and locally stored contents
@@ -51,75 +53,60 @@ impl Store for LocalStore<'_> {
         &mut self,
         package: &Package,
         artifact: &ArtifactId,
-    ) -> Result<StorePackage, Error> {
-        match self.package(&package.id) {
-            Err(Error::PackageNotFound(_)) => {
-                let store_package = StorePackage {
-                    package: package.id.clone(),
-                    artifact: *artifact,
-                    created_at: Timestamp::now(),
-                };
-
-                self.db
-                    .execute(
-                        Queries::REGISTER_PACKAGE,
-                        named_params! {
-                            ":package": store_package.package.to_string(),
-                            ":artifact": store_package.artifact.as_bytes(),
-                            ":created_at": Timestamp::now()
-                        },
-                    )
-                    .into_store_err()?;
-
-                Ok(store_package)
-            }
-            result => result,
-        }
-    }
-
-    fn package(&self, id: &PackageId) -> Result<StorePackage, Error> {
+    ) -> Result<PackageId, Error> {
         self.db
-            .query_one(
-                Queries::GET_PACKAGE,
-                named_params! { ":package": id.to_string() },
-                |row| {
-                    Ok(StorePackage {
-                        package: PackageId::from_str(&row.get::<_, String>("package")?)
-                            .map_err(FromSqlError::other)?,
-                        artifact: ArtifactId::from_bytes(row.get("artifact")?),
-                        created_at: row.get("created_at")?,
-                    })
+            .execute(
+                Queries::REGISTER_PACKAGE,
+                named_params! {
+                    ":package": package.id.to_string(),
+                    ":artifact": artifact.as_bytes(),
+                    ":created_at": Timestamp::now()
                 },
             )
-            .optional()
-            .into_store_err()?
-            .ok_or(Error::PackageNotFound(id.clone()))
+            .map(|_| package.id.clone())
+            .into_store_err()
     }
 
-    fn register_artifact(&mut self, content: &Path) -> Result<StoreArtifact, Error> {
+    fn packages(&self, id: &PackageId) -> Result<impl Iterator<Item = StorePackage>, Error> {
+        Ok(self
+            .db
+            .prepare_cached(Queries::GET_PACKAGE)
+            .into_store_err()?
+            .query_map(named_params! { ":package": id.to_string() }, |row| {
+                Ok(StorePackage {
+                    package: PackageId::from_str(&row.get::<_, String>("package")?)
+                        .map_err(FromSqlError::other)?,
+                    artifact: ArtifactId::from_bytes(row.get("artifact")?),
+                    created_at: row.get("created_at")?,
+                })
+            })
+            .into_store_err()?
+            .collect::<Result<Vec<_>, rusqlite::Error>>()
+            .into_store_err()?
+            .into_iter())
+    }
+
+    fn register_artifact(&mut self, content: &Path) -> Result<blake3::Hash, Error> {
         let hash = hash_directory(content).into_store_err()?;
-        match self.artifact(&hash) {
-            Err(Error::ArtifactNotFound(_)) => {
-                let store_artifact = StoreArtifact {
-                    artifact: hash,
-                    created_at: Timestamp::now(),
-                };
 
-                fs::rename(content, self.artifact_path(&store_artifact.artifact))
-                    .into_store_err()?;
-                self.db
-                    .execute(
-                        Queries::REGISTER_ARTIFACT,
-                        named_params! {
-                            ":artifact": store_artifact.artifact.as_bytes(),
-                            ":created_at": store_artifact.created_at
-                        },
-                    )
-                    .into_store_err()?;
-
-                Ok(store_artifact)
-            }
-            result => result,
+        match self.db.execute(
+            Queries::REGISTER_ARTIFACT,
+            named_params! {
+                ":artifact": hash.as_bytes(),
+                ":created_at": Timestamp::now()
+            },
+        ) {
+            Ok(_) => fs::rename(content, self.artifact_path(&hash))
+                .map(|_| hash)
+                .into_store_err(),
+            Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error {
+                    code: rusqlite::ffi::ErrorCode::ConstraintViolation,
+                    ..
+                },
+                ..,
+            )) => Ok(hash),
+            Err(err) => Err(err.into_store_err()),
         }
     }
 
