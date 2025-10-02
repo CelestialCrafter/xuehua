@@ -6,13 +6,9 @@ use eyre::{Context, DefaultHandler, Result};
 use log::LevelFilter;
 use mlua::Lua;
 use petgraph::dot::Dot;
-use tempfile::tempdir_in;
 use xh_engine::{
-    builder::Builder,
-    executor::bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
     logger,
     planner::Planner,
-    store::local::LocalStore,
     utils,
 };
 
@@ -48,33 +44,11 @@ fn main() -> Result<()> {
             // setup engine modules
             let store_path = Path::new("store");
             utils::ensure_dir(store_path)?;
-            let mut store = LocalStore::new(store_path, false)?;
 
             let mut planner = Planner::new();
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
 
-            let simplified_plan = planner
-                .plan()
-                .map(|_, weight| weight.id.clone(), |_, weight| weight);
-            println!("{:?}", Dot::new(&simplified_plan));
-
-            let mut builder = Builder::new(&mut store, &planner);
-
-            // hold tempdirs until they need to be dropped
-            let mut temp_paths = Vec::with_capacity(64);
-            let base: &'static Path = Path::new("builds");
-
-            utils::ensure_dir(base)?;
-            let output = builder.build(&lua, 2.into(), || {
-                temp_paths.push(tempdir_in(base)?);
-                let path = temp_paths.last().unwrap().path().to_path_buf();
-                Ok(BubblewrapExecutor::new(
-                    path,
-                    BubblewrapExecutorOptions::default(),
-                ))
-            });
-
-            println!("{:?}", output);
+            println!("{:?}", Dot::new(planner.plan()));
         }
         Subcommand::Link {
             reverse: _,

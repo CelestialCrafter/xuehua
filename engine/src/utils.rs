@@ -13,27 +13,33 @@ pub fn ensure_dir(path: &Path) -> io::Result<()> {
 pub fn inject(lua: &Lua) -> Result<(), mlua::Error> {
     let module = lua.create_table()?;
 
-    module.set(
-        "buildtime",
-        lua.load(chunk! {
-            function(id)
-                return { id, "buildtime" }
-            end
-        })
-        .eval::<Function>()
-        .expect("buildtime function should evaluate"),
-    )?;
-
-    module.set(
-        "runtime",
-        lua.load(chunk! {
-            function(id)
+    let [runtime, buildtime, no_config] = lua
+        .load(chunk! {
+            local function runtime(id)
                 return { id, "runtime" }
             end
+
+            local function buildtime(id)
+                return { id, "buildtime" }
+            end
+
+            local function no_config(pkg)
+                pkg.defaults = {}
+                pkg.configure = function(_)
+                    return pkg
+                end
+
+                return pkg
+            end
+
+            return { runtime, buildtime, no_config }
         })
-        .eval::<Function>()
-        .expect("runtime function should evaluate"),
-    )?;
+        .eval::<[Function; 3]>()
+        .expect("util functions should evaluate");
+
+    module.set("runtime", runtime)?;
+    module.set("buildtime", buildtime)?;
+    module.set("no_config", no_config)?;
 
     lua.register_module("xuehua.utils", module)?;
 
