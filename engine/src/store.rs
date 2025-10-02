@@ -1,6 +1,9 @@
 #[cfg(feature = "local-store")]
 pub mod local;
 
+#[cfg(feature = "local-store")]
+pub use local::LocalStore;
+
 use std::{
     fs::File,
     io::{self, Write},
@@ -19,7 +22,7 @@ use walkdir::WalkDir;
 use crate::package::Package;
 
 #[derive(Error, Debug)]
-pub enum StoreError {
+pub enum Error {
     #[error("package {0} not found")]
     PackageNotFound(PackageHash),
     #[error("artifact {0} not found")]
@@ -52,12 +55,12 @@ pub trait Store {
         &mut self,
         package: &Package,
         artifact: &ArtifactHash,
-    ) -> Result<PackageHash, StoreError>;
-    fn package(&self, package: &Package) -> Result<StorePackage, StoreError>;
+    ) -> Result<PackageHash, Error>;
+    fn package(&self, package: &Package) -> Result<StorePackage, Error>;
 
-    fn register_artifact(&mut self, content: &Path) -> Result<ArtifactHash, StoreError>;
-    fn artifact(&self, artifact: &ArtifactHash) -> Result<StoreArtifact, StoreError>;
-    fn content(&self, artifact: &ArtifactHash) -> Result<PathBuf, StoreError>;
+    fn register_artifact(&mut self, content: &Path) -> Result<ArtifactHash, Error>;
+    fn artifact(&self, artifact: &ArtifactHash) -> Result<StoreArtifact, Error>;
+    fn content(&self, artifact: &ArtifactHash) -> Result<PathBuf, Error>;
 
     // TODO: artifact/package deletion
     // TODO: operation log actions

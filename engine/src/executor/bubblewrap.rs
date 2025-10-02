@@ -16,7 +16,7 @@ use rustix::io::dup2;
 use serde::{Deserialize, Serialize};
 use tempfile::tempfile;
 
-use crate::modules::builder::{Builder, BuilderError};
+use crate::executor::{Executor, Error};
 
 static PARENT_FD: OnceCell<OwnedFd> = OnceCell::new();
 const CHILD_FD: i32 = 10;
@@ -43,11 +43,11 @@ struct CommandResponse {
 }
 
 impl CommandResponse {
-    fn extract(self) -> Result<CommandResponseInfo, BuilderError> {
+    fn extract(self) -> Result<CommandResponseInfo, Error> {
         self.info
             .ok_or_else(|| self.error.unwrap_or("no error or info set".to_string()))
             .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
-            .map_err(BuilderError::from)
+            .map_err(Error::from)
     }
 }
 
@@ -58,20 +58,20 @@ struct InitData {
 }
 
 #[derive(Default, Debug)]
-pub struct BubblewrapBuilderOptions {
+pub struct BubblewrapExecutorOptions {
     network: bool,
     add_capabilities: Vec<String>,
     drop_capabilities: Vec<String>,
 }
 
-pub struct BubblewrapBuilder {
-    options: BubblewrapBuilderOptions,
+pub struct BubblewrapExecutor {
+    options: BubblewrapExecutorOptions,
     output: PathBuf,
     init: Option<InitData>,
 }
 
-impl BubblewrapBuilder {
-    pub fn new(output: PathBuf, options: BubblewrapBuilderOptions) -> Self {
+impl BubblewrapExecutor {
+    pub fn new(output: PathBuf, options: BubblewrapExecutorOptions) -> Self {
         Self {
             init: None,
             output,
@@ -80,8 +80,8 @@ impl BubblewrapBuilder {
     }
 }
 
-impl Builder for BubblewrapBuilder {
-    fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), BuilderError> {
+impl Executor for BubblewrapExecutor {
+    fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), Error> {
         let mut command = process::Command::new("bwrap");
         // dependencies
         if !dependencies.is_empty() {
@@ -183,8 +183,8 @@ impl Builder for BubblewrapBuilder {
         Ok(())
     }
 
-    fn run(&mut self, command: &process::Command) -> Result<process::Output, BuilderError> {
-        let child = self.init.as_mut().ok_or(BuilderError::Uninitialized)?;
+    fn run(&mut self, command: &process::Command) -> Result<process::Output, Error> {
+        let child = self.init.as_mut().ok_or(Error::Uninitialized)?;
         // weird workaround so the compiler doesnt yell at me
         let (stdin, stdout) = (&mut child.stdin, &mut child.stdout);
 
@@ -231,7 +231,7 @@ impl Builder for BubblewrapBuilder {
     }
 }
 
-impl Drop for BubblewrapBuilder {
+impl Drop for BubblewrapExecutor {
     fn drop(&mut self) {
         if let Some(InitData { ref mut child, .. }) = self.init {
             if let Err(err) = child.kill() {

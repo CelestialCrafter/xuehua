@@ -8,11 +8,7 @@ use mlua::Lua;
 use petgraph::dot::Dot;
 use tempfile::tempdir_in;
 use xh_engine::{
-    modules::{
-        builder::bubblewrap::BubblewrapBuilder, logger, planner::Planner, resolver::Resolver,
-        store::local::LocalStore, utils,
-    },
-    utils::ensure_dir,
+    builder::Builder, executor::bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions}, logger, planner::Planner, store::local::LocalStore, utils
 };
 
 use crate::options::{Subcommand, get_options};
@@ -44,24 +40,29 @@ fn main() -> Result<()> {
             logger::inject(&lua)?;
             utils::inject(&lua)?;
 
+            // setup engine modules
             let store_path = Path::new("store");
-            ensure_dir(store_path)?;
+            utils::ensure_dir(store_path)?;
             let mut store = LocalStore::new(store_path, false)?;
 
             let mut planner = Planner::new();
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
             println!("{:?}", Dot::new(&planner.plan()));
 
-            let mut resolver = Resolver::new(&mut store, &planner);
+            let mut builder = Builder::new(&mut store, &planner);
 
             // hold tempdirs until they need to be dropped
             let mut temp_paths = Vec::with_capacity(64);
             let base: &'static Path = Path::new("builds");
-            ensure_dir(base)?;
-            let output = resolver.resolve(&lua, 2.into(), || {
+
+            utils::ensure_dir(base)?;
+            let output = builder.build(&lua, 2.into(), || {
                 temp_paths.push(tempdir_in(base)?);
                 let path = temp_paths.last().unwrap().path().to_path_buf();
-                Ok(BubblewrapBuilder::new(path))
+                Ok(BubblewrapExecutor::new(
+                    path,
+                    BubblewrapExecutorOptions::default(),
+                ))
             });
 
             println!("{:?}", output);

@@ -9,44 +9,42 @@ use petgraph::{Direction::Outgoing, graph::NodeIndex, visit::EdgeRef};
 use thiserror::Error;
 
 use crate::{
-    modules::{
-        builder::{Builder, BuilderError, LuaCommand, LuaOutput},
-        planner::Planner,
-        store::{Store, StoreError},
-    },
+    executor::{self, LuaCommand, LuaOutput},
     package::{DependencyType, Package},
+    planner::Planner,
+    store,
 };
 
-const MODULE_NAME: &str = "xuehua.resolver";
+const MODULE_NAME: &str = "xuehua.builder";
 
 #[derive(Error, Debug)]
-pub enum ResolverError {
+pub enum Error {
     #[error("conflicting link point at {0}")]
     Conflict(PathBuf),
     #[error(transparent)]
-    StoreError(#[from] StoreError),
+    StoreError(#[from] store::Error),
     #[error(transparent)]
-    BuilderError(#[from] BuilderError),
+    ExecutorError(#[from] executor::Error),
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
 
-pub struct Resolver<'a, S: Store> {
+pub struct Builder<'a, S: store::Store> {
     store: &'a mut S,
     planner: &'a Planner,
 }
 
-impl<'a, S: Store> Resolver<'a, S> {
+impl<'a, S: store::Store> Builder<'a, S> {
     pub fn new(store: &'a mut S, planner: &'a Planner) -> Self {
         Self { store, planner }
     }
 
-    pub fn resolve<B: Builder, F: FnMut() -> Result<B, BuilderError>>(
+    pub fn build<E: executor::Executor, F: FnMut() -> Result<E, executor::Error>>(
         &mut self,
         lua: &Lua,
         root: NodeIndex,
-        mut make_builder: F,
-    ) -> Result<HashSet<PathBuf>, ResolverError> {
+        mut make_executor: F,
+    ) -> Result<HashSet<PathBuf>, Error> {
         let plan = self.planner.plan();
         let mut runtime = HashSet::new();
 
@@ -54,7 +52,7 @@ impl<'a, S: Store> Resolver<'a, S> {
             let pkg = store.package(&plan[node])?;
             let content = store.content(&pkg.artifact)?;
 
-            Ok::<_, StoreError>(content)
+            Ok::<_, store::Error>(content)
         };
 
         let mut order: Vec<_> = plan.range(plan.get_position(root)..).collect();
@@ -86,11 +84,11 @@ impl<'a, S: Store> Resolver<'a, S> {
                     content
                 }
                 // cache miss, build package
-                Err(StoreError::PackageNotFound(_)) => {
+                Err(store::Error::PackageNotFound(_)) => {
                     info!("building package {node:?}");
                     let package = &plan[node];
                     let dependencies = runtime.union(&buildtime).map(|v| v.as_path()).collect();
-                    let content = self.build(lua, package, dependencies, &mut make_builder)?;
+                    let content = self.build_one(lua, package, dependencies, &mut make_executor)?;
                     let artifact = self.store.register_artifact(&content)?;
                     self.store.register_package(package, &artifact)?;
 
@@ -107,13 +105,13 @@ impl<'a, S: Store> Resolver<'a, S> {
         Ok(runtime)
     }
 
-    fn build<B: Builder, F: FnMut() -> Result<B, BuilderError>>(
+    fn build_one<B: executor::Executor, F: FnMut() -> Result<B, executor::Error>>(
         &self,
         lua: &Lua,
         package: &Package,
         dependencies: Vec<&Path>,
         mut make_builder: F,
-    ) -> Result<PathBuf, ResolverError> {
+    ) -> Result<PathBuf, Error> {
         let mut builder = (make_builder)()?;
         builder.init(dependencies)?;
 
