@@ -18,13 +18,13 @@ use thiserror::Error;
 use crate::package::{DependencyType, Package, PackageId};
 
 #[derive(Error, Debug)]
-pub enum PlannerError {
+pub enum Error {
     #[error("package {package} not found")]
     NotFound { package: PackageId },
     #[error("package {package} has conflicting definitions")]
     Conflict { package: PackageId },
     #[error("cycle detected from {from} to {to}")]
-    Cyclic { from: PackageId, to: PackageId },
+    Cycle { from: PackageId, to: PackageId },
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
@@ -51,7 +51,7 @@ impl Planner {
         &self.plan
     }
 
-    pub fn run(&mut self, lua: &Lua, root: &Path) -> Result<(), PlannerError> {
+    pub fn run(&mut self, lua: &Lua, root: &Path) -> Result<(), Error> {
         let planner = RefCell::new(self);
         let get_planner = || {
             planner
@@ -97,11 +97,11 @@ impl Planner {
         &mut self,
         _lua: &Lua,
         _source: NodeIndex,
-    ) -> Result<NodeIndex, PlannerError> {
+    ) -> Result<NodeIndex, Error> {
         todo!()
     }
 
-    pub fn package(&mut self, pkg: Package) -> Result<NodeIndex, PlannerError> {
+    pub fn package(&mut self, pkg: Package) -> Result<NodeIndex, Error> {
         let mut hasher = DefaultHasher::new();
         pkg.hash(&mut hasher);
         let hash = hasher.finish();
@@ -116,7 +116,7 @@ impl Planner {
                     self.plan
                         .try_add_edge(node, NodeIndex::from(d_node), d_type)
                         // TODO: add ids once id resolver done
-                        .map_err(|_| PlannerError::Cyclic {
+                        .map_err(|_| Error::Cycle {
                             from: PackageId::default(),
                             to: PackageId::default(),
                         })?;

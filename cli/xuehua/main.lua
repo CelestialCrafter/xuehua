@@ -3,10 +3,10 @@ local utils = require("xuehua.utils")
 
 local build = function(id)
   return function()
-    local resolver = require("xuehua.resolver")
-    local command = resolver.Command("/busybox");
+    local builder = require("xuehua.builder")
+    local command = builder.Command("/busybox");
     command.arguments = { "touch", "/output/wawa/from-" .. id }
-    resolver.run(command)
+    builder.run(command)
   end
 end
 

@@ -1,6 +1,9 @@
 #[cfg(feature = "bubblewrap-builder")]
 pub mod bubblewrap;
 
+#[cfg(feature = "bubblewrap-builder")]
+pub use bubblewrap::BubblewrapExecutor;
+
 use std::{
     collections::HashMap,
     ffi::OsString,
@@ -14,7 +17,7 @@ use mlua::{FromLua, MetaMethod, UserData, Value};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum BuilderError {
+pub enum Error {
     #[cfg(feature = "bubblewrap-builder")]
     #[error(transparent)]
     JSONSerializationError(#[from] serde_json::Error),
@@ -104,8 +107,8 @@ impl UserData for LuaOutput {
     }
 }
 
-pub trait Builder: Sized {
-    fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), BuilderError>;
-    fn run(&mut self, command: &Command) -> Result<Output, BuilderError>;
+pub trait Executor: Sized {
+    fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), Error>;
+    fn run(&mut self, command: &Command) -> Result<Output, Error>;
     fn output(&self) -> &Path;
 }

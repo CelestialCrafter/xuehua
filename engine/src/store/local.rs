@@ -8,10 +8,10 @@ use jiff::Timestamp;
 use rusqlite::{Connection, OptionalExtension, Row, named_params};
 
 use crate::{
-    modules::store::{
-        ArtifactHash, PackageHash, Store, StoreArtifact, StoreError, StorePackage, hash_directory,
-    },
     package::Package,
+    store::{
+        ArtifactHash, PackageHash, Store, StoreArtifact, Error, StorePackage, hash_directory,
+    },
     utils::ensure_dir,
 };
 
@@ -47,7 +47,7 @@ pub struct LocalStore<'a> {
 }
 
 impl<'a> LocalStore<'a> {
-    pub fn new(root: &'a Path, in_memory: bool) -> Result<Self, StoreError> {
+    pub fn new(root: &'a Path, in_memory: bool) -> Result<Self, Error> {
         let db = if in_memory {
             Connection::open_in_memory()
         } else {
@@ -69,7 +69,7 @@ impl Store for LocalStore<'_> {
         &mut self,
         package: &Package,
         artifact: &blake3::Hash,
-    ) -> Result<PackageHash, StoreError> {
+    ) -> Result<PackageHash, Error> {
         let hasher = &mut DefaultHasher::new();
         package.hash(hasher);
         let hash = hasher.finish();
@@ -86,7 +86,7 @@ impl Store for LocalStore<'_> {
         Ok(hash)
     }
 
-    fn package(&self, package: &Package) -> Result<StorePackage, StoreError> {
+    fn package(&self, package: &Package) -> Result<StorePackage, Error> {
         let hasher = &mut DefaultHasher::new();
         package.hash(hasher);
         let hash = hasher.finish();
@@ -98,10 +98,10 @@ impl Store for LocalStore<'_> {
                 row_to_package,
             )
             .optional()?
-            .ok_or(StoreError::PackageNotFound(hash))
+            .ok_or(Error::PackageNotFound(hash))
     }
 
-    fn register_artifact(&mut self, content: &Path) -> Result<ArtifactHash, StoreError> {
+    fn register_artifact(&mut self, content: &Path) -> Result<ArtifactHash, Error> {
         let hash = hash_directory(content)?;
 
         self.db.execute(
@@ -117,7 +117,7 @@ impl Store for LocalStore<'_> {
         Ok(hash)
     }
 
-    fn artifact(&self, hash: &ArtifactHash) -> Result<StoreArtifact, StoreError> {
+    fn artifact(&self, hash: &ArtifactHash) -> Result<StoreArtifact, Error> {
         self.db
             .query_one(
                 Queries::GET_ARTIFACT,
@@ -125,13 +125,13 @@ impl Store for LocalStore<'_> {
                 row_to_artifact,
             )
             .optional()?
-            .ok_or(StoreError::ArtifactNotFound(*hash))
+            .ok_or(Error::ArtifactNotFound(*hash))
     }
 
-    fn content(&self, artifact: &ArtifactHash) -> Result<PathBuf, StoreError> {
+    fn content(&self, artifact: &ArtifactHash) -> Result<PathBuf, Error> {
         let path = self.artifact_path(artifact);
         if !path.try_exists()? {
-            return Err(StoreError::ArtifactNotFound(*artifact));
+            return Err(Error::ArtifactNotFound(*artifact));
         }
 
         Ok(path)
