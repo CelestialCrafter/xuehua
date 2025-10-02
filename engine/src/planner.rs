@@ -7,7 +7,7 @@ use std::{
 };
 
 use log::warn;
-use mlua::{ExternalResult, Lua};
+use mlua::{ExternalResult, Function, Lua, Table};
 use petgraph::{
     acyclic::Acyclic,
     data::Build,
@@ -96,7 +96,6 @@ impl Planner {
         }
     }
 
-    #[inline]
     pub fn plan(&self) -> &Plan {
         &self.plan
     }
@@ -111,6 +110,7 @@ impl Planner {
 
         lua.scope(|scope| {
             let module = lua.create_table()?;
+
             module.set(
                 "package",
                 scope.create_function(|_, pkg| {
@@ -120,11 +120,17 @@ impl Planner {
                         .into_lua_err()
                 })?,
             )?;
+
             module.set(
-                "repository",
-                scope.create_function(|lua, source: u32| {
+                "configure",
+                scope.create_function(|lua, table: Table| {
                     get_planner()?
-                        .repository(lua, source.into())
+                        .configure(
+                            lua,
+                            table.get::<u32>("source")?.into(),
+                            table.get("destination")?,
+                            table.get("modify")?,
+                        )
                         .map(|node| node.index())
                         .into_lua_err()
                 })?,
@@ -143,8 +149,18 @@ impl Planner {
         Ok(())
     }
 
-    pub fn repository(&mut self, _lua: &Lua, _source: NodeIndex) -> Result<NodeIndex, Error> {
-        todo!()
+    pub fn configure(
+        &mut self,
+        lua: &Lua,
+        source: NodeIndex,
+        destination: String,
+        modify: Function,
+    ) -> Result<NodeIndex, Error> {
+        let mut pkg = self.plan[source].clone();
+        pkg.id = destination;
+        pkg.configure(lua, modify)?;
+
+        Ok(self.plan.add_node(pkg))
     }
 
     pub fn package(&mut self, pkg: Package) -> Result<NodeIndex, Error> {
@@ -158,7 +174,7 @@ impl Planner {
                 let node = self.plan.add_node(pkg);
                 self.cache.insert(hash, node);
 
-                for (d_node, d_type) in self.plan[node].dependencies.clone() {
+                for (d_node, d_type) in self.plan[node].dependencies().clone() {
                     self.plan
                         .try_add_edge(node, NodeIndex::from(d_node), d_type)
                         // TODO: add ids once id resolver done

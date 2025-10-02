@@ -64,7 +64,7 @@ impl<'a, S: store::Store> Builder<'a, S> {
 
         for node in order {
             debug!("resolving {node:?}");
-            // add dependency outputs to their coresponding locations
+            // add dependency outputs to their corresponding locations
             let mut buildtime = HashSet::new();
             for edge in plan.edges_directed(node, Outgoing) {
                 let target = edge.target();
@@ -137,7 +137,7 @@ impl<'a, S: store::Store> Builder<'a, S> {
                 }
             });
 
-            package.build.call::<()>(())
+            package.build()
         })?;
 
         Ok(builder.output().to_path_buf())
