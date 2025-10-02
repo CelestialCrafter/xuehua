@@ -14,7 +14,7 @@ use mlua::{FromLua, MetaMethod, UserData, Value};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum BuilderError {
+pub enum ExecutorError {
     #[cfg(feature = "bubblewrap-builder")]
     #[error(transparent)]
     JSONSerializationError(#[from] serde_json::Error),
@@ -104,8 +104,8 @@ impl UserData for LuaOutput {
     }
 }
 
-pub trait Builder: Sized {
-    fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), BuilderError>;
-    fn run(&mut self, command: &Command) -> Result<Output, BuilderError>;
+pub trait Executor: Sized {
+    fn init(&mut self, dependencies: Vec<&Path>) -> Result<(), ExecutorError>;
+    fn run(&mut self, command: &Command) -> Result<Output, ExecutorError>;
     fn output(&self) -> &Path;
 }

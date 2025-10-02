@@ -9,7 +9,7 @@ use petgraph::dot::Dot;
 use tempfile::tempdir_in;
 use xh_engine::{
     modules::{
-        builder::bubblewrap::BubblewrapBuilder, logger, planner::Planner, resolver::Resolver,
+        executor::bubblewrap::BubblewrapExecutor, logger, planner::Planner, resolver::Resolver,
         store::local::LocalStore, utils,
     },
     utils::ensure_dir,
@@ -61,7 +61,7 @@ fn main() -> Result<()> {
             let output = resolver.resolve(&lua, 2.into(), || {
                 temp_paths.push(tempdir_in(base)?);
                 let path = temp_paths.last().unwrap().path().to_path_buf();
-                Ok(BubblewrapBuilder::new(path))
+                Ok(BubblewrapExecutor::new(path))
             });
 
             println!("{:?}", output);

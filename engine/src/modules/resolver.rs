@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::{
     modules::{
-        builder::{Builder, BuilderError, LuaCommand, LuaOutput},
+        executor::{Executor, ExecutorError, LuaCommand, LuaOutput},
         planner::Planner,
         store::{Store, StoreError},
     },
@@ -26,7 +26,7 @@ pub enum ResolverError {
     #[error(transparent)]
     StoreError(#[from] StoreError),
     #[error(transparent)]
-    BuilderError(#[from] BuilderError),
+    BuilderError(#[from] ExecutorError),
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
@@ -41,7 +41,7 @@ impl<'a, S: Store> Resolver<'a, S> {
         Self { store, planner }
     }
 
-    pub fn resolve<B: Builder, F: FnMut() -> Result<B, BuilderError>>(
+    pub fn resolve<B: Executor, F: FnMut() -> Result<B, ExecutorError>>(
         &mut self,
         lua: &Lua,
         root: NodeIndex,
@@ -107,7 +107,7 @@ impl<'a, S: Store> Resolver<'a, S> {
         Ok(runtime)
     }
 
-    fn build<B: Builder, F: FnMut() -> Result<B, BuilderError>>(
+    fn build<B: Executor, F: FnMut() -> Result<B, ExecutorError>>(
         &self,
         lua: &Lua,
         package: &Package,
