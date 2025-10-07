@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::HashSet,
     fs,
     hash::{DefaultHasher, Hash, Hasher},
     path::Path,
@@ -11,20 +11,20 @@ use mlua::{ExternalResult, Function, Lua, Table};
 use petgraph::{
     acyclic::Acyclic,
     data::Build,
-    graph::{DiGraph, NodeIndex},
+    graph::{DiGraph, NodeIndex, DefaultIx},
 };
 use thiserror::Error;
 
-use crate::package::{DependencyType, Package, PackageId};
+use crate::package::{DependencyType, Package};
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("package {package} not found")]
-    NotFound { package: PackageId },
+    NotFound { package: String },
     #[error("package {package} has conflicting definitions")]
-    Conflict { package: PackageId },
+    Conflict { package: String },
     #[error("cycle detected from {from} to {to}")]
-    Cycle { from: PackageId, to: PackageId },
+    Cycle { from: String, to: String },
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
@@ -81,21 +81,15 @@ pub type Plan = Acyclic<DiGraph<Package, DependencyType>>;
 ///
 /// # Ok::<_, xh_engine::planner::Error>(())
 /// ```
+#[derive(Default)]
 pub struct Planner {
     plan: Plan,
-    cache: HashMap<u64, NodeIndex>,
+    registered: HashSet<u64>,
 }
 
 const MODULE_NAME: &str = "xuehua.planner";
 
 impl Planner {
-    pub fn new() -> Planner {
-        Self {
-            plan: Plan::default(),
-            cache: HashMap::default(),
-        }
-    }
-
     pub fn plan(&self) -> &Plan {
         &self.plan
     }
@@ -127,7 +121,7 @@ impl Planner {
                     get_planner()?
                         .configure(
                             lua,
-                            table.get::<u32>("source")?.into(),
+                            table.get::<DefaultIx>("source")?.into(),
                             table.get("destination")?,
                             table.get("modify")?,
                         )
@@ -157,7 +151,7 @@ impl Planner {
         modify: Function,
     ) -> Result<NodeIndex, Error> {
         let mut pkg = self.plan[source].clone();
-        pkg.id = destination;
+        pkg.name = destination;
         pkg.configure(lua, modify)?;
 
         Ok(self.plan.add_node(pkg))
@@ -166,26 +160,21 @@ impl Planner {
     pub fn package(&mut self, pkg: Package) -> Result<NodeIndex, Error> {
         let mut hasher = DefaultHasher::new();
         pkg.hash(&mut hasher);
-        let hash = hasher.finish();
+        if !self.registered.insert(hasher.finish()) {
+            return Err(Error::Conflict { package: pkg.name });
+        }
 
-        Ok(match self.cache.get(&hash) {
-            Some(node) => *node,
-            None => {
-                let node = self.plan.add_node(pkg);
-                self.cache.insert(hash, node);
+        let node = self.plan.add_node(pkg);
+        for (d_node, d_type) in self.plan[node].dependencies().clone() {
+            self.plan
+                .try_add_edge(node, d_node, d_type)
+                // TODO: add ids once id resolver done
+                .map_err(|_| Error::Cycle {
+                    from: String::default(),
+                    to: String::default(),
+                })?;
+        }
 
-                for (d_node, d_type) in self.plan[node].dependencies().clone() {
-                    self.plan
-                        .try_add_edge(node, NodeIndex::from(d_node), d_type)
-                        // TODO: add ids once id resolver done
-                        .map_err(|_| Error::Cycle {
-                            from: PackageId::default(),
-                            to: PackageId::default(),
-                        })?;
-                }
-
-                node
-            }
-        })
+        Ok(node)
     }
 }

@@ -2,7 +2,6 @@ use std::{env, fs, path::PathBuf, sync::OnceLock};
 
 use clap::Parser;
 use eyre::{Context, OptionExt, Result};
-use xh_engine::package::PackageId;
 
 pub const DISPLAY_NAME: &str = "Xuěhuā";
 
@@ -29,19 +28,19 @@ pub enum Subcommand {
         reverse: bool,
 
         #[arg(value_name = "PACKAGE")]
-        package: PackageId,
+        package: String,
     },
 
     /// builds a package
     Build {
         #[arg(value_name = "PACKAGE")]
-        package: PackageId,
+        package: String,
     },
 
     /// start a shell in a package's environment
     Shell {
         #[arg(value_name = "PACKAGE")]
-        package: PackageId,
+        package: String,
     },
 
     /// remove unlinked packages from the store
