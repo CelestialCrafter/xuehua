@@ -45,7 +45,7 @@ fn main() -> Result<()> {
             let store_path = Path::new("store");
             utils::ensure_dir(store_path)?;
 
-            let mut planner = Planner::new();
+            let mut planner = Planner::default();
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
 
             println!("{:?}", Dot::new(planner.plan()));

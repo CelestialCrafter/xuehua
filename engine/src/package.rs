@@ -1,9 +1,8 @@
 use std::hash::{self, Hash};
 
 use mlua::{FromLua, Function, Lua, LuaSerdeExt, Table};
+use petgraph::graph::{DefaultIx, NodeIndex};
 use serde::Deserialize;
-
-pub type PackageId = String;
 
 #[derive(Deserialize, Debug, Clone, Hash, Eq, PartialEq)]
 pub struct Metadata {}
@@ -17,7 +16,7 @@ pub enum DependencyType {
 
 #[derive(Debug, Clone)]
 struct Partial {
-    dependencies: Vec<(u32, DependencyType)>,
+    dependencies: Vec<(NodeIndex, DependencyType)>,
     metadata: Metadata,
     build: Function,
 }
@@ -27,7 +26,11 @@ impl FromLua for Partial {
         let table = Table::from_lua(value, lua)?;
 
         Ok(Self {
-            dependencies: lua.from_value(table.get("dependencies")?)?,
+            dependencies: lua
+                .from_value::<Vec<(DefaultIx, _)>>(table.get("dependencies")?)?
+                .into_iter()
+                .map(|(n, t)| (NodeIndex::from(n), t))
+                .collect(),
             metadata: lua.from_value(table.get("metadata")?)?,
             build: table.get("build")?,
         })
@@ -52,14 +55,14 @@ impl Config {
 
 #[derive(Debug, Clone)]
 pub struct Package {
-    pub id: PackageId,
+    pub name: String,
     partial: Partial,
     config: Config,
 }
 
 impl hash::Hash for Package {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+        self.name.hash(state);
         self.partial.dependencies.hash(state);
         self.partial.metadata.hash(state);
         self.config.current.hash(state);
@@ -76,7 +79,7 @@ impl Package {
         self.partial.build.call(())
     }
 
-    pub fn dependencies(&self) -> &Vec<(u32, DependencyType)> {
+    pub fn dependencies(&self) -> &Vec<(NodeIndex, DependencyType)> {
         &self.partial.dependencies
     }
 
@@ -102,7 +105,7 @@ impl FromLua for Package {
         )?;
 
         Ok(Self {
-            id,
+            name: id,
             partial,
             config,
         })
