@@ -108,15 +108,15 @@ impl<'a, S: store::Store> Builder<'a, S> {
         Ok(runtime)
     }
 
-    fn build_one<B: executor::Executor, F: FnMut() -> Result<B, executor::Error>>(
+    fn build_one<E: executor::Executor, F: FnMut() -> Result<E, executor::Error>>(
         &self,
         lua: &Lua,
         package: &Package,
         dependencies: Vec<&Path>,
-        mut make_builder: F,
+        mut make_executor: F,
     ) -> Result<PathBuf, Error> {
-        let mut builder = (make_builder)()?;
-        builder.init(dependencies)?;
+        let mut executor = (make_executor)()?;
+        executor.init(dependencies)?;
 
         lua.scope(|scope| {
             let module = lua.create_table()?;
@@ -124,7 +124,7 @@ impl<'a, S: store::Store> Builder<'a, S> {
                 "run",
                 scope.create_function_mut(|_lua, userdata: AnyUserData| {
                     let command = &userdata.borrow::<LuaCommand>()?.0;
-                    let output = builder.run(&command).into_lua_err()?;
+                    let output = executor.run(&command).into_lua_err()?;
                     LuaOutput::try_from(output).into_lua_err()
                 })?,
             )?;
@@ -140,6 +140,6 @@ impl<'a, S: store::Store> Builder<'a, S> {
             package.build()
         })?;
 
-        Ok(builder.output().to_path_buf())
+        Ok(executor.output().to_path_buf())
     }
 }

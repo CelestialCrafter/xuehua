@@ -27,11 +27,8 @@ pub enum Error {
     PackageNotFound(PackageHash),
     #[error("artifact {0} not found")]
     ArtifactNotFound(ArtifactHash),
-    #[cfg(feature = "local-store")]
     #[error(transparent)]
-    SqliteError(#[from] rusqlite::Error),
-    #[error(transparent)]
-    IOError(#[from] io::Error),
+    ExternalError(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
 pub type ArtifactHash = blake3::Hash;

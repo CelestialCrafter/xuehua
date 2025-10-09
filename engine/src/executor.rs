@@ -7,7 +7,6 @@ pub use bubblewrap::BubblewrapExecutor;
 use std::{
     collections::HashMap,
     ffi::OsString,
-    io,
     path::Path,
     process::{Command, Output},
     string::FromUtf8Error,
@@ -18,13 +17,10 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[cfg(feature = "bubblewrap-builder")]
-    #[error(transparent)]
-    JSONSerializationError(#[from] serde_json::Error),
     #[error("builder is uninitialized")]
     Uninitialized,
     #[error(transparent)]
-    IOError(#[from] io::Error),
+    ExternalError(#[from] Box<dyn std::error::Error + Send + Sync>)
 }
 
 pub struct LuaCommand(pub Command);

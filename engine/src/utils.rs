@@ -2,6 +2,23 @@ use std::{fs, io, path::Path};
 
 use mlua::{Function, Lua, chunk};
 
+#[macro_export]
+macro_rules! impl_into_err {
+    ($(($error:ty, $fn:ident)),*) => {
+        /// Trait for converting [`std::result::Result`] into Lua [`Result`].
+        pub trait ExternalResult<T> {
+            $(fn $fn(self) -> Result<T, $error>; )*
+        }
+
+        impl<T, E: Into<Box<dyn std::error::Error + Send + Sync>>> ExternalResult<T> for Result<T, E>
+        {
+            $(fn $fn(self) -> Result<T, $error> {
+                self.map_err(|err| <$error>::ExternalError(err.into()))
+            })*
+        }
+    };
+}
+
 pub fn ensure_dir(path: &Path) -> io::Result<()> {
     match fs::create_dir(path) {
         Ok(_) => Ok(()),
