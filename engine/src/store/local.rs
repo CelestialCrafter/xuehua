@@ -8,11 +8,10 @@ use jiff::Timestamp;
 use rusqlite::{Connection, OptionalExtension, Row, named_params};
 
 use crate::{
+    ExternalResult, erase_err,
     package::Package,
-    store::{
-        ArtifactHash, PackageHash, Store, StoreArtifact, Error, StorePackage, hash_directory,
-    },
-    utils::ensure_dir,
+    store::{ArtifactHash, Error, PackageHash, Store, StoreArtifact, StorePackage, hash_directory},
+    utils::{AnyError, ensure_dir},
 };
 
 const DATABASE_NAME: &str = "store.sqlite";
@@ -49,14 +48,15 @@ pub struct LocalStore<'a> {
 
 impl<'a> LocalStore<'a> {
     pub fn new(root: &'a Path, in_memory: bool) -> Result<Self, Error> {
-        let db = if in_memory {
+        let db = erase_err!(if in_memory {
             Connection::open_in_memory()
         } else {
             Connection::open(root.join(DATABASE_NAME))
-        }?;
+        })?;
 
-        ensure_dir(&root.join("content"))?;
-        db.execute_batch(include_str!("local/initialize.sql"))?;
+        erase_err!(ensure_dir(&root.join("content")))?;
+        erase_err!(db.execute_batch(include_str!("local/initialize.sql")))?;
+
         Ok(Self { root, db })
     }
 
@@ -75,14 +75,14 @@ impl Store for LocalStore<'_> {
         package.hash(hasher);
         let hash = hasher.finish();
 
-        self.db.execute(
+        erase_err!(self.db.execute(
             Queries::REGISTER_PACKAGE,
             named_params! {
                 ":hash": hash.to_be_bytes(),
                 ":artifact": artifact.as_bytes(),
                 ":timestamp": Timestamp::now()
             },
-        )?;
+        ))?;
 
         Ok(hash)
     }
@@ -98,22 +98,23 @@ impl Store for LocalStore<'_> {
                 named_params! { ":hash": hash.to_be_bytes() },
                 row_to_package,
             )
-            .optional()?
+            .optional()
+            .into_store_err()?
             .ok_or(Error::PackageNotFound(hash))
     }
 
     fn register_artifact(&mut self, content: &Path) -> Result<ArtifactHash, Error> {
-        let hash = hash_directory(content)?;
+        let hash = hash_directory(content).into_store_err()?;
 
-        self.db.execute(
-            Queries::REGISTER_ARTIFACT,
-            named_params! { ":hash": hash.as_bytes(), ":timestamp": Timestamp::now() },
-        )?;
+        self.db
+            .execute(
+                Queries::REGISTER_ARTIFACT,
+                named_params! { ":hash": hash.as_bytes(), ":timestamp": Timestamp::now() },
+            )
+            .into_store_err()?;
 
         let to = self.artifact_path(&hash);
-        if !fs::exists(&to)? {
-            fs::rename(content, to)?;
-        }
+        fs::rename(content, to).into_store_err()?;
 
         Ok(hash)
     }
@@ -125,13 +126,14 @@ impl Store for LocalStore<'_> {
                 named_params! { ":hash": hash.as_bytes() },
                 row_to_artifact,
             )
-            .optional()?
+            .optional()
+            .into_store_err()?
             .ok_or(Error::ArtifactNotFound(*hash))
     }
 
     fn content(&self, artifact: &ArtifactHash) -> Result<PathBuf, Error> {
         let path = self.artifact_path(artifact);
-        if !path.try_exists()? {
+        if !path.try_exists().into_store_err()? {
             return Err(Error::ArtifactNotFound(*artifact));
         }
 

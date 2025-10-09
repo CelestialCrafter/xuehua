@@ -16,7 +16,10 @@ use rustix::io::dup2;
 use serde::{Deserialize, Serialize};
 use tempfile::tempfile;
 
-use crate::executor::{Executor, Error};
+use crate::{
+    ExternalResult,
+    executor::{Error, Executor},
+};
 
 static PARENT_FD: OnceCell<OwnedFd> = OnceCell::new();
 const CHILD_FD: i32 = 10;
@@ -46,8 +49,7 @@ impl CommandResponse {
     fn extract(self) -> Result<CommandResponseInfo, Error> {
         self.info
             .ok_or_else(|| self.error.unwrap_or("no error or info set".to_string()))
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
-            .map_err(Error::from)
+            .into_executor_err()
     }
 }
 
@@ -188,7 +190,7 @@ impl Executor for BubblewrapExecutor {
             .stdin(process::Stdio::piped())
             .stdout(process::Stdio::piped());
 
-        let mut child = command.spawn()?;
+        let mut child = command.spawn().into_executor_err()?;
         let stdin = child.stdin.take().expect("should be able to take stdin");
         let stdout = BufReader::new(child.stdout.take().expect("should be able to take stdout"));
         self.init = Some(InitData {
@@ -214,11 +216,12 @@ impl Executor for BubblewrapExecutor {
         serde_json::to_writer(
             stdin,
             &CommandRequest {
-                program: to_string(command.get_program())?,
+                program: to_string(command.get_program()).into_executor_err()?,
                 args: command
                     .get_args()
                     .map(to_string)
-                    .collect::<Result<_, _>>()?,
+                    .collect::<Result<_, _>>()
+                    .into_executor_err()?,
                 working_dir: command.get_current_dir().map(|v| v.to_path_buf()),
                 environment: command
                     .get_envs()
@@ -229,13 +232,17 @@ impl Executor for BubblewrapExecutor {
                             to_string(v.unwrap_or_default())?
                         ))
                     })
-                    .collect::<Result<_, _>>()?,
+                    .collect::<Result<_, _>>()
+                    .into_executor_err()?,
             },
-        )?;
+        )
+        .into_executor_err()?;
 
         let buf = &mut String::with_capacity(8192);
-        stdout.read_line(buf)?;
-        let response = serde_json::from_reader::<_, CommandResponse>(buf.as_bytes())?.extract()?;
+        stdout.read_line(buf).into_executor_err()?;
+        let response = serde_json::from_reader::<_, CommandResponse>(buf.as_bytes())
+            .into_executor_err()?
+            .extract()?;
         Ok(process::Output {
             status: ExitStatusExt::from_raw(response.exit_code),
             stdout: response.stdout,
