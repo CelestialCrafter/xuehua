@@ -11,7 +11,7 @@ use mlua::{ExternalResult, Function, Lua, Table};
 use petgraph::{
     acyclic::Acyclic,
     data::Build,
-    graph::{DiGraph, NodeIndex, DefaultIx},
+    graph::{DefaultIx, DiGraph, NodeIndex},
 };
 use thiserror::Error;
 
@@ -19,8 +19,8 @@ use crate::package::{DependencyType, Package};
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("package {package} not found")]
-    NotFound { package: String },
+    #[error("node {0:?} not found")]
+    NotFound(NodeIndex),
     #[error("package {package} has conflicting definitions")]
     Conflict { package: String },
     #[error("cycle detected from {from} to {to}")]
@@ -150,7 +150,11 @@ impl Planner {
         destination: String,
         modify: Function,
     ) -> Result<NodeIndex, Error> {
-        let mut pkg = self.plan[source].clone();
+        let mut pkg = self
+            .plan
+            .node_weight(source)
+            .ok_or(Error::NotFound(source))?
+            .clone();
         pkg.name = destination;
         pkg.configure(lua, modify)?;
 
@@ -165,7 +169,13 @@ impl Planner {
         }
 
         let node = self.plan.add_node(pkg);
-        for (d_node, d_type) in self.plan[node].dependencies().clone() {
+        for (d_node, d_type) in self
+            .plan
+            .node_weight(node)
+            .ok_or(Error::NotFound(node))?
+            .dependencies()
+            .clone()
+        {
             self.plan
                 .try_add_edge(node, d_node, d_type)
                 // TODO: add ids once id resolver done
