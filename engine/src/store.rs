@@ -19,31 +19,31 @@ use jiff::Timestamp;
 use thiserror::Error;
 use walkdir::WalkDir;
 
-use crate::package::Package;
+use crate::package;
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("package {0} not found")]
-    PackageNotFound(PackageHash),
+    PackageNotFound(PackageId),
     #[error("artifact {0} not found")]
-    ArtifactNotFound(ArtifactHash),
+    ArtifactNotFound(ArtifactId),
     #[error(transparent)]
     ExternalError(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
-pub type ArtifactHash = blake3::Hash;
-pub type PackageHash = u64;
+pub type ArtifactId = blake3::Hash;
+pub type PackageId = package::Id;
 
 #[derive(Debug)]
 pub struct StorePackage {
-    pub hash: PackageHash,
-    pub artifact: ArtifactHash,
+    pub package: PackageId,
+    pub artifact: ArtifactId,
     pub created_at: Timestamp,
 }
 
 #[derive(Debug)]
 pub struct StoreArtifact {
-    pub hash: ArtifactHash,
+    pub artifact: ArtifactId,
     pub created_at: Timestamp,
 }
 
@@ -58,14 +58,14 @@ pub struct StoreArtifact {
 pub trait Store {
     fn register_package(
         &mut self,
-        package: &Package,
-        artifact: &ArtifactHash,
-    ) -> Result<PackageHash, Error>;
-    fn package(&self, package: &Package) -> Result<StorePackage, Error>;
+        package: &package::Package,
+        artifact: &ArtifactId,
+    ) -> Result<StorePackage, Error>;
+    fn package(&self, package: &PackageId) -> Result<StorePackage, Error>;
 
-    fn register_artifact(&mut self, content: &Path) -> Result<ArtifactHash, Error>;
-    fn artifact(&self, artifact: &ArtifactHash) -> Result<StoreArtifact, Error>;
-    fn content(&self, artifact: &ArtifactHash) -> Result<PathBuf, Error>;
+    fn register_artifact(&mut self, content: &Path) -> Result<StoreArtifact, Error>;
+    fn artifact(&self, artifact: &ArtifactId) -> Result<StoreArtifact, Error>;
+    fn content(&self, artifact: &ArtifactId) -> Result<PathBuf, Error>;
 }
 
 pub fn hash_directory(dir: &Path) -> io::Result<Hash> {

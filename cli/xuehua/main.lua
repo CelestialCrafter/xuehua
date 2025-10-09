@@ -21,13 +21,6 @@ local build = function(name)
 end
 
 
-local p3 = plan.package(utils.no_config {
-  name = "p3",
-  dependencies = {},
-  metadata = {},
-  build = build("p3")
-})
-
 local p2 = plan.package(utils.no_config {
   name = "p2",
   dependencies = {},
@@ -35,12 +28,21 @@ local p2 = plan.package(utils.no_config {
   build = build("p2")
 })
 
-local p3a = plan.package(utils.no_config {
+local p3 = plan.package(utils.no_config {
   name = "p3",
   dependencies = { utils.runtime(p2) },
   metadata = {},
   build = build("p3")
 })
+
+local p3a = plan.namespace("my-ns", function()
+  return plan.package(utils.no_config {
+    name = "p3",
+    dependencies = { utils.runtime(p2) },
+    metadata = {},
+    build = build("p3")
+  })
+end)
 
 plan.package(utils.no_config {
   name = "p1",

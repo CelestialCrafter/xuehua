@@ -49,7 +49,7 @@ fn main() -> Result<()> {
             utils::ensure_dir(store_dir)?;
             let mut store = LocalStore::new(store_dir)?;
 
-            let mut planner = Planner::default();
+            let mut planner = Planner::new(&lua);
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
             println!("{:?}", Dot::new(planner.plan()));
 
@@ -71,7 +71,7 @@ fn main() -> Result<()> {
             );
 
             // run build
-            let runtime = builder.build(&lua, NodeIndex::from(2))?;
+            let runtime = builder.build(&lua, NodeIndex::from(3))?;
             dbg!(runtime);
         }
         Subcommand::Link {

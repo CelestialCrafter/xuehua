@@ -2,12 +2,11 @@ use std::{
     cell::RefCell,
     collections::HashSet,
     fs,
-    hash::{DefaultHasher, Hash, Hasher},
     path::Path,
 };
 
 use log::warn;
-use mlua::{ExternalResult, Function, Lua, Table};
+use mlua::{ExternalResult, Function, Lua, Table, Value};
 use petgraph::{
     acyclic::Acyclic,
     data::Build,
@@ -15,16 +14,19 @@ use petgraph::{
 };
 use thiserror::Error;
 
-use crate::package::{Dependency, LinkTime, LuaNodeIndex, Package};
+use crate::{
+    package::{Dependency, LinkTime, LuaNodeIndex, Package},
+    store::PackageId,
+};
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("node {0:?} not found")]
     NotFound(NodeIndex),
     #[error("package {package} has conflicting definitions")]
-    Conflict { package: String },
-    #[error("cycle detected from node {from:?} to node {to:?}")]
-    Cycle { from: NodeIndex, to: NodeIndex },
+    Conflict { package: PackageId },
+    #[error("cycle detected from package {from:?} to package {to:?}")]
+    Cycle { from: PackageId, to: PackageId },
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
@@ -81,20 +83,93 @@ pub type Plan = Acyclic<DiGraph<Package, LinkTime>>;
 ///
 /// # Ok::<_, xh_engine::planner::Error>(())
 /// ```
-#[derive(Default)]
-pub struct Planner {
+pub struct Planner<'a> {
     plan: Plan,
-    registered: HashSet<u64>,
+    registered: HashSet<PackageId>,
+    lua: &'a Lua,
 }
 
 const MODULE_NAME: &str = "xuehua.planner";
 
-impl Planner {
+impl<'a> Planner<'a> {
+    pub fn new(lua: &'a Lua) -> Self {
+        Self {
+            plan: Plan::default(),
+            registered: HashSet::default(),
+            lua,
+        }
+    }
+
     pub fn plan(&self) -> &Plan {
         &self.plan
     }
 
+    pub fn lua(&self) -> &Lua {
+        &self.lua
+    }
+
+    pub fn configure(
+        &mut self,
+        lua: &Lua,
+        source: NodeIndex,
+        destination: String,
+        modify: Function,
+    ) -> Result<NodeIndex, Error> {
+        let mut pkg = self
+            .plan
+            .node_weight(source)
+            .ok_or(Error::NotFound(source))?
+            .clone();
+        pkg.id.name = destination;
+        pkg.configure(lua, modify)?;
+
+        Ok(self.plan.add_node(pkg))
+    }
+
+    pub fn package(
+        &mut self,
+        mut pkg: Package,
+        namespace: Vec<String>,
+    ) -> Result<NodeIndex, Error> {
+        pkg.id.namespace = namespace;
+
+        // ensure no conflicts
+        if !self.registered.insert(pkg.id.clone()) {
+            return Err(Error::Conflict { package: pkg.id });
+        }
+
+        // register node and add dependency edges
+        let node = self.plan.add_node(pkg);
+        for Dependency {
+            node: d_node,
+            time: d_time,
+        } in self
+            .plan
+            .node_weight(node)
+            .ok_or(Error::NotFound(node))?
+            .dependencies()
+            .clone()
+        {
+            let d_node = d_node.into();
+            self.plan
+                .try_add_edge(node, d_node, d_time)
+                .map_err(|_| Error::Cycle {
+                    from: self.plan[node].id.clone(),
+                    to: self.plan[d_node].id.clone(),
+                })?;
+        }
+
+        Ok(node)
+    }
+
     pub fn run(&mut self, lua: &Lua, root: &Path) -> Result<(), Error> {
+        let namespace = RefCell::new(vec!["root".to_string()]);
+        let get_namespace = || {
+            namespace
+                .try_borrow_mut()
+                .map_err(|_| mlua::Error::RecursiveMutCallback)
+        };
+
         let planner = RefCell::new(self);
         let get_planner = || {
             planner
@@ -106,10 +181,21 @@ impl Planner {
             let module = lua.create_table()?;
 
             module.set(
+                "namespace",
+                scope.create_function(|_, (name, func): (String, Function)| {
+                    // release borrow to allow nested namespace calls
+                    get_namespace()?.push(name);
+                    let rval = func.call::<Value>(());
+                    get_namespace()?.pop();
+                    Ok(rval)
+                })?,
+            )?;
+
+            module.set(
                 "package",
                 scope.create_function(|_, pkg| {
                     get_planner()?
-                        .package(pkg)
+                        .package(pkg, get_namespace()?.clone())
                         .map(LuaNodeIndex::from)
                         .into_lua_err()
                 })?,
@@ -141,53 +227,5 @@ impl Planner {
         })?;
 
         Ok(())
-    }
-
-    pub fn configure(
-        &mut self,
-        lua: &Lua,
-        source: NodeIndex,
-        destination: String,
-        modify: Function,
-    ) -> Result<NodeIndex, Error> {
-        let mut pkg = self
-            .plan
-            .node_weight(source)
-            .ok_or(Error::NotFound(source))?
-            .clone();
-        pkg.name = destination;
-        pkg.configure(lua, modify)?;
-
-        Ok(self.plan.add_node(pkg))
-    }
-
-    pub fn package(&mut self, pkg: Package) -> Result<NodeIndex, Error> {
-        let mut hasher = DefaultHasher::new();
-        pkg.hash(&mut hasher);
-        if !self.registered.insert(hasher.finish()) {
-            return Err(Error::Conflict { package: pkg.name });
-        }
-
-        let node = self.plan.add_node(pkg);
-        for Dependency {
-            node: d_node,
-            time: d_time,
-        } in self
-            .plan
-            .node_weight(node)
-            .ok_or(Error::NotFound(node))?
-            .dependencies()
-            .clone()
-        {
-            let d_node = d_node.into();
-            self.plan
-                .try_add_edge(node, d_node, d_time)
-                .map_err(|_| Error::Cycle {
-                    from: node,
-                    to: d_node,
-                })?;
-        }
-
-        Ok(node)
     }
 }

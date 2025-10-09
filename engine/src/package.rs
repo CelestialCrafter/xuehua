@@ -1,13 +1,39 @@
-use std::hash::{self, Hash};
+use std::{fmt, str::FromStr};
 
 use mlua::{AnyUserData, FromLua, Function, Lua, LuaSerdeExt, Table, UserData};
 use petgraph::graph::NodeIndex;
-use serde::Deserialize;
+use thiserror::Error;
 
-#[derive(Deserialize, Debug, Clone, Hash, Eq, PartialEq)]
-pub struct Metadata {}
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct Id {
+    pub name: String,
+    pub namespace: Vec<String>,
+}
 
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+impl fmt::Display for Id {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}@{}", self.name, self.namespace.join("/"))
+    }
+}
+
+#[derive(Error, Debug)]
+#[error("could not parse id")]
+pub struct ParseIdError;
+
+impl FromStr for Id {
+    type Err = ParseIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (name, namespace) = s.split_once("@").ok_or(ParseIdError)?;
+
+        Ok(Self {
+            name: name.to_string(),
+            namespace: namespace.split("/").map(|s| s.to_string()).collect(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct LuaNodeIndex(NodeIndex);
 
 impl From<NodeIndex> for LuaNodeIndex {
@@ -24,7 +50,7 @@ impl From<LuaNodeIndex> for NodeIndex {
 
 impl UserData for LuaNodeIndex {}
 
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub enum LinkTime {
     Runtime,
     Buildtime,
@@ -44,7 +70,7 @@ impl FromLua for LinkTime {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Dependency {
     pub node: LuaNodeIndex,
     pub time: LinkTime,
@@ -64,6 +90,9 @@ impl FromLua for Dependency {
 }
 
 #[derive(Debug, Clone)]
+pub struct Metadata;
+
+#[derive(Debug, Clone)]
 struct Partial {
     dependencies: Vec<Dependency>,
     metadata: Metadata,
@@ -76,7 +105,7 @@ impl FromLua for Partial {
 
         Ok(Self {
             dependencies: table.get("dependencies")?,
-            metadata: lua.from_value(table.get("metadata")?)?,
+            metadata: Metadata,
             build: table.get("build")?,
         })
     }
@@ -100,18 +129,9 @@ impl Config {
 
 #[derive(Debug, Clone)]
 pub struct Package {
-    pub name: String,
+    pub id: Id,
     partial: Partial,
     config: Config,
-}
-
-impl hash::Hash for Package {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-        self.partial.dependencies.hash(state);
-        self.partial.metadata.hash(state);
-        self.config.current.hash(state);
-    }
 }
 
 impl Package {
@@ -138,10 +158,12 @@ impl FromLua for Package {
         let table = Table::from_lua(value, lua)?;
 
         let name = table.get("name")?;
+
         let mut config = Config {
             current: serde_json::Value::Null,
             apply: table.get("configure")?,
         };
+
         let partial = config.configure(
             lua,
             lua.create_function::<_, _, mlua::Value>(move |_, _: mlua::Value| {
@@ -150,7 +172,10 @@ impl FromLua for Package {
         )?;
 
         Ok(Self {
-            name,
+            id: Id {
+                name,
+                namespace: Default::default(),
+            },
             partial,
             config,
         })

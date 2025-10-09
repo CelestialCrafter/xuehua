@@ -62,7 +62,7 @@ impl<'a, S: store::Store> Builder<'a, S> {
 
     pub fn build(&mut self, lua: &Lua, root: NodeIndex) -> Result<HashSet<PathBuf>, Error> {
         let pkg_content = |store: &S, node: NodeIndex| {
-            let pkg = store.package(&self.plan[node])?;
+            let pkg = store.package(&self.plan[node].id)?;
             let content = store.content(&pkg.artifact)?;
 
             Ok::<_, store::Error>(content)
@@ -108,14 +108,9 @@ impl<'a, S: store::Store> Builder<'a, S> {
                     let dependencies = runtime.union(&buildtime).map(|v| v.as_path()).collect();
                     let environment = self.build_one(lua, &module, package, dependencies)?;
 
-                    let artifact = match self
+                    let store::StoreArtifact { artifact, .. } = self
                         .store
-                        .register_artifact(&environment.path().join("output"))
-                    {
-                        Ok(v) => v,
-                        Err(store::Error::ArtifactRegistered(hash)) => hash,
-                        Err(err) => return Err(err.into()),
-                    };
+                        .register_artifact(&environment.path().join("output"))?;
                     self.store.register_package(package, &artifact)?;
                     self.store.content(&artifact)?
                 }
