@@ -14,7 +14,7 @@ use crate::{
     utils::ensure_dir,
 };
 
-const DATABASE_NAME: &str = "store.sqlite";
+const DATABASE_NAME: &str = "store.db";
 
 struct Queries;
 
@@ -47,17 +47,10 @@ pub struct LocalStore<'a> {
 }
 
 impl<'a> LocalStore<'a> {
-    pub fn new(root: &'a Path, in_memory: bool) -> Result<Self, Error> {
-        let db = if in_memory {
-            Connection::open_in_memory()
-        } else {
-            Connection::open(root.join(DATABASE_NAME))
-        }
-        .and_then(|db| {
-            db.execute_batch(include_str!("local/initialize.sql"))?;
-            Ok(db)
-        })
-        .into_store_err()?;
+    pub fn new(root: &'a Path) -> Result<Self, Error> {
+        let db = Connection::open(root.join(DATABASE_NAME)).into_store_err()?;
+        db.execute_batch(include_str!("local/initialize.sql"))
+            .into_store_err()?;
 
         ensure_dir(&root.join("content")).into_store_err()?;
         Ok(Self { root, db })
