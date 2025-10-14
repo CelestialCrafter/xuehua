@@ -1,22 +1,71 @@
 use std::hash::{self, Hash};
 
-use mlua::{FromLua, Function, Lua, LuaSerdeExt, Table};
-use petgraph::graph::{DefaultIx, NodeIndex};
+use mlua::{AnyUserData, FromLua, Function, Lua, LuaSerdeExt, Table, UserData};
+use petgraph::graph::NodeIndex;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone, Hash, Eq, PartialEq)]
 pub struct Metadata {}
 
-#[derive(Deserialize, Debug, Clone, Copy, Hash, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub enum DependencyType {
-    Buildtime,
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub struct LuaNodeIndex(NodeIndex);
+
+impl From<NodeIndex> for LuaNodeIndex {
+    fn from(value: NodeIndex) -> Self {
+        Self(value)
+    }
+}
+
+impl From<LuaNodeIndex> for NodeIndex {
+    fn from(value: LuaNodeIndex) -> Self {
+        value.0
+    }
+}
+
+impl UserData for LuaNodeIndex {}
+
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub enum LinkTime {
     Runtime,
+    Buildtime,
+}
+
+impl FromLua for LinkTime {
+    fn from_lua(value: mlua::Value, _: &Lua) -> Result<Self, mlua::Error> {
+        match value.to_string()?.as_str() {
+            "buildtime" => Ok(LinkTime::Buildtime),
+            "runtime" => Ok(LinkTime::Runtime),
+            _ => Err(mlua::Error::FromLuaConversionError {
+                from: value.type_name(),
+                to: "LinkTime".to_string(),
+                message: Some(r#"value is not "buildtime" or "runtime""#.to_string()),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub struct Dependency {
+    pub node: LuaNodeIndex,
+    pub time: LinkTime,
+}
+
+impl FromLua for Dependency {
+    fn from_lua(value: mlua::Value, lua: &Lua) -> Result<Self, mlua::Error> {
+        let table = Table::from_lua(value, lua)?;
+
+        Ok(Self {
+            node: *table
+                .get::<AnyUserData>("package")?
+                .borrow::<LuaNodeIndex>()?,
+            time: table.get("type")?,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
 struct Partial {
-    dependencies: Vec<(NodeIndex, DependencyType)>,
+    dependencies: Vec<Dependency>,
     metadata: Metadata,
     build: Function,
 }
@@ -26,11 +75,7 @@ impl FromLua for Partial {
         let table = Table::from_lua(value, lua)?;
 
         Ok(Self {
-            dependencies: lua
-                .from_value::<Vec<(DefaultIx, _)>>(table.get("dependencies")?)?
-                .into_iter()
-                .map(|(n, t)| (NodeIndex::from(n), t))
-                .collect(),
+            dependencies: table.get("dependencies")?,
             metadata: lua.from_value(table.get("metadata")?)?,
             build: table.get("build")?,
         })
@@ -79,7 +124,7 @@ impl Package {
         self.partial.build.call(())
     }
 
-    pub fn dependencies(&self) -> &Vec<(NodeIndex, DependencyType)> {
+    pub fn dependencies(&self) -> &Vec<Dependency> {
         &self.partial.dependencies
     }
 
@@ -92,7 +137,7 @@ impl FromLua for Package {
     fn from_lua(value: mlua::Value, lua: &Lua) -> Result<Self, mlua::Error> {
         let table = Table::from_lua(value, lua)?;
 
-        let id = table.get("id")?;
+        let name = table.get("name")?;
         let mut config = Config {
             current: serde_json::Value::Null,
             apply: table.get("configure")?,
@@ -105,7 +150,7 @@ impl FromLua for Package {
         )?;
 
         Ok(Self {
-            name: id,
+            name,
             partial,
             config,
         })

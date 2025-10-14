@@ -43,12 +43,12 @@ pub fn register_module(lua: &Lua) -> Result<(), mlua::Error> {
 
     let [runtime, buildtime, no_config] = lua
         .load(chunk! {
-            local function runtime(id)
-                return { id, "runtime" }
+            local function runtime(pkg)
+                return { type = "runtime", package = pkg }
             end
 
-            local function buildtime(id)
-                return { id, "buildtime" }
+            local function buildtime(pkg)
+                return { type = "buildtime", package = pkg }
             end
 
             local function no_config(pkg)

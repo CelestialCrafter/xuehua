@@ -1,7 +1,7 @@
 local plan = require("xuehua.planner")
 local utils = require("xuehua.utils")
 
-local build = function(id)
+local build = function(name)
   return function()
     local manager = require("xuehua.executor")
     local runner = manager.runner()
@@ -14,7 +14,7 @@ local build = function(id)
 
     do
       local command = runner:create("/busybox");
-      command.arguments = { "touch", "/output/wawa/from-" .. id }
+      command.arguments = { "touch", "/output/wawa/from-" .. name }
       runner:dispatch(command)
     end
   end
@@ -22,22 +22,29 @@ end
 
 
 local p3 = plan.package(utils.no_config {
-  id = "p3",
+  name = "p3",
   dependencies = {},
   metadata = {},
   build = build("p3")
 })
 
 local p2 = plan.package(utils.no_config {
-  id = "p2",
+  name = "p2",
   dependencies = {},
   metadata = {},
   build = build("p2")
 })
 
+local p3a = plan.package(utils.no_config {
+  name = "p3",
+  dependencies = { utils.runtime(p2) },
+  metadata = {},
+  build = build("p3")
+})
+
 plan.package(utils.no_config {
-  id = "p1",
-  dependencies = { utils.runtime(p2), utils.buildtime(p3) },
+  name = "p1",
+  dependencies = { utils.runtime(p3a), utils.buildtime(p3) },
   metadata = {},
   build = build("p1")
 })

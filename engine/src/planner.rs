@@ -15,7 +15,7 @@ use petgraph::{
 };
 use thiserror::Error;
 
-use crate::package::{DependencyType, Package};
+use crate::package::{Dependency, LinkTime, LuaNodeIndex, Package};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -23,13 +23,13 @@ pub enum Error {
     NotFound(NodeIndex),
     #[error("package {package} has conflicting definitions")]
     Conflict { package: String },
-    #[error("cycle detected from {from} to {to}")]
-    Cycle { from: String, to: String },
+    #[error("cycle detected from node {from:?} to node {to:?}")]
+    Cycle { from: NodeIndex, to: NodeIndex },
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
 
-pub type Plan = Acyclic<DiGraph<Package, DependencyType>>;
+pub type Plan = Acyclic<DiGraph<Package, LinkTime>>;
 
 /// Package dependency graph generator
 ///
@@ -110,7 +110,7 @@ impl Planner {
                 scope.create_function(|_, pkg| {
                     get_planner()?
                         .package(pkg)
-                        .map(|node| node.index())
+                        .map(LuaNodeIndex::from)
                         .into_lua_err()
                 })?,
             )?;
@@ -125,7 +125,7 @@ impl Planner {
                             table.get("destination")?,
                             table.get("modify")?,
                         )
-                        .map(|node| node.index())
+                        .map(LuaNodeIndex::from)
                         .into_lua_err()
                 })?,
             )?;
@@ -169,19 +169,22 @@ impl Planner {
         }
 
         let node = self.plan.add_node(pkg);
-        for (d_node, d_type) in self
+        for Dependency {
+            node: d_node,
+            time: d_time,
+        } in self
             .plan
             .node_weight(node)
             .ok_or(Error::NotFound(node))?
             .dependencies()
             .clone()
         {
+            let d_node = d_node.into();
             self.plan
-                .try_add_edge(node, d_node, d_type)
-                // TODO: add ids once id resolver done
+                .try_add_edge(node, d_node, d_time)
                 .map_err(|_| Error::Cycle {
-                    from: String::default(),
-                    to: String::default(),
+                    from: node,
+                    to: d_node,
                 })?;
         }
 

@@ -30,7 +30,7 @@ pub trait Executor {
     fn dispatch(&mut self, lua: &Lua, data: AnyUserData) -> Result<MultiValue, Error>;
 }
 
-type BoxDynExec = Box<dyn Executor + Send>;
+type BoxDynExec = Box<dyn Executor>;
 
 type ExecFuncReturn = Result<BoxDynExec, Error>;
 

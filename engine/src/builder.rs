@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::{
     executor,
-    package::{DependencyType, Package},
+    package::{LinkTime, Package},
     planner::Plan,
     store,
 };
@@ -83,12 +83,13 @@ impl<'a, S: store::Store> Builder<'a, S> {
             for edge in self.plan.edges_directed(node, Outgoing) {
                 let target = edge.target();
                 let content = pkg_content(self.store, target)?;
+
                 match edge.weight() {
-                    DependencyType::Buildtime => {
+                    LinkTime::Buildtime => {
                         debug!("adding {target:?} to buildtime closure");
                         buildtime.insert(content);
                     }
-                    DependencyType::Runtime => {
+                    LinkTime::Runtime => {
                         debug!("adding {target:?} to runtime closure");
                         runtime.insert(content);
                     }
