@@ -11,8 +11,7 @@ path = "src/main.rs"
 clap = { version = "4.5.45", features = ["derive", "wrap_help"] }
 fern = "0.7.1"
 eyre = { version = "0.6.12", default-features = false, features = ["track-caller"] }
-xh-engine = { path = "../engine", features = ["bubblewrap-builder", "local-store"] }
+xh-engine = { path = "../engine", features = ["bubblewrap-executor", "local-store"] }
 log.workspace = true
-tempfile.workspace = true
 petgraph.workspace = true
 mlua.workspace = true

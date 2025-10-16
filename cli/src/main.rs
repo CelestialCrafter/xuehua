@@ -1,18 +1,16 @@
 pub mod options;
 
-use std::{io::stderr, path::Path};
+use std::{fs::read_dir, io::stderr, path::Path};
 
 use eyre::{Context, DefaultHandler, Result};
-use log::LevelFilter;
+use log::{info, LevelFilter};
 use mlua::Lua;
-use petgraph::{dot::Dot, graph::NodeIndex};
+use petgraph::graph::NodeIndex;
 use xh_engine::{
     builder::{Builder, BuilderOptions},
     executor::{BubblewrapExecutor, Manager, bubblewrap::BubblewrapExecutorOptions},
     logger,
-    package::manifest::Manifest,
     planner::Planner,
-    store::LocalStore,
     utils,
 };
 
@@ -45,40 +43,36 @@ fn main() -> Result<()> {
             logger::register_module(&lua)?;
             utils::register_module(&lua)?;
 
-            // setup engine modules
-            let store_dir = Path::new("store");
-            utils::ensure_dir(store_dir)?;
-            let mut store = LocalStore::new(store_dir)?;
-
+            // create engine modules
             let mut planner = Planner::new(&lua);
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
-            println!("{:?}", Dot::new(planner.plan()));
-            let plan = planner.plan();
-
-            let manifest = Manifest::create(plan, &store)?;
 
             let mut manager = Manager::default();
             manager.register("runner".to_string(), |env| {
-                let executor = BubblewrapExecutor::new(env, BubblewrapExecutorOptions::default())?;
-                Ok(Box::new(executor))
+                Ok(Box::new(BubblewrapExecutor::new(
+                    env.to_path_buf(),
+                    BubblewrapExecutorOptions::default(),
+                )?))
             });
 
             let build_dir = Path::new("builds");
             utils::ensure_dir(build_dir)?;
 
             let mut builder = Builder::new(
-                &mut store,
-                &manifest,
-                plan,
-                manager,
+                NodeIndex::from(3),
+                &planner,
+                &manager,
                 BuilderOptions {
                     build_dir: build_dir.to_path_buf(),
                 },
             );
 
-            // run build
-            let runtime = builder.build(&lua, NodeIndex::from(3))?;
-            dbg!(runtime);
+            // build target package
+            while let Some(result) = builder.next() {
+                let (pkg, idx) = result?;
+                let content: Vec<_> = read_dir(builder.environment(idx).join("output/wawa"))?.collect();
+                info!("package {} was built with contents {:?}", pkg.id, content);
+            }
         }
         Subcommand::Link {
             reverse: _,
