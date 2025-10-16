@@ -1,6 +1,6 @@
-#[cfg(feature = "bubblewrap-builder")]
+#[cfg(feature = "bubblewrap-executor")]
 pub mod bubblewrap;
-#[cfg(feature = "bubblewrap-builder")]
+#[cfg(feature = "bubblewrap-executor")]
 pub use bubblewrap::BubblewrapExecutor;
 
 use std::{

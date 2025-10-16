@@ -3,8 +3,7 @@ local utils = require("xuehua.utils")
 
 local build = function(name)
   return function()
-    local manager = require("xuehua.executor")
-    local runner = manager.runner()
+    local runner = require("xuehua.executor").runner
 
     do
       local command = runner:create("/busybox");

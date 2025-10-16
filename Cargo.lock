@@ -1175,7 +1175,6 @@ dependencies = [
  "log",
  "mlua",
  "petgraph",
- "tempfile",
  "xh-engine",
 ]
 
@@ -1187,7 +1186,6 @@ dependencies = [
  "jiff",
  "log",
  "mlua",
- "once_cell",
  "petgraph",
  "rusqlite",
  "serde",
