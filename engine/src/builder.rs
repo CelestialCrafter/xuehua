@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
 };
@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::{
     executor,
-    package::{LinkTime, Package},
+    package::{self, LinkTime, Package},
     planner::{Plan, Planner},
     store,
 };
@@ -46,12 +46,15 @@ pub struct BuilderOptions {
 ///
 /// The builder traverses through a [`Planner`]'s instructions and builds all of the environments needed to link the target package
 pub struct Builder<'a> {
-    planner: &'a Planner<'a>,
-    executors: &'a executor::Manager,
+    cache: HashMap<package::id::Id, PathBuf>,
     visitor: DfsPostOrder<NodeIndex, <Plan as Visitable>::Map>,
-    environments: Vec<TempDir>,
+    outputs: Vec<PathBuf>,
     runtime: HashSet<usize>,
     buildtime: HashSet<usize>,
+
+    planner: &'a Planner<'a>,
+    executors: &'a executor::Manager,
+
     options: BuilderOptions,
 }
 
@@ -64,27 +67,28 @@ impl<'a> Iterator for Builder<'a> {
         let pkg = &plan[node];
 
         let dependencies = self.runtime.union(&self.buildtime).copied().collect();
-        match self.build_impl(pkg, dependencies) {
-            // insert the environment as a dependency for all parents
-            Ok(environment) => {
-                let env_idx = self.environments.len();
-                self.environments.push(environment);
+        let output = match self.cache.remove(&pkg.id) {
+            Some(content) => Ok(content),
+            None => self.build_impl(pkg, dependencies),
+        };
 
-                // all descendant runtime packages need to be linked alongside the target, so the they're being persisted
-                // the only buildtime packages needed are direct descendants, so they need to be cleared every build
-                self.buildtime.clear();
-                for edge in plan.edges_directed(node, Direction::Incoming) {
-                    match edge.weight() {
-                        LinkTime::Runtime => &mut self.runtime,
-                        LinkTime::Buildtime => &mut self.buildtime,
-                    }
-                    .insert(env_idx);
+        Some(output.map(|output| {
+            let out_idx = self.outputs.len();
+            self.outputs.push(output);
+
+            // all descendant runtime packages need to be linked alongside the target, so the they're being persisted
+            // the only buildtime packages needed are direct descendants, so they need to be cleared every build
+            self.buildtime.clear();
+            for edge in plan.edges_directed(node, Direction::Incoming) {
+                match edge.weight() {
+                    LinkTime::Runtime => &mut self.runtime,
+                    LinkTime::Buildtime => &mut self.buildtime,
                 }
-
-                Some(Ok((pkg, EnvironmentIndex(env_idx))))
+                .insert(out_idx);
             }
-            Err(err) => Some(Err(err)),
-        }
+
+            (pkg, EnvironmentIndex(out_idx))
+        }))
     }
 }
 
@@ -93,6 +97,7 @@ impl<'a> Builder<'a> {
         target: NodeIndex,
         planner: &'a Planner,
         executors: &'a executor::Manager,
+        cache: HashMap<package::id::Id, PathBuf>,
         options: BuilderOptions,
     ) -> Self {
         Self {
@@ -100,24 +105,26 @@ impl<'a> Builder<'a> {
             visitor: DfsPostOrder::new(&planner.plan(), target),
             planner,
             executors,
-            environments: Vec::new(),
-            runtime: HashSet::new(),
-            buildtime: HashSet::new(),
+            cache,
+            outputs: Vec::default(),
+            runtime: HashSet::default(),
+            buildtime: HashSet::default(),
         }
     }
 
     // NOTE: `EnvironmentIndex` is not publically constructable, so directly indexing `self.environments` is fine
-    pub fn environment(&self, index: EnvironmentIndex) -> &Path {
-        self.environments[index.0].path()
+    pub fn output(&self, index: EnvironmentIndex) -> &Path {
+        &self.outputs[index.0]
     }
 
-    fn build_impl(&self, pkg: &Package, dependencies: Vec<usize>) -> Result<TempDir, Error> {
+    fn build_impl(&mut self, pkg: &Package, dependencies: Vec<usize>) -> Result<PathBuf, Error> {
         // setup
         let lua = self.planner.lua();
 
         // TODO: link dependencies
-        let environment = TempDir::new_in(&self.options.build_dir)?;
-        fs::create_dir(environment.path().join("output"))?;
+        let environment = TempDir::new_in(&self.options.build_dir)?.keep();
+        let output = environment.join("output");
+        fs::create_dir(&output)?;
 
         let executors = self
             .executors
@@ -125,7 +132,7 @@ impl<'a> Builder<'a> {
             .into_iter()
             .map(|name| {
                 self.executors
-                    .new(name, environment.path())
+                    .new(name, &environment)
                     // registered() is guaranteed to only return valid names by Manager::register(), so .unwrap() is fine
                     .unwrap()
                     .map(|executor| (name, executor))
@@ -158,7 +165,7 @@ impl<'a> Builder<'a> {
         lua.unload_module(MODULE_NAME)?;
 
         match result {
-            Ok(_) => Ok(environment),
+            Ok(_) => Ok(output),
             Err(err) => Err(err.into()),
         }
     }
