@@ -139,6 +139,7 @@ pub struct LuaBackend {
 }
 
 impl LuaBackend {
+    #[inline]
     pub fn new() -> Result<Self, Error> {
         let lua = Lua::new();
         logger::register_module(&lua)?;

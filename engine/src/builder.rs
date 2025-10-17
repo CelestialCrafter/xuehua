@@ -138,6 +138,7 @@ pub struct Builder<B, T> {
 }
 
 impl<B: Backend> Builder<B, ExecutorPair<()>> {
+#[inline]
     pub fn new(root: PathBuf, backend: Arc<B>) -> Self {
         Self {
             root,

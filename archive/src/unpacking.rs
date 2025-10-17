@@ -128,13 +128,11 @@ fn process_object(root: &Path, object: &Object, write_file: WriteFileFn) -> Resu
     Ok(())
 }
 
-#[inline]
 fn write_file_default(path: &Path, contents: &Bytes) -> Result<(), Error> {
     fs::write(path, contents).map_err(Into::into)
 }
 
 #[cfg(feature = "mmap")]
-#[inline]
 fn write_file_mmap(path: &Path, contents: &Bytes) -> Result<(), Error> {
     let file = fs::OpenOptions::new()
         .create(true)

@@ -12,7 +12,6 @@ use crate::utils::{ArbitraryArchive, BenchmarkOptions, benchmark, decode, encode
 mod utils;
 
 #[cfg(feature = "std")]
-#[inline]
 fn pack_unpack_roundtrip(events: &Vec<Event>, assert: bool) {
     let (path, _temp) = utils::make_temp();
 
@@ -23,7 +22,6 @@ fn pack_unpack_roundtrip(events: &Vec<Event>, assert: bool) {
 }
 
 #[cfg(all(feature = "std", feature = "mmap"))]
-#[inline]
 fn mmap_pack_unpack_roundtrip(events: &Vec<Event>, assert: bool) {
     let (path, _temp) = utils::make_temp();
 
@@ -33,7 +31,6 @@ fn mmap_pack_unpack_roundtrip(events: &Vec<Event>, assert: bool) {
     }
 }
 
-#[inline]
 fn enc_dec_roundtrip(events: &Vec<Event>, assert: bool) {
     let decoded = decode(&mut encode(events));
     if assert {
@@ -41,7 +38,6 @@ fn enc_dec_roundtrip(events: &Vec<Event>, assert: bool) {
     }
 }
 
-#[inline]
 fn arbitrary_trials() -> impl Iterator<Item = Trial> {
     fn trial<F>(name: &str, runner: F) -> Trial
     where
@@ -64,7 +60,6 @@ fn arbitrary_trials() -> impl Iterator<Item = Trial> {
         .map(|trial| trial.with_kind("arbitrary"))
 }
 
-#[inline]
 fn blob_trials() -> impl Iterator<Item = Trial> {
     let trials = |name, mut contents| {
         let events = Box::leak(Box::new(decode(&mut contents)));

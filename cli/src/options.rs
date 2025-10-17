@@ -7,7 +7,6 @@ use std::sync::OnceLock;
 
 pub static OPTIONS: OnceLock<Options> = OnceLock::new();
 
-#[inline]
 pub fn get_opts() -> &'static Options {
     OPTIONS.get().expect("options should be initialized")
 }

@@ -34,7 +34,7 @@ pub enum Error<B: Backend> {
 pub struct NamespaceTracker(Arc<RwLock<Vec<SmolStr>>>);
 
 impl NamespaceTracker {
-    #[inline(always)]
+    #[inline]
     pub fn current(&self) -> Vec<SmolStr> {
         self.0.read().unwrap().clone()
     }
@@ -65,7 +65,7 @@ pub struct Config<B: Backend> {
 }
 
 impl<B: Backend> Config<B> {
-    #[inline(always)]
+    #[inline]
     pub fn new<F>(identifier: impl Into<SmolStr>, defaults: B::Value, apply: F) -> Self
     where
         F: Fn(B::Value) -> Result<Package<B>, B::Error>,
@@ -165,22 +165,21 @@ impl<B: Backend> Default for Planner<Unfrozen<B>> {
 }
 
 impl<B: Backend> Planner<Unfrozen<B>> {
-    #[inline(always)]
+    #[inline]
     pub fn new() -> Self {
         Default::default()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn freeze(self, backend: &B) -> Result<Planner<Frozen<'_, B>>, Error<B>> {
         Planner::<Frozen<B>>::new(self, backend)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn namespace(&self) -> NamespaceTracker {
         self.state.namespace.clone()
     }
 
-    #[inline(always)]
     fn add_config(&mut self, config: Config<B>) -> NodeIndex {
         let node = NodeIndex::new(self.state.configs.len());
         self.state.configs.push(config);
@@ -267,7 +266,7 @@ impl<'a, B: Backend> Planner<Frozen<'a, B>> {
         })
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn graph(&self) -> &Plan<B> {
         &self.state.plan
     }
@@ -335,7 +334,7 @@ impl<'a, B: Backend> Planner<Frozen<'a, B>> {
 }
 
 impl<State> Planner<State> {
-    #[inline(always)]
+    #[inline]
     pub fn resolve(&self, id: &PackageName) -> Option<NodeIndex> {
         self.registered.get(id).copied()
     }
