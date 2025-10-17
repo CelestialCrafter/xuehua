@@ -14,10 +14,7 @@ use petgraph::{
 };
 use thiserror::Error;
 
-use crate::{
-    package::{Dependency, LinkTime, LuaNodeIndex, Package},
-    store::PackageId,
-};
+use crate::package::{Dependency, LinkTime, LuaNodeIndex, Package, PackageId};
 
 #[derive(Error, Debug)]
 pub enum Error {

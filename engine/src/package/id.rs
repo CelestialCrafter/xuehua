@@ -3,12 +3,12 @@ use std::{fmt, str::FromStr};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct Id {
+pub struct PackageId {
     pub name: String,
     pub namespace: Vec<String>,
 }
 
-impl fmt::Display for Id {
+impl fmt::Display for PackageId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}@{}", self.name, self.namespace.join("/"))
     }
@@ -18,7 +18,7 @@ impl fmt::Display for Id {
 #[error("could not parse id")]
 pub struct ParseIdError;
 
-impl FromStr for Id {
+impl FromStr for PackageId {
     type Err = ParseIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

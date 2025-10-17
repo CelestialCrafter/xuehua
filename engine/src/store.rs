@@ -19,7 +19,7 @@ use jiff::Timestamp;
 use thiserror::Error;
 use walkdir::WalkDir;
 
-use crate::package;
+use crate::package::{Package, PackageId};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -32,7 +32,6 @@ pub enum Error {
 }
 
 pub type ArtifactId = blake3::Hash;
-pub type PackageId = package::id::Id;
 
 #[derive(Debug)]
 pub struct StorePackage {
@@ -58,7 +57,7 @@ pub struct StoreArtifact {
 pub trait Store {
     fn register_package(
         &mut self,
-        package: &package::Package,
+        package: &Package,
         artifact: &ArtifactId,
     ) -> Result<PackageId, Error>;
     fn packages(
@@ -67,8 +66,8 @@ pub trait Store {
     ) -> Result<impl Iterator<Item = StorePackage>, Error>;
 
     fn register_artifact(&mut self, content: &Path) -> Result<ArtifactId, Error>;
-    fn artifact(&self, artifact: &ArtifactId) -> Result<StoreArtifact, Error>;
-    fn content(&self, artifact: &ArtifactId) -> Result<PathBuf, Error>;
+    fn artifact(&self, artifact: &ArtifactId) -> Result<Option<StoreArtifact>, Error>;
+    fn content(&self, artifact: &ArtifactId) -> Result<Option<PathBuf>, Error>;
 }
 
 pub fn hash_directory(dir: &Path) -> io::Result<Hash> {

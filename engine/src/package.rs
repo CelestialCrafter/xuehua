@@ -4,7 +4,7 @@ pub mod manifest;
 use mlua::{AnyUserData, FromLua, Function, Lua, LuaSerdeExt, Table, UserData};
 use petgraph::graph::NodeIndex;
 
-use crate::package::id::Id;
+pub use crate::package::id::PackageId;
 
 #[derive(Debug, Clone, Copy)]
 pub struct LuaNodeIndex(NodeIndex);
@@ -102,7 +102,7 @@ impl Config {
 
 #[derive(Debug, Clone)]
 pub struct Package {
-    pub id: Id,
+    pub id: PackageId,
     partial: Partial,
     config: Config,
 }
@@ -145,7 +145,7 @@ impl FromLua for Package {
         )?;
 
         Ok(Self {
-            id: Id {
+            id: PackageId {
                 name,
                 namespace: Default::default(),
             },

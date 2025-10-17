@@ -44,7 +44,7 @@ impl<'a> Manager {
         self.0.get(name).map(|func| func(environment))
     }
 
-    pub fn registered(&'a self) -> Vec<&'a str> {
-        self.0.keys().map(|v| v.as_str()).collect()
+    pub fn registered(&self) -> impl Iterator<Item = &str> {
+        self.0.keys().map(|v| v.as_str())
     }
 }
