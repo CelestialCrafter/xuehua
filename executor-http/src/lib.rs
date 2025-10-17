@@ -63,6 +63,7 @@ pub struct HttpExecutor {
 }
 
 impl HttpExecutor {
+#[inline]
     pub fn new(ctx: Arc<InitializeContext>) -> Self {
         Self {
             ctx,

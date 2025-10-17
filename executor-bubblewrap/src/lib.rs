@@ -66,6 +66,7 @@ pub struct BubblewrapExecutor {
 }
 
 impl BubblewrapExecutor {
+#[inline]
     pub fn new(ctx: Arc<InitializeContext>, options: Options) -> Self {
         Self { ctx, options }
     }

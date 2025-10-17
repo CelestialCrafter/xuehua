@@ -36,6 +36,7 @@ pub struct Packer {
 
 impl Packer {
     /// Constructs a new packer.
+    #[inline]
     pub fn new(root: impl Into<PathBytes>) -> Self {
         Self {
             state: State::Header,
@@ -44,6 +45,7 @@ impl Packer {
     }
 
     /// Packs a directory into an iterator of [`Event`]s.
+    #[inline]
     pub fn pack_iter(&mut self) -> impl Iterator<Item = Result<Event, Error>> {
         std::iter::from_fn(|| self.process(read_file_default))
     }

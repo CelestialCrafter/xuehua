@@ -172,7 +172,6 @@ pub fn make_temp() -> (PathBuf, tempfile::TempDir) {
 }
 
 #[cfg(feature = "log")]
-#[inline]
 pub fn setup() {
     use fern::colors::{Color, ColoredLevelConfig};
 
@@ -198,6 +197,5 @@ pub fn setup() {
         .expect("should be able to enable logger");
 }
 
-#[inline]
 #[cfg(not(feature = "log"))]
 pub fn setup() {}
