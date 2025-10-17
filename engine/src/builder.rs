@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::{
     executor,
-    package::{LinkTime, Package},
+    package::{LinkTime, Package, manifest::Manifest},
     planner::{Plan, Planner},
     store,
 };
@@ -45,17 +45,22 @@ pub struct BuilderOptions {
 /// Package build runner
 ///
 /// The builder traverses through a [`Planner`]'s instructions and builds all of the environments needed to link the target package
-pub struct Builder<'a> {
-    planner: &'a Planner<'a>,
-    executors: &'a executor::Manager,
+pub struct Builder<'a, S> {
+    manifest: &'a Manifest,
+    store: &'a mut S,
+
     visitor: DfsPostOrder<NodeIndex, <Plan as Visitable>::Map>,
-    environments: Vec<TempDir>,
+    outputs: Vec<PathBuf>,
     runtime: HashSet<usize>,
     buildtime: HashSet<usize>,
+
+    planner: &'a Planner<'a>,
+    executors: &'a executor::Manager,
+
     options: BuilderOptions,
 }
 
-impl<'a> Iterator for Builder<'a> {
+impl<'a, S: store::Store> Iterator for Builder<'a, S> {
     type Item = Result<(&'a Package, EnvironmentIndex), Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -66,9 +71,9 @@ impl<'a> Iterator for Builder<'a> {
         let dependencies = self.runtime.union(&self.buildtime).copied().collect();
         match self.build_impl(pkg, dependencies) {
             // insert the environment as a dependency for all parents
-            Ok(environment) => {
-                let env_idx = self.environments.len();
-                self.environments.push(environment);
+            Ok(output) => {
+                let out_idx = self.outputs.len();
+                self.outputs.push(output);
 
                 // all descendant runtime packages need to be linked alongside the target, so the they're being persisted
                 // the only buildtime packages needed are direct descendants, so they need to be cleared every build
@@ -78,19 +83,21 @@ impl<'a> Iterator for Builder<'a> {
                         LinkTime::Runtime => &mut self.runtime,
                         LinkTime::Buildtime => &mut self.buildtime,
                     }
-                    .insert(env_idx);
+                    .insert(out_idx);
                 }
 
-                Some(Ok((pkg, EnvironmentIndex(env_idx))))
+                Some(Ok((pkg, EnvironmentIndex(out_idx))))
             }
             Err(err) => Some(Err(err)),
         }
     }
 }
 
-impl<'a> Builder<'a> {
+impl<'a, S: store::Store> Builder<'a, S> {
     pub fn new(
         target: NodeIndex,
+        store: &'a mut S,
+        manifest: &'a Manifest,
         planner: &'a Planner,
         executors: &'a executor::Manager,
         options: BuilderOptions,
@@ -100,24 +107,45 @@ impl<'a> Builder<'a> {
             visitor: DfsPostOrder::new(&planner.plan(), target),
             planner,
             executors,
-            environments: Vec::new(),
+            outputs: Vec::new(),
             runtime: HashSet::new(),
             buildtime: HashSet::new(),
+            store,
+            manifest,
         }
     }
 
     // NOTE: `EnvironmentIndex` is not publically constructable, so directly indexing `self.environments` is fine
-    pub fn environment(&self, index: EnvironmentIndex) -> &Path {
-        self.environments[index.0].path()
+    pub fn output(&self, index: EnvironmentIndex) -> &Path {
+        &self.outputs[index.0]
     }
 
-    fn build_impl(&self, pkg: &Package, dependencies: Vec<usize>) -> Result<TempDir, Error> {
+    fn build_impl(
+        &mut self,
+        pkg: &Package,
+        dependencies: Vec<usize>,
+    ) -> Result<PathBuf, Error> {
+        if let Some(artifact) = self.manifest.get(&pkg.id) {
+           if let Some(output) = self.store.content(artifact)? {
+               return Ok(output)
+           }
+        }
+
+        self.build_impl_uncached(pkg, dependencies)
+    }
+
+    fn build_impl_uncached(
+        &mut self,
+        pkg: &Package,
+        dependencies: Vec<usize>,
+    ) -> Result<PathBuf, Error> {
         // setup
         let lua = self.planner.lua();
 
         // TODO: link dependencies
-        let environment = TempDir::new_in(&self.options.build_dir)?;
-        fs::create_dir(environment.path().join("output"))?;
+        let environment = TempDir::new_in(&self.options.build_dir)?.keep();
+        let output = environment.join("output");
+        fs::create_dir(&output)?;
 
         let executors = self
             .executors
@@ -125,7 +153,7 @@ impl<'a> Builder<'a> {
             .into_iter()
             .map(|name| {
                 self.executors
-                    .new(name, environment.path())
+                    .new(name, &environment)
                     // registered() is guaranteed to only return valid names by Manager::register(), so .unwrap() is fine
                     .unwrap()
                     .map(|executor| (name, executor))
@@ -158,7 +186,7 @@ impl<'a> Builder<'a> {
         lua.unload_module(MODULE_NAME)?;
 
         match result {
-            Ok(_) => Ok(environment),
+            Ok(_) => Ok(output),
             Err(err) => Err(err.into()),
         }
     }

@@ -5,23 +5,8 @@ use crate::{
     store::{ArtifactId, Error as StoreError, PackageId, Store},
 };
 
+#[derive(Default)]
 pub struct Manifest(HashMap<PackageId, ArtifactId>);
-
-fn make_manifest<'a, S: Store>(
-    iter: impl Iterator<Item = PackageId>,
-    store: &S,
-) -> Result<Manifest, StoreError> {
-    Ok(Manifest(
-        iter.map(|id| {
-            let pkg = store
-                .packages(&id)?
-                .next()
-                .ok_or(StoreError::PackageNotFound(id.clone()))?;
-            Ok((id, pkg.artifact))
-        })
-        .collect::<Result<_, StoreError>>()?,
-    ))
-}
 
 impl Deref for Manifest {
     type Target = HashMap<PackageId, ArtifactId>;
@@ -32,11 +17,26 @@ impl Deref for Manifest {
 }
 
 impl Manifest {
+    fn populate<'a, S: Store>(
+        mut self,
+        iter: impl Iterator<Item = &'a PackageId>,
+        store: &S,
+    ) -> Result<Self, StoreError> {
+        for id in iter {
+            store
+                .packages(id)?
+                .next()
+                .and_then(|pkg| self.0.insert(pkg.package, pkg.artifact));
+        }
+
+        Ok(self)
+    }
+
     pub fn create<S: Store>(plan: &Plan, store: &S) -> Result<Self, StoreError> {
-        make_manifest(plan.node_weights().map(|pkg| pkg.id.clone()), store)
+        Self::default().populate(plan.node_weights().map(|pkg| &pkg.id), store)
     }
 
     pub fn update<S: Store>(self, store: &S) -> Result<Self, StoreError> {
-        make_manifest(self.0.into_keys(), store)
+        Self::default().populate(self.0.keys(), store)
     }
 }

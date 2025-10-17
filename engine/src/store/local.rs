@@ -110,7 +110,7 @@ impl Store for LocalStore<'_> {
         }
     }
 
-    fn artifact(&self, id: &ArtifactId) -> Result<StoreArtifact, Error> {
+    fn artifact(&self, id: &ArtifactId) -> Result<Option<StoreArtifact>, Error> {
         self.db
             .query_one(
                 Queries::GET_ARTIFACT,
@@ -123,16 +123,15 @@ impl Store for LocalStore<'_> {
                 },
             )
             .optional()
-            .into_store_err()?
-            .ok_or(Error::ArtifactNotFound(*id))
+            .into_store_err()
     }
 
-    fn content(&self, artifact: &ArtifactId) -> Result<PathBuf, Error> {
+    fn content(&self, artifact: &ArtifactId) -> Result<Option<PathBuf>, Error> {
         let path = self.artifact_path(artifact);
-        if !path.try_exists().into_store_err()? {
-            return Err(Error::ArtifactNotFound(*artifact));
-        }
-
-        Ok(path)
+        Ok(if !path.try_exists().into_store_err()? {
+            None
+        } else {
+            Some(path)
+        })
     }
 }

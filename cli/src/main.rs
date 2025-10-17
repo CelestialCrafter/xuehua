@@ -3,14 +3,16 @@ pub mod options;
 use std::{fs::read_dir, io::stderr, path::Path};
 
 use eyre::{Context, DefaultHandler, Result};
-use log::{info, LevelFilter};
+use log::{LevelFilter, info};
 use mlua::Lua;
 use petgraph::graph::NodeIndex;
 use xh_engine::{
     builder::{Builder, BuilderOptions},
     executor::{BubblewrapExecutor, Manager, bubblewrap::BubblewrapExecutorOptions},
     logger,
+    package::manifest::{self, Manifest},
     planner::Planner,
+    store::LocalStore,
     utils,
 };
 
@@ -47,6 +49,11 @@ fn main() -> Result<()> {
             let mut planner = Planner::new(&lua);
             planner.run(&lua, Path::new("xuehua/main.lua"))?;
 
+            let store_path = Path::new("store");
+            utils::ensure_dir(store_path)?;
+            let mut store = LocalStore::new(store_path)?;
+            let manifest = Manifest::create(planner.plan(), &store)?;
+
             let mut manager = Manager::default();
             manager.register("runner".to_string(), |env| {
                 Ok(Box::new(BubblewrapExecutor::new(
@@ -57,9 +64,10 @@ fn main() -> Result<()> {
 
             let build_dir = Path::new("builds");
             utils::ensure_dir(build_dir)?;
-
             let mut builder = Builder::new(
                 NodeIndex::from(3),
+                &mut store,
+                &manifest,
                 &planner,
                 &manager,
                 BuilderOptions {
@@ -70,7 +78,8 @@ fn main() -> Result<()> {
             // build target package
             while let Some(result) = builder.next() {
                 let (pkg, idx) = result?;
-                let content: Vec<_> = read_dir(builder.environment(idx).join("output/wawa"))?.collect();
+                let content: Vec<_> =
+                    read_dir(builder.output(idx).join("wawa"))?.collect();
                 info!("package {} was built with contents {:?}", pkg.id, content);
             }
         }

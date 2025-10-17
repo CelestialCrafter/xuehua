@@ -67,8 +67,8 @@ pub trait Store {
     ) -> Result<impl Iterator<Item = StorePackage>, Error>;
 
     fn register_artifact(&mut self, content: &Path) -> Result<ArtifactId, Error>;
-    fn artifact(&self, artifact: &ArtifactId) -> Result<StoreArtifact, Error>;
-    fn content(&self, artifact: &ArtifactId) -> Result<PathBuf, Error>;
+    fn artifact(&self, artifact: &ArtifactId) -> Result<Option<StoreArtifact>, Error>;
+    fn content(&self, artifact: &ArtifactId) -> Result<Option<PathBuf>, Error>;
 }
 
 pub fn hash_directory(dir: &Path) -> io::Result<Hash> {
