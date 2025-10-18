@@ -2860,6 +2860,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "xh-linker-file"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+ "tempfile",
+ "xh-archive",
+ "xh-engine",
+ "xh-reports",
+]
+
+[[package]]
 name = "xh-reports"
 version = "0.1.0"
 dependencies = [
@@ -2890,6 +2901,7 @@ dependencies = [
  "log",
  "memmap2",
  "rusqlite",
+ "tempfile",
  "tokio",
  "xh-archive",
  "xh-common",

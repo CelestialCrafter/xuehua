@@ -4,6 +4,7 @@ pub mod executor;
 pub mod package;
 pub mod planner;
 pub mod scheduler;
+pub mod linker;
 pub mod store;
 pub mod builder;
 pub mod utils;

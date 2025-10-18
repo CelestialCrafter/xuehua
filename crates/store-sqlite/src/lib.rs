@@ -10,6 +10,7 @@ use educe::Educe;
 use jiff::Timestamp;
 use log::debug;
 use rusqlite::{Connection, OptionalExtension, named_params};
+use tempfile::NamedTempFile;
 use tokio::sync::{mpsc, oneshot};
 use xh_archive::{Event, decoding::Decoder};
 use xh_engine::{
@@ -118,20 +119,21 @@ fn register_artifact(
     root: PathBuf,
     archive: Vec<Event>,
 ) -> Result<StoreArtifact, Error> {
-    let temp = artifact_path(root.clone(), &xh_common::random_hash());
-    let file = File::create_new(&temp).compat().wrap()?;
+    let mut temp = NamedTempFile::new().wrap()?;
 
-    let mut file = BufWriter::new(file);
+    let mut writer = BufWriter::new(&mut temp);
     let mut buffer = bytes::BytesMut::with_capacity(1024 * 4);
     let mut encoder = xh_archive::encoding::Encoder::new();
 
     for event in &archive {
         buffer.clear();
         encoder.encode(&mut buffer, event);
-        file.write_all(&buffer).compat().wrap()?;
+        writer.write_all(&buffer).compat().wrap()?;
     }
 
+    drop(writer);
     let digest = encoder.digest();
+    let (_, temp) = temp.keep().wrap()?;
     std::fs::rename(temp, artifact_path(root, &digest))
         .compat()
         .wrap()?;
