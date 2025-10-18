@@ -33,21 +33,21 @@ pub trait Executor {
     fn dispatch(&'_ mut self, lua: Lua, data: AnyUserData) -> BoxFuture<'_, Result<MultiValue, Error>>;
 }
 
-type ExecFuncReturn = Result<Box<dyn Executor + Send>, Error>;
+pub type DynBoxExecutor = Box<dyn Executor + Send + Sync>;
 
 #[derive(Default)]
-pub struct Manager(HashMap<String, Box<dyn Fn(&Path) -> ExecFuncReturn>>);
+pub struct Manager {
+    registered: HashMap<String, Box<dyn Fn(&Path) -> DynBoxExecutor>>,
+}
 
 impl<'a> Manager {
-    pub fn register<F: Fn(&Path) -> ExecFuncReturn + 'static>(&mut self, name: String, func: F) {
-        self.0.insert(name, Box::new(func));
+    pub fn register<F: Fn(&Path) -> DynBoxExecutor + 'static>(&mut self, name: String, func: F) {
+        self.registered.insert(name, Box::new(func));
     }
 
-    pub fn new(&self, name: &str, environment: &Path) -> Option<ExecFuncReturn> {
-        self.0.get(name).map(|func| func(environment))
-    }
-
-    pub fn registered(&self) -> impl Iterator<Item = &str> {
-        self.0.keys().map(|v| v.as_str())
+    pub fn create(&self, environment: &Path) -> impl Iterator<Item = (String, DynBoxExecutor)> {
+        self.registered
+            .iter()
+            .map(|(name, func)| (name.clone(), func(environment)))
     }
 }
