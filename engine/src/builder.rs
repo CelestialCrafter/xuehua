@@ -1,165 +1,246 @@
 use std::{
-    collections::HashSet,
-    fs, io,
+    fs, io, mem,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
-use mlua::{ExternalResult, UserDataMethods};
+use futures_util::{StreamExt, stream::FuturesUnordered};
+use log::{debug, error, info};
+use mlua::Lua;
 use petgraph::{
     Direction,
-    graph::NodeIndex,
-    visit::{DfsPostOrder, Visitable},
+    graph::{DiGraph, NodeIndex},
+    visit::{Dfs, EdgeRef},
 };
-use tempfile::TempDir;
 use thiserror::Error;
+use tokio::sync::{AcquireError, Semaphore};
 
 use crate::{
-    executor,
+    executor::{Error as ExecutorError, Manager},
     package::Package,
-    planner::{LinkTime, Plan, Planner},
+    planner::{LinkTime, Planner},
     store,
+    utils::passthru::PassthruHashSet,
 };
-
-const MODULE_NAME: &str = "xuehua.executor";
 
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("could not acquire build permit")]
+    AcquireError(#[from] AcquireError),
     #[error(transparent)]
     IOError(#[from] io::Error),
     #[error(transparent)]
     StoreError(#[from] store::Error),
     #[error(transparent)]
-    ExecutorError(#[from] executor::Error),
+    ExecutorError(#[from] ExecutorError),
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct EnvironmentIndex(usize);
-
 #[derive(Debug, Clone)]
 pub struct BuilderOptions {
-    pub build_dir: PathBuf,
+    pub concurrent: usize,
+    pub root: PathBuf,
+}
+
+#[derive(Debug)]
+enum PackageState {
+    Unbuilt {
+        package: Package,
+        remaining: usize,
+    },
+    Building,
+    Built {
+        package: Package,
+        runtime: Vec<NodeIndex>,
+    },
+}
+
+struct BuildModules {
+    executors: Manager,
+    lua: Lua,
+    root: PathBuf,
+    semaphore: Semaphore,
+}
+
+struct BuildInfo {
+    node: NodeIndex,
+    package: Package,
+    runtime: Vec<NodeIndex>,
+    buildtime: Vec<NodeIndex>,
 }
 
 /// Package build runner
 ///
 /// The builder traverses through a [`Planner`]'s instructions and builds all of the environments needed to link the target package
-pub struct Builder<'a> {
-    planner: &'a Planner,
-    executors: &'a executor::Manager,
-    visitor: DfsPostOrder<NodeIndex, <Plan as Visitable>::Map>,
-    environments: Vec<TempDir>,
-    runtime: HashSet<usize>,
-    buildtime: HashSet<usize>,
-    options: BuilderOptions,
+pub struct Builder {
+    state: DiGraph<PackageState, LinkTime>,
+    modules: Arc<BuildModules>,
 }
 
-impl<'a> Iterator for Builder<'a> {
-    type Item = Result<(&'a Package, EnvironmentIndex), Error>;
+#[cold]
+fn invalid_state(node: NodeIndex, state: &PackageState) -> ! {
+    panic!("node {node:?} should not be in the {state:?} state")
+}
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let plan = self.planner.plan();
-        let node = self.visitor.next(plan)?;
-        let pkg = &plan[node];
+impl Builder {
+    pub fn new(planner: Planner, executors: Manager, lua: Lua, options: BuilderOptions) -> Self {
+        let mut state = planner.into_inner().into_inner().map_owned(
+            |_, weight| PackageState::Unbuilt {
+                remaining: 0,
+                package: weight,
+            },
+            |_, weight| weight,
+        );
 
-        let dependencies = self.runtime.union(&self.buildtime).copied().collect();
-        match self.build_impl(pkg, dependencies) {
-            // insert the environment as a dependency for all parents
-            Ok(environment) => {
-                let env_idx = self.environments.len();
-                self.environments.push(environment);
+        for node in state.node_indices() {
+            let count = state.neighbors_directed(node, Direction::Outgoing).count();
+            match state[node] {
+                PackageState::Unbuilt {
+                    ref mut remaining, ..
+                } => *remaining = count,
+                _ => unreachable!(),
+            }
+        }
 
-                // all descendant runtime packages need to be linked alongside the target, so the they're being persisted
-                // the only buildtime packages needed are direct descendants, so they need to be cleared every build
-                self.buildtime.clear();
-                for edge in plan.edges_directed(node, Direction::Incoming) {
-                    match edge.weight() {
-                        LinkTime::Runtime => &mut self.runtime,
-                        LinkTime::Buildtime => &mut self.buildtime,
+        Self {
+            state,
+            modules: Arc::new(BuildModules {
+                executors,
+                lua,
+                root: options.root,
+                semaphore: Semaphore::new(options.concurrent),
+            }),
+        }
+    }
+
+    fn environment_dir(root: &Path, node: NodeIndex) -> PathBuf {
+        root.join(node.index().to_string())
+    }
+
+    pub async fn build(&mut self, target: NodeIndex) {
+        let mut futures = FuturesUnordered::new();
+        let mut subset = PassthruHashSet::default();
+
+        // compute subset and build leaf packages
+        let mut visitor = Dfs::new(&self.state, target);
+        while let Some(node) = visitor.next(&self.state) {
+            subset.insert(node);
+
+            if let Some(info) = self.prepare_build(node) {
+                debug!("adding package {} as a leaf", info.package.id);
+                futures.push(build_impl(self.modules.clone(), info));
+            }
+        }
+
+        // main build loop
+        // TODO: write out builds result somewhere
+        while let Some(finished) = futures.next().await {
+            let finished = match finished {
+                Ok(info) => info,
+                Err((info, err)) => {
+                    error!("could not build package {}: {err}", info.package.id);
+                    self.state[info.node] = PackageState::Unbuilt {
+                        package: info.package,
+                        remaining: 0,
+                    };
+                    continue;
+                }
+            };
+
+            self.state[finished.node] = PackageState::Built {
+                runtime: finished.runtime,
+                package: finished.package,
+            };
+
+            for parent in self
+                .state
+                .neighbors_directed(finished.node, Direction::Incoming)
+                .filter(|node| subset.contains(node))
+                .collect::<Vec<_>>()
+            {
+                match &mut self.state[parent] {
+                    PackageState::Unbuilt { remaining, package } => {
+                        *remaining -= 1;
+                        debug!("{} has {} dependencies remaining", package.id, remaining);
                     }
-                    .insert(env_idx);
+                    state => invalid_state(parent, state),
                 }
 
-                Some(Ok((pkg, EnvironmentIndex(env_idx))))
+                if let Some(info) = self.prepare_build(parent) {
+                    futures.push(build_impl(self.modules.clone(), info));
+                }
             }
-            Err(err) => Some(Err(err)),
         }
+    }
+
+    fn prepare_build(&mut self, node: NodeIndex) -> Option<BuildInfo> {
+        let pkg_state = &mut self.state[node];
+
+        // check if package can be built
+        match pkg_state {
+            PackageState::Unbuilt { remaining, .. } if *remaining == 0 => (),
+            _ => return None,
+        };
+
+        // set state to building and get pkg
+        let package = match mem::replace(pkg_state, PackageState::Building) {
+            PackageState::Unbuilt { package, .. } => package,
+            _ => unreachable!(),
+        };
+
+        // gather dependencies into the build closure
+        let mut buildtime = Vec::default();
+        let mut runtime = Vec::default();
+        for edge in self.state.edges_directed(node, Direction::Outgoing) {
+            let child = edge.target();
+            match &self.state[child] {
+                PackageState::Built {
+                    runtime: dep_runtime,
+                    ..
+                } => {
+                    let closure = match edge.weight() {
+                        LinkTime::Runtime => &mut runtime,
+                        LinkTime::Buildtime => &mut buildtime,
+                    };
+
+                    closure.extend(dep_runtime.into_iter());
+                    closure.push(child);
+                }
+                state => invalid_state(child, state),
+            }
+        }
+
+        Some(BuildInfo {
+            node,
+            package,
+            runtime,
+            buildtime,
+        })
     }
 }
 
-impl<'a> Builder<'a> {
-    pub fn new(
-        target: NodeIndex,
-        planner: &'a Planner,
-        executors: &'a executor::Manager,
-        options: BuilderOptions,
-    ) -> Self {
-        Self {
-            options,
-            visitor: DfsPostOrder::new(&planner.plan(), target),
-            planner,
-            executors,
-            environments: Vec::new(),
-            runtime: HashSet::new(),
-            buildtime: HashSet::new(),
-        }
+async fn build_impl(
+    modules: Arc<BuildModules>,
+    info: BuildInfo,
+) -> Result<BuildInfo, (BuildInfo, Error)> {
+    match build_impl_impl(modules, &info).await {
+        Ok(()) => Ok(info),
+        Err(err) => Err((info, err)),
     }
+}
 
-    // NOTE: `EnvironmentIndex` is not publically constructable, so directly indexing `self.environments` is fine
-    pub fn environment(&self, index: EnvironmentIndex) -> &Path {
-        self.environments[index.0].path()
-    }
+async fn build_impl_impl(modules: Arc<BuildModules>, info: &BuildInfo) -> Result<(), Error> {
+    debug!("awaiting permit to build package {}", info.package.id);
+    let permit = modules.semaphore.acquire().await?;
+    info!("building package {}", info.package.id);
 
-    fn build_impl(&self, pkg: &Package, dependencies: Vec<usize>) -> Result<TempDir, Error> {
-        // setup
-        let lua = self.planner.lua();
+    // TODO: link dependencies
+    let environment = Builder::environment_dir(&modules.root, info.node);
+    fs::create_dir(&environment)?;
 
-        // TODO: link dependencies
-        let environment = TempDir::new_in(&self.options.build_dir)?;
-        fs::create_dir(environment.path().join("output"))?;
-
-        let executors = self
-            .executors
-            .registered()
-            .into_iter()
-            .map(|name| {
-                self.executors
-                    .new(name, environment.path())
-                    // registered() is guaranteed to only return valid names by Manager::register(), so .unwrap() is fine
-                    .unwrap()
-                    .map(|executor| (name, executor))
-            })
-            .collect::<Result<Vec<_>, executor::Error>>()?;
-
-        // insert executors into lua and build the package
-        let result = lua.scope(|scope| {
-            let module = lua.create_table()?;
-            lua.register_module(MODULE_NAME, &module)?;
-
-            for (name, executor) in executors {
-                module.set(
-                    name,
-                    scope.create_any_userdata(executor, |registry| {
-                        registry.add_method("create", |lua, this, args| {
-                            this.create(lua, args).into_lua_err()
-                        });
-
-                        registry.add_async_method_mut("dispatch", async |lua, mut this, args| {
-                            this.dispatch(lua, args).await.into_lua_err()
-                        });
-                    })?,
-                )?;
-            }
-
-            pkg.build()
-        });
-
-        lua.unload_module(MODULE_NAME)?;
-
-        match result {
-            Ok(_) => Ok(environment),
-            Err(err) => Err(err.into()),
-        }
-    }
+    // TODO: re-add executors
+    info.package.build().await?;
+    drop(permit);
+    Ok(())
 }

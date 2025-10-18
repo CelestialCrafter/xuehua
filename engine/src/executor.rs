@@ -9,6 +9,8 @@ use std::{collections::HashMap, path::Path};
 use mlua::{AnyUserData, Lua, MultiValue};
 use thiserror::Error;
 
+pub const MODULE_NAME: &str = "xuehua.executor";
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("executor {0} not found")]
