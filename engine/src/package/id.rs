@@ -26,7 +26,7 @@ impl FromStr for PackageId {
 
         Ok(Self {
             name: name.to_string(),
-            namespace: namespace.split("/").map(|s| s.into()).collect(),
+            namespace: namespace.split("/").map(Arc::from).collect(),
         })
     }
 }

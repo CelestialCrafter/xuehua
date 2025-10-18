@@ -15,8 +15,8 @@ use thiserror::Error;
 
 use crate::{
     executor,
-    package::{LinkTime, Package},
-    planner::{Plan, Planner},
+    package::Package,
+    planner::{LinkTime, Plan, Planner},
     store,
 };
 
@@ -46,7 +46,7 @@ pub struct BuilderOptions {
 ///
 /// The builder traverses through a [`Planner`]'s instructions and builds all of the environments needed to link the target package
 pub struct Builder<'a> {
-    planner: &'a Planner<'a>,
+    planner: &'a Planner,
     executors: &'a executor::Manager,
     visitor: DfsPostOrder<NodeIndex, <Plan as Visitable>::Map>,
     environments: Vec<TempDir>,
