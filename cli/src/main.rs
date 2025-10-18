@@ -1,11 +1,12 @@
 pub mod options;
 
-use std::{fs::read_dir, io::stderr, path::Path};
+use std::{fs, io::stderr, path::Path};
 
 use eyre::{Context, DefaultHandler, Result};
-use log::{LevelFilter, info};
+use log::{LevelFilter, info, warn};
 use mlua::Lua;
-use petgraph::graph::NodeIndex;
+use petgraph::{dot::Dot, graph::NodeIndex};
+use tokio::runtime::Runtime;
 use xh_engine::{
     builder::{Builder, BuilderOptions},
     executor::{
@@ -13,7 +14,7 @@ use xh_engine::{
         bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
     },
     logger,
-    planner::Planner,
+    planner,
     utils,
 };
 
@@ -46,37 +47,52 @@ fn main() -> Result<()> {
             logger::register_module(&lua)?;
             utils::register_module(&lua)?;
 
-            // create engine modules
-            let mut planner = Planner::new(&lua);
-            planner.run(&lua, Path::new("xuehua/main.lua"))?;
+            // run planner
+            let mut planner = planner::Planner::new();
+            let chunk = lua.load(fs::read("xuehua/main.lua")?);
+            lua.scope(|scope| {
+                lua.register_module(
+                    planner::MODULE_NAME,
+                    scope.create_userdata_ref_mut(&mut planner)?,
+                )?;
+                scope.add_destructor(|| {
+                    if let Err(err) = lua.unload_module(planner::MODULE_NAME) {
+                        warn!("could not unload {}: {}", planner::MODULE_NAME, err);
+                    }
+                });
 
+                chunk.exec()
+            })?;
+            info!(
+                "{:?}",
+                Dot::new(&planner.plan().map(|_, w| w.id.to_string(), |_, w| *w))
+            );
+
+            // run builder
             let mut manager = Manager::default();
             manager.register("runner".to_string(), |env| {
-                Ok(Box::new(BubblewrapExecutor::new(
+                Box::new(BubblewrapExecutor::new(
                     env.to_path_buf(),
                     BubblewrapExecutorOptions::default(),
-                )))
+                ))
             });
 
-            let build_dir = Path::new("builds");
-            utils::ensure_dir(build_dir)?;
+            let build_root = Path::new("builds");
+            utils::ensure_dir(build_root)?;
 
             let mut builder = Builder::new(
-                NodeIndex::from(3),
-                &planner,
-                &manager,
+                planner,
+                manager,
+                lua,
                 BuilderOptions {
-                    build_dir: build_dir.to_path_buf(),
+                    concurrent: 8,
+                    root: build_root.to_path_buf(),
                 },
             );
 
-            // build target package
-            while let Some(result) = builder.next() {
-                let (pkg, idx) = result?;
-                let content: Vec<_> =
-                    read_dir(builder.environment(idx).join("output/wawa"))?.collect();
-                info!("package {} was built with contents {:?}", pkg.id, content);
-            }
+            Runtime::new()
+                .unwrap()
+                .block_on(builder.build(NodeIndex::from(3)));
         }
         Subcommand::Link {
             reverse: _,

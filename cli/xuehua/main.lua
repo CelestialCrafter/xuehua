@@ -1,22 +1,24 @@
 local plan = require("xuehua.planner")
 local utils = require("xuehua.utils")
+local log = require("xuehua.logger");
 local ns = plan.namespace
 
 local build = function(name)
   return function()
-    local runner = require("xuehua.executor").runner
+    log.info("building " .. name .. "!! from lua")
+    -- local runner = require("xuehua.executor").runner
 
-    do
-      local command = runner:create("/busybox")
-      command.arguments = { "mkdir", "-p", "/output/test" }
-      runner:dispatch(command)
-    end
+    -- do
+      -- local command = runner:create("/busybox")
+      -- command.arguments = { "mkdir", "-p", "/output/test" }
+      -- runner:dispatch(command)
+    -- end
 
-    do
-      local command = runner:create("/busybox");
-      command.arguments = { "touch", "/output/test/from-" .. name }
-      runner:dispatch(command)
-    end
+    -- do
+    --   local command = runner:create("/busybox");
+    --   command.arguments = { "touch", "/output/test/from-" .. name }
+    --   runner:dispatch(command)
+    -- end
   end
 end
 
