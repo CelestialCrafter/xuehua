@@ -1,0 +1,60 @@
+flowchart TD
+	subgraph Store
+        S_A[Register Package] --> S_C
+        S_B[Register Artifact] --> S_C
+		S_C[(Store)]
+        S_C --> S_D[Artifact]
+        S_C --> S_E[Package]
+	end
+
+	subgraph Executor
+		E_A[State]
+		E_A --> E_B[Create] --> E_C
+		E_A --> E_C(Dispatch) --> E_D
+		E_D[/Git, Podman, Remote Executor, etc/] --> E_C
+	end
+
+    subgraph ExecutorManager
+		%% TODO: expand on executor creation and dispatch
+		EM_A(Initialize Executors) --> E_A
+	end
+
+	subgraph Builder
+		B_A(Compute package indegrees) --> B_B
+		B_B[Compute required subset to build target] --> B_C
+		B_I --> B_C{Queue unbuilt packages with indegree 0} --> B_D
+		B_D[Gather dependencies] --> B_E
+		B_E[[Run queued builds]] --> B_F
+		B_F[Create environment]
+		B_F --> B_G
+		B_F --> EM_A
+		B_G[Link dependencies] --> B_H
+		B_H[Build package]
+		B_H --> E_B
+		B_H --> B_I
+		B_I[Decrement parent indegrees] --> B_J
+		B_J[/Report build output/]
+		B_J --> S_A
+		B_J --> S_B
+	end
+
+	subgraph Planner
+		P_A[/Compile lua files into chunks/] --> P_B
+		P_B[Evaluate chunks]
+		P_B --> P_C[Package] --> P_F
+		P_B --> P_E[Configure] --> P_C
+		P_B --> P_D[Namespace] --> P_F
+		P_F(Package dependency graph) --> B_A
+	end
+
+	subgraph Manifest
+		%% TODO: add manifest diagram
+	end
+
+	subgraph Linker
+		%% TODO: add linker diagram
+	end
+
+	subgraph Operation Log
+		%% TODO: add oplog diagram
+	end
