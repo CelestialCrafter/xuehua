@@ -1,6 +1,13 @@
-use std::{cell::RefCell, collections::HashSet, io, sync::Arc};
+use std::{
+    collections::HashSet,
+    io,
+    sync::{Arc, RwLock},
+};
 
-use mlua::{AnyUserData, ExternalResult, FromLua, Function, Lua, Table, UserData, Value};
+use log::info;
+use mlua::{
+    AnyUserData, ExternalResult, FromLua, Function, Lua, Table, UserData, UserDataFields, Value,
+};
 use petgraph::{
     acyclic::Acyclic,
     data::Build,
@@ -60,6 +67,50 @@ pub enum Error {
     LuaError(#[from] mlua::Error),
 }
 
+#[derive(Clone)]
+pub struct Namespace(Arc<RwLock<Vec<Arc<str>>>>);
+
+impl Namespace {
+    pub fn new() -> Self {
+        Self(Arc::new(RwLock::new(vec!["root".into()])))
+    }
+
+    pub fn current(&self) -> Vec<Arc<str>> {
+        self.0.read().unwrap().clone()
+    }
+
+    pub fn scope<R, S: Into<Arc<str>>>(&self, segment: S, func: impl FnOnce() -> R) -> R {
+        let get = || self.0.write().unwrap();
+        get().push(segment.into());
+        let rval = func();
+        get().pop();
+        rval
+    }
+}
+
+impl UserData for Namespace {
+    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("current", |_, this| {
+            Ok(this
+                .current()
+                .into_iter()
+                .map(|str| str.to_string())
+                .collect::<Vec<_>>())
+        });
+    }
+
+    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("scope", |_, this, (segment, func): (String, Function)| {
+            this.scope(segment, || func.call::<Value>(()))
+        });
+    }
+
+    fn register(registry: &mut mlua::UserDataRegistry<Self>) {
+        Self::add_fields(registry);
+        Self::add_methods(registry);
+    }
+}
+
 pub type Plan = Acyclic<DiGraph<Package, LinkTime>>;
 
 /// Package dependency graph generator
@@ -112,16 +163,23 @@ pub type Plan = Acyclic<DiGraph<Package, LinkTime>>;
 ///
 /// # Ok::<_, xh_engine::planner::Error>(())
 /// ```
-#[derive(Default)]
 pub struct Planner {
     plan: Plan,
-    namespace: RefCell<Vec<Arc<str>>>,
     registered: HashSet<PackageId>,
+    namespace: Namespace,
 }
 
-const MODULE_NAME: &str = "xuehua.planner";
+pub const MODULE_NAME: &str = "xuehua.planner";
 
 impl Planner {
+    pub fn new() -> Self {
+        Self {
+            plan: Plan::default(),
+            registered: HashSet::default(),
+            namespace: Namespace::new(),
+        }
+    }
+
     pub fn plan(&self) -> &Plan {
         &self.plan
     }
@@ -148,20 +206,13 @@ impl Planner {
         Ok(self.plan.add_node(pkg))
     }
 
-    pub fn namespace<T, F: FnOnce() -> T>(&self, name: &str, func: F) -> T {
-        // release borrow to allow nested namespace calls
-        self.namespace.borrow_mut().push(name.into());
-        let rval = func();
-        self.namespace.borrow_mut().pop();
-        rval
-    }
-
     pub fn package(
         &mut self,
         mut pkg: Package,
         dependencies: Vec<Dependency>,
     ) -> Result<NodeIndex, Error> {
-        pkg.id.namespace = self.namespace.borrow().clone();
+        pkg.id.namespace = self.namespace.current();
+        info!("registering package {}", pkg.id);
 
         // ensure no conflicts
         if !self.registered.insert(pkg.id.clone()) {
@@ -185,15 +236,8 @@ impl Planner {
 }
 
 impl UserData for Planner {
-    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
-        fields.add_field_method_get("namespace", |_, this| {
-            Ok(this
-                .namespace
-                .borrow()
-                .iter()
-                .map(|str| str.to_string())
-                .collect::<Vec<_>>())
-        });
+    fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("namespace", |_, this| Ok(this.namespace.clone()));
     }
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
@@ -215,14 +259,6 @@ impl UserData for Planner {
             )
             .map(AnyUserData::wrap)
             .into_lua_err()
-        });
-
-        methods.add_method("namespace", |_, this, (name, func): (String, Function)| {
-            // release borrow to allow nested namespace calls
-            this.namespace.borrow_mut().push(name.into());
-            let rval = func.call::<Value>(());
-            this.namespace.borrow_mut().pop();
-            Ok(rval)
         });
     }
 }
