@@ -4,19 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["bubblewrap-executor"]
 bubblewrap-executor = []
 local-store = ["dep:rusqlite"]
 
 [dependencies]
-mlua.workspace = true
 petgraph.workspace = true
+mlua.workspace = true
 log.workspace = true
 serde.workspace = true
-thiserror.workspace = true
 tempfile.workspace = true
-
-# store
+tokio = { workspace = true, features = ["sync", "process"] }
+thiserror = "2.0.16"
+futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 blake3 = "1.8.2"
 walkdir = "2.5.0"
 jiff = { version = "0.2.15", default-features = false, features = ["alloc", "std", "perf-inline"] }

@@ -1,7 +1,10 @@
 pub mod runner;
-use std::{collections::HashMap, path::Path};
 
-pub use runner::*;
+use futures_util::future::BoxFuture;
+#[cfg(feature = "bubblewrap-executor")]
+pub use runner::bubblewrap;
+
+use std::{collections::HashMap, path::Path};
 
 use mlua::{AnyUserData, Lua, MultiValue};
 use thiserror::Error;
@@ -27,10 +30,10 @@ pub enum Error {
 /// but they must strive to be deterministic.
 pub trait Executor {
     fn create(&self, lua: &Lua, value: MultiValue) -> Result<AnyUserData, Error>;
-    fn dispatch(&mut self, lua: &Lua, data: AnyUserData) -> Result<MultiValue, Error>;
+    fn dispatch(&'_ mut self, lua: Lua, data: AnyUserData) -> BoxFuture<'_, Result<MultiValue, Error>>;
 }
 
-type ExecFuncReturn = Result<Box<dyn Executor>, Error>;
+type ExecFuncReturn = Result<Box<dyn Executor + Send>, Error>;
 
 #[derive(Default)]
 pub struct Manager(HashMap<String, Box<dyn Fn(&Path) -> ExecFuncReturn>>);

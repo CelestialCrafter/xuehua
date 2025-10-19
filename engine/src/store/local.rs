@@ -6,6 +6,7 @@ use std::{
 
 use jiff::Timestamp;
 use rusqlite::{Connection, OptionalExtension, named_params, types::FromSqlError};
+use tokio::sync::Mutex;
 
 use crate::{
     ExternalError, ExternalResult,
@@ -30,7 +31,7 @@ impl Queries {
 /// A local store using SQLite as a database, and locally stored contents
 pub struct LocalStore<'a> {
     root: &'a Path,
-    db: Connection,
+    db: Mutex<Connection>,
 }
 
 impl<'a> LocalStore<'a> {
@@ -40,21 +41,25 @@ impl<'a> LocalStore<'a> {
             .into_store_err()?;
 
         ensure_dir(&root.join("content")).into_store_err()?;
-        Ok(Self { root, db })
+        Ok(Self {
+            root,
+            db: db.into(),
+        })
     }
 
     fn artifact_path(&self, hash: &ArtifactId) -> PathBuf {
         self.root.join("content").join(hash.to_hex().as_str())
     }
 }
-
 impl Store for LocalStore<'_> {
-    fn register_package(
+    async fn register_package(
         &mut self,
         package: &Package,
         artifact: &ArtifactId,
     ) -> Result<PackageId, Error> {
         self.db
+            .lock()
+            .await
             .execute(
                 Queries::REGISTER_PACKAGE,
                 named_params! {
@@ -67,9 +72,11 @@ impl Store for LocalStore<'_> {
             .into_store_err()
     }
 
-    fn packages(&self, id: &PackageId) -> Result<impl Iterator<Item = StorePackage>, Error> {
+    async fn packages(&self, id: &PackageId) -> Result<impl Iterator<Item = StorePackage>, Error> {
         Ok(self
             .db
+            .lock()
+            .await
             .prepare_cached(Queries::GET_PACKAGE)
             .into_store_err()?
             .query_map(named_params! { ":package": id.to_string() }, |row| {
@@ -86,10 +93,10 @@ impl Store for LocalStore<'_> {
             .into_iter())
     }
 
-    fn register_artifact(&mut self, content: &Path) -> Result<blake3::Hash, Error> {
+    async fn register_artifact(&mut self, content: &Path) -> Result<blake3::Hash, Error> {
         let hash = hash_directory(content).into_store_err()?;
 
-        match self.db.execute(
+        match self.db.lock().await.execute(
             Queries::REGISTER_ARTIFACT,
             named_params! {
                 ":artifact": hash.as_bytes(),
@@ -110,8 +117,10 @@ impl Store for LocalStore<'_> {
         }
     }
 
-    fn artifact(&self, id: &ArtifactId) -> Result<Option<StoreArtifact>, Error> {
+    async fn artifact(&self, id: &ArtifactId) -> Result<Option<StoreArtifact>, Error> {
         self.db
+            .lock()
+            .await
             .query_one(
                 Queries::GET_ARTIFACT,
                 named_params! { ":artifact": id.as_bytes() },
@@ -126,7 +135,7 @@ impl Store for LocalStore<'_> {
             .into_store_err()
     }
 
-    fn content(&self, artifact: &ArtifactId) -> Result<Option<PathBuf>, Error> {
+    async fn content(&self, artifact: &ArtifactId) -> Result<Option<PathBuf>, Error> {
         let path = self.artifact_path(artifact);
         Ok(if !path.try_exists().into_store_err()? {
             None

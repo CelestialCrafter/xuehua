@@ -6,6 +6,7 @@ pub use local::LocalStore;
 
 use std::{
     fs::File,
+    future::Future,
     io::{self, Write},
     os::unix::{
         ffi::OsStrExt,
@@ -59,15 +60,24 @@ pub trait Store {
         &mut self,
         package: &Package,
         artifact: &ArtifactId,
-    ) -> Result<PackageId, Error>;
+    ) -> impl Future<Output = Result<PackageId, Error>> + Send;
     fn packages(
         &self,
         package: &PackageId,
-    ) -> Result<impl Iterator<Item = StorePackage>, Error>;
+    ) -> impl Future<Output = Result<impl Iterator<Item = StorePackage>, Error>> + Send;
 
-    fn register_artifact(&mut self, content: &Path) -> Result<ArtifactId, Error>;
-    fn artifact(&self, artifact: &ArtifactId) -> Result<Option<StoreArtifact>, Error>;
-    fn content(&self, artifact: &ArtifactId) -> Result<Option<PathBuf>, Error>;
+    fn register_artifact(
+        &mut self,
+        content: &Path,
+    ) -> impl Future<Output = Result<ArtifactId, Error>> + Send;
+    fn artifact(
+        &self,
+        artifact: &ArtifactId,
+    ) -> impl Future<Output = Result<Option<StoreArtifact>, Error>> + Send;
+    fn content(
+        &self,
+        artifact: &ArtifactId,
+    ) -> impl Future<Output = Result<Option<PathBuf>, Error>> + Send;
 }
 
 pub fn hash_directory(dir: &Path) -> io::Result<Hash> {

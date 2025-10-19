@@ -3,12 +3,15 @@ pub mod options;
 use std::{fs::read_dir, io::stderr, path::Path};
 
 use eyre::{Context, DefaultHandler, Result};
-use log::{info, LevelFilter};
+use log::{LevelFilter, info};
 use mlua::Lua;
 use petgraph::graph::NodeIndex;
 use xh_engine::{
     builder::{Builder, BuilderOptions},
-    executor::{BubblewrapExecutor, Manager, bubblewrap::BubblewrapExecutorOptions},
+    executor::{
+        Manager,
+        bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
+    },
     logger,
     planner::Planner,
     utils,
@@ -52,7 +55,7 @@ fn main() -> Result<()> {
                 Ok(Box::new(BubblewrapExecutor::new(
                     env.to_path_buf(),
                     BubblewrapExecutorOptions::default(),
-                )?))
+                )))
             });
 
             let build_dir = Path::new("builds");
@@ -70,7 +73,8 @@ fn main() -> Result<()> {
             // build target package
             while let Some(result) = builder.next() {
                 let (pkg, idx) = result?;
-                let content: Vec<_> = read_dir(builder.environment(idx).join("output/wawa"))?.collect();
+                let content: Vec<_> =
+                    read_dir(builder.environment(idx).join("output/wawa"))?.collect();
                 info!("package {} was built with contents {:?}", pkg.id, content);
             }
         }
