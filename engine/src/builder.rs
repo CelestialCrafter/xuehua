@@ -145,8 +145,8 @@ impl<'a> Builder<'a> {
                             this.create(lua, args).into_lua_err()
                         });
 
-                        registry.add_method_mut("dispatch", |lua, this, args| {
-                            this.dispatch(lua, args).into_lua_err()
+                        registry.add_async_method_mut("dispatch", async |lua, mut this, args| {
+                            this.dispatch(lua, args).await.into_lua_err()
                         });
                     })?,
                 )?;
