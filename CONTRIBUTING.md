@@ -17,7 +17,7 @@ If there are *any* questions you have about Xuehua, feel free to contact me over
 
 Once you know that the contribution fits within Xuehua:
 - You may open a [pull request](https://github.com/CelestialCrafter/xuehua/pulls), and implement the contribution.
-- If you can't or don't want to implement the contribution yourself, open an issue and a maintainer will implement the contribution whenever they have the time
+- If you can't or don't want to implement the contribution yourself, open an issue and a maintainer will implement the contribution whenever they have the time.
 
 > [!NOTE]
 > If you decide to make a pull request, consider [allowing maintainers to edit your pull request's changes](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/working-with-forks/allowing-changes-to-a-pull-request-branch-created-from-a-fork) if you're comfortable with it.
