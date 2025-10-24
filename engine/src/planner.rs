@@ -1,12 +1,7 @@
-use std::{
-    cell::RefCell,
-    collections::HashSet,
-    fs,
-    path::Path,
-};
+use std::{cell::RefCell, collections::HashSet, fs, path::Path, sync::Arc};
 
 use log::warn;
-use mlua::{ExternalResult, Function, Lua, Table, Value};
+use mlua::{ExternalResult, Function, Lua, Table, UserData, Value};
 use petgraph::{
     acyclic::Acyclic,
     data::Build,
@@ -80,29 +75,18 @@ pub type Plan = Acyclic<DiGraph<Package, LinkTime>>;
 ///
 /// # Ok::<_, xh_engine::planner::Error>(())
 /// ```
-pub struct Planner<'a> {
+#[derive(Default)]
+pub struct Planner {
     plan: Plan,
     registered: HashSet<PackageId>,
-    lua: &'a Lua,
+    namespace: RefCell<Vec<Arc<str>>>,
 }
 
 const MODULE_NAME: &str = "xuehua.planner";
 
-impl<'a> Planner<'a> {
-    pub fn new(lua: &'a Lua) -> Self {
-        Self {
-            plan: Plan::default(),
-            registered: HashSet::default(),
-            lua,
-        }
-    }
-
+impl Planner {
     pub fn plan(&self) -> &Plan {
         &self.plan
-    }
-
-    pub fn lua(&self) -> &Lua {
-        &self.lua
     }
 
     pub fn configure(
@@ -123,12 +107,8 @@ impl<'a> Planner<'a> {
         Ok(self.plan.add_node(pkg))
     }
 
-    pub fn package(
-        &mut self,
-        mut pkg: Package,
-        namespace: Vec<String>,
-    ) -> Result<NodeIndex, Error> {
-        pkg.id.namespace = namespace;
+    pub fn package(&mut self, mut pkg: Package) -> Result<NodeIndex, Error> {
+        pkg.id.namespace = self.namespace.borrow().clone();
 
         // ensure no conflicts
         if !self.registered.insert(pkg.id.clone()) {
@@ -158,71 +138,42 @@ impl<'a> Planner<'a> {
 
         Ok(node)
     }
+}
 
-    pub fn run(&mut self, lua: &Lua, root: &Path) -> Result<(), Error> {
-        let namespace = RefCell::new(vec!["root".to_string()]);
-        let get_namespace = || {
-            namespace
-                .try_borrow_mut()
-                .map_err(|_| mlua::Error::RecursiveMutCallback)
-        };
+impl UserData for Planner {
+    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("namespace", |_, this| {
+            Ok(this
+                .namespace
+                .borrow()
+                .iter()
+                .map(|str| str.to_string())
+                .collect::<Vec<_>>())
+        });
+    }
 
-        let planner = RefCell::new(self);
-        let get_planner = || {
-            planner
-                .try_borrow_mut()
-                .map_err(|_| mlua::Error::RecursiveMutCallback)
-        };
+    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method_mut("package", |_, this, pkg| {
+            this.package(pkg).map(LuaNodeIndex::from).into_lua_err()
+        });
 
-        lua.scope(|scope| {
-            let module = lua.create_table()?;
+        methods.add_method_mut("configure", |lua, this, table: Table| {
+            this.configure(
+                lua,
+                table.get::<DefaultIx>("source")?.into(),
+                table.get("destination")?,
+                table.get("modify")?,
+            )
+            .map(LuaNodeIndex::from)
+            .into_lua_err()
+        });
 
-            module.set(
-                "namespace",
-                scope.create_function(|_, (name, func): (String, Function)| {
-                    // release borrow to allow nested namespace calls
-                    get_namespace()?.push(name);
-                    let rval = func.call::<Value>(());
-                    get_namespace()?.pop();
-                    Ok(rval)
-                })?,
-            )?;
-
-            module.set(
-                "package",
-                scope.create_function(|_, pkg| {
-                    get_planner()?
-                        .package(pkg, get_namespace()?.clone())
-                        .map(LuaNodeIndex::from)
-                        .into_lua_err()
-                })?,
-            )?;
-
-            module.set(
-                "configure",
-                scope.create_function(|lua, table: Table| {
-                    get_planner()?
-                        .configure(
-                            lua,
-                            table.get::<DefaultIx>("source")?.into(),
-                            table.get("destination")?,
-                            table.get("modify")?,
-                        )
-                        .map(LuaNodeIndex::from)
-                        .into_lua_err()
-                })?,
-            )?;
-
-            lua.register_module(MODULE_NAME, module)?;
-            scope.add_destructor(|| {
-                if let Err(err) = lua.unload_module(MODULE_NAME) {
-                    warn!(error:? = err; "could not unregister {MODULE_NAME}");
-                }
-            });
-
-            lua.load(fs::read(root)?).exec()
-        })?;
-
-        Ok(())
+        methods.add_method("namespace", |_, this, (name, func): (String, Function)| {
+            // release borrow to allow nested namespace calls
+            this.namespace.borrow_mut().push(name.into());
+            let rval = func.call::<Value>(());
+            this.namespace.borrow_mut().pop();
+            Ok(rval)
+        });
     }
 }
