@@ -1,4 +1,4 @@
-# xuehua
+# Xuehua
 
 ## Abstract
 
@@ -21,7 +21,9 @@ The individual systems that make up xuehua.
 ## Commands
 
 `xh link [package]... [root] [--reverse]` - Uses the Linker to manage packages on the system
-`xh inspect plan [path] [--format <dot|json>]` - Prints the plan for a project. DOT output can be further processed by [Graphviz](https://graphviz.org/)
+
+`xh inspect plan [path] [--format <dot|json>]` - Prints the plan for a project. DOT output can be further processed by [Graphviz](https://graphviz.org/).
+
 `xh inspect package [package]... [--format <human|json>]` - Prints the definitions for the given packages
 
 ## Planner API (`xuehua.planner`)
@@ -30,7 +32,7 @@ The individual systems that make up xuehua.
 
 Functions to manage the planner's package graph.
 
-### package(options)
+### `package(options)`
 
 Declares a package
 
