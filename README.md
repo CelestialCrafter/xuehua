@@ -134,7 +134,6 @@ You can access specific executors by using `xuehua.executor.<name>` as the modul
 Executors are used by first `create`-ing executor-specific data, and then `dispatch`-ing the data to an executor.
 
 Example with fetch executor:
-
 ```lua
 local plan = require("xuehua.planner")
 local utils = require("xuehua.utils")
@@ -164,7 +163,6 @@ Logging functions to communicate from within lua.
 Functions to log messages with differing severity.
 
 Example:
-
 ```lua
 local log = require("xuehua.logger")
 log.info("hello world!")
@@ -183,7 +181,6 @@ Utility functions to make programming easier.
 Transforms a package into a runtime or buildtime dependency.
 
 Example:
-
 ```lua
 local plan = require("xuehua.planner")
 local utils = require("xuehua.utils")
@@ -201,7 +198,6 @@ utils.runtime(my_pkg)
 Wraps a package definition to not have configuration.
 
 Example:
-
 ```lua
 local utils = require("xuehua.utils")
 
