@@ -1,10 +1,10 @@
 # xuehua
 
-## idea
+## Abstract
 
-package manager/distro inspired by nixpkgs/nixos
+A package manager and (eventually) distro inspired by nixpkgs/nixos.
 
-## concepts
+## Concepts
 
 **namespace**
 a repository or group name for packages (ex. xuehua, alpine, debian, celestial)
