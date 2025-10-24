@@ -1,11 +1,11 @@
-use std::{fmt, str::FromStr};
+use std::{fmt, str::FromStr, sync::Arc};
 
 use thiserror::Error;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct PackageId {
     pub name: String,
-    pub namespace: Vec<String>,
+    pub namespace: Vec<Arc<str>>,
 }
 
 impl fmt::Display for PackageId {
@@ -26,7 +26,7 @@ impl FromStr for PackageId {
 
         Ok(Self {
             name: name.to_string(),
-            namespace: namespace.split("/").map(|s| s.to_string()).collect(),
+            namespace: namespace.split("/").map(|s| s.into()).collect(),
         })
     }
 }
