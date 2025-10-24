@@ -1,4 +1,4 @@
-# xuehua
+# Xuehua
 
 ## Abstract
 
@@ -6,7 +6,7 @@ A package manager, build system, and (eventually) linux distribution. Inspired b
 
 ## Subsystems
 
-The individual systems that make up xuehua.
+The individual systems that make up Xuehua.
 
 **Planner** - Evaluates a Xuehua project to generate a package dependency graph.
 
@@ -21,7 +21,9 @@ The individual systems that make up xuehua.
 ## Commands
 
 `xh link [package]... [root] [--reverse]` - Uses the Linker to manage packages on the system
-`xh inspect plan [path] [--format <dot|json>]` - Prints the plan for a project. DOT output can be further processed by [Graphviz](https://graphviz.org/)
+
+`xh inspect plan [path] [--format <dot|json>]` - Prints the plan for a project. DOT output can be further processed by [Graphviz](https://graphviz.org/).
+
 `xh inspect package [package]... [--format <human|json>]` - Prints the definitions for the given packages
 
 ## Planner API (`xuehua.planner`)
@@ -30,7 +32,7 @@ The individual systems that make up xuehua.
 
 Functions to manage the planner's package graph.
 
-### package(options)
+### `package(options)`
 
 Declares a package
 
@@ -55,7 +57,7 @@ plan.package(utils.no_config {
 })
 ```
 
-### configure(options)
+### `configure(options)`
 
 Changes a package's definition options via its defined parameters.
 
@@ -93,7 +95,7 @@ plan.configure {
 }
 ```
 
-### namespace(name, func)
+### `namespace(name, func)`
 
 Appends a namespace segment to all packages defined within the function.
 Namespaces are a package grouping mechanism designed to both improve user clarity, and to prevent name conflicts.
@@ -130,6 +132,7 @@ The Executor API contains one module per executor registered.
 You can access specific executors by using `xuehua.executor.<name>` as the module name.
 
 Executors are used by first `create`-ing executor-specific data, and then `dispatch`-ing the data to an executor.
+
 Example with fetch executor:
 ```lua
 local plan = require("xuehua.planner")
@@ -155,7 +158,7 @@ plan.package(utils.no_config {
 
 Logging functions to communicate from within lua.
 
-### info(message), warn(message), error(message), debug(message), and trace(message)
+### `info(message)`, `warn(message)`, `error(message)`, `debug(message)`, and `trace(message)`
 
 Functions to log messages with differing severity.
 
@@ -173,7 +176,7 @@ log.trace("hello world!")
 
 Utility functions to make programming easier.
 
-### runtime(package) and buildtime(package)
+### `runtime(package)` and `buildtime(package)`
 
 Transforms a package into a runtime or buildtime dependency.
 
@@ -190,10 +193,11 @@ local my_pkg = plan.package {
 utils.runtime(my_pkg)
 ```
 
-### no_config(definition)
+### `no_config(definition)`
 
 Wraps a package definition to not have configuration.
 
+Example:
 ```lua
 local utils = require("xuehua.utils")
 
