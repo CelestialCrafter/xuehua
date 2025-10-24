@@ -4,6 +4,24 @@
 
 A package manager and (eventually) distro inspired by nixpkgs/nixos.
 
+## Modules
+The parts that as a whole make up xuehua.
+
+**Planner -**
+Evaluates a xuehua project to generate a package dependency graph which the builder then uses.
+
+**Builder -**
+Systematically creates and manages packages' and their dependancies' environments based on the planner's graph.
+
+**Executor -**
+Executed by the builder to run sandboxed system actions in the package's custom environment (generally used to build a program, but is not limited to do so).
+
+**Store -**
+Read-only (only writable by xuehua itself) cache containing packages that have been linked to the current system.
+
+**Linker -**
+Moves a package into the scope of the current system, or removes it.
+
 ## Concepts
 
 **namespace**
