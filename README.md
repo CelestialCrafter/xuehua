@@ -20,56 +20,51 @@ Executed by the builder to run sandboxed system actions in the package's custom 
 Read-only (only writable by xuehua itself) cache containing packages that have been linked to the current system.
 
 **Linker -**
-Moves a package into the scope of the current system, or removes it.
+Makes a package be inaccessible/accessible to the current system (through one of few ways).
 
 ## Concepts
 
-**namespace**
-a repository or group name for packages (ex. xuehua, alpine, debian, celestial)
-`local` is a special name that means "the current namespace"
+**Namespace -**
+A repository or group name for packages (ex. xuehua, alpine, debian, celestial). There is a special group name, called `local` that means the "currently selected namespace".
 
-**package**
-a namespace, name, and version in the format of `[path to folder containing xuehua.toml/]<namespace>:<name>[@version]`
+**Package -**
+A namespace, name, and version in the format of `[path to folder containing xuehua.toml/]<namespace>:<name>[@version]`.
 
-**store**
-a read-only (writable by `xh`) cache containing packages that have been linked/are linked
+## Commands
 
-## commands
+`xh shell <package>` -
+Sets up a sandboxed environment for a package, and drops the user into it.
 
-`xh shell <package>`:
-sets up a sandboxed environment for a package,
-and drops the user into it
+`xh link <package>` -
+Make a package accessible to the current system.
 
-`xh link <package>`:
-sets up symlinks for a package in the running system
+`xh unlink <package>` -
+Make a package inaccessible to the current system.
 
-`xh unlink <package>`:
-removes symlinks for a pcakage in the running system
+`xh gc` -
+Removes inaccessible packages from the store.
 
-`xh gc`:
-removes unlinked packages from the store
+## Packaging API
 
-## package api
+**Dependencies**
 
-**dependencies**
+- `addBuild(pkg)` → Build-time deps
+- `addRuntime(pkg)` → Runtime deps (could alias `addBuild`)
+- `forceResolution(pkg, repo)` → Local conflict resolution
 
-- `addBuild(pkg)` → build-time deps
-- `addRuntime(pkg)` → runtime deps (could alias `addBuild`)
-- `forceResolution(pkg, repo)` → local conflict resolution
+**Fetch**
 
-**fetch**
+- `network(url) → store path` → Fetch remote
+- `local(path) → store path` → Fetch local
 
-- `network(url) -> store path`: fetch remote
-- `local(path) -> store path`: fetch local
+**Unpack**
 
-**unpack**
+- `auto(path) → path` → Detect type & unpack
+- `git(url) → path` → Clone
+- `tar/xz/gzip/zstd(path) → path` → Unpack respective format
 
-- `auto(path) -> path`: detect type & unpack
-- `git(url) -> path`: clone
-- `tar/xz/gzip/zstd(path) -> path`: unpack respective format
+**Commands**
 
-**commands**
+- `shell(package, file, args) → stdio handle` → Run commands
 
-- `shell(package, file, args) -> stdio handle`: run commands
-
-bubblewrap sandbox by default (can be disabled from xuehua.toml)
+Has a bubblewrap sandbox by default (can be disabled from xuehua.toml).
