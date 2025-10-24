@@ -132,6 +132,7 @@ The Executor API contains one module per executor registered.
 You can access specific executors by using `xuehua.executor.<name>` as the module name.
 
 Executors are used by first `create`-ing executor-specific data, and then `dispatch`-ing the data to an executor.
+
 Example with fetch executor:
 
 ```lua
@@ -163,6 +164,7 @@ Logging functions to communicate from within lua.
 Functions to log messages with differing severity.
 
 Example:
+
 ```lua
 local log = require("xuehua.logger")
 log.info("hello world!")
@@ -197,6 +199,8 @@ utils.runtime(my_pkg)
 ### `no_config(definition)`
 
 Wraps a package definition to not have configuration.
+
+Example:
 
 ```lua
 local utils = require("xuehua.utils")
