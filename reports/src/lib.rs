@@ -5,6 +5,7 @@
 
 extern crate alloc;
 
+use thiserror::Error;
 use alloc::{
     boxed::Box,
     string::{String, ToString},
@@ -70,11 +71,35 @@ impl<E> Report<E> {
         E: Error + 'static,
         E: Send + Sync,
     {
+        #[derive(Error, Debug)]
+        #[error("{0}")]
+        struct SourceError(String);
+
+        fn walk(
+            error: &dyn Error,
+            location: &'static Location<'static>,
+        ) -> SmallVec<[Report<()>; 1]> {
+            let mut reports = SmallVec::new();
+            if let Some(source) = error.source() {
+                reports.push(Report {
+                    inner: Box::new(ReportInner {
+                        children: walk(source, location),
+                        error: Box::new(SourceError(source.to_string())),
+                        frames: Default::default(),
+                        type_name: type_name::<SourceError>(),
+                        location,
+                    }),
+                    _marker: PhantomData,
+                });
+            }
+
+            reports
+        }
         let location = Location::caller();
         Self {
             inner: Box::new(ReportInner {
+                children: walk(&error, location),
                 error: Box::new(error),
-                children: SmallVec::new(),
                 frames: Default::default(),
                 type_name: type_name::<E>(),
                 location,
