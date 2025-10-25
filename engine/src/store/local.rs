@@ -7,6 +7,7 @@ use std::{
 use jiff::Timestamp;
 use rusqlite::{Connection, OptionalExtension, named_params, types::FromSqlError};
 use tokio::sync::Mutex;
+use log::debug;
 
 use crate::{
     ExternalError, ExternalResult,
@@ -57,6 +58,7 @@ impl Store for LocalStore<'_> {
         package: &Package,
         artifact: &ArtifactId,
     ) -> Result<PackageId, Error> {
+        debug!("registering package {} with artifact {}", package.id, artifact);
         self.db
             .lock()
             .await
@@ -95,6 +97,7 @@ impl Store for LocalStore<'_> {
 
     async fn register_artifact(&mut self, content: &Path) -> Result<blake3::Hash, Error> {
         let hash = hash_directory(content).into_store_err()?;
+        debug!("registering artifact {:?} as {}", content, hash);
 
         match self.db.lock().await.execute(
             Queries::REGISTER_ARTIFACT,
