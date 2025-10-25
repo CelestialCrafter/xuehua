@@ -28,8 +28,9 @@ fn main() -> Result<()> {
         .wrap_err("error installing eyre handler")?;
 
     let fern_colors = ColoredLevelConfig::new()
-        .info(Color::Green)
-        .debug(Color::Blue)
+        .info(Color::Blue)
+        .debug(Color::Magenta)
+        .trace(Color::BrightBlack)
         .warn(Color::Yellow)
         .error(Color::Red);
 
