@@ -27,7 +27,7 @@ fn main() -> Result<()> {
     eyre::set_hook(Box::new(DefaultHandler::default_with))
         .wrap_err("error installing eyre handler")?;
 
-    let fern_colors = ColoredLevelConfig::new()
+    let colors = ColoredLevelConfig::new()
         .info(Color::Blue)
         .debug(Color::Magenta)
         .trace(Color::BrightBlack)
@@ -38,7 +38,7 @@ fn main() -> Result<()> {
         .format(move |out, message, record| {
             out.finish(format_args!(
                 "({}) {} {}",
-                fern_colors.color(record.level()).to_string().to_lowercase(),
+                colors.color(record.level()).to_string().to_lowercase(),
                 record.target(),
                 message
             ))
