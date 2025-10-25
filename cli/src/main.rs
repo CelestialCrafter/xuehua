@@ -6,6 +6,7 @@ use eyre::{Context, DefaultHandler, Result};
 
 use fern::colors::{Color, ColoredLevelConfig};
 use log::{LevelFilter, info, warn};
+use crate::options::InspectSub;
 
 use mlua::Lua;
 use petgraph::{dot::Dot, graph::NodeIndex};
@@ -50,29 +51,11 @@ fn main() -> Result<()> {
 
     match get_options().cli.subcommand {
         Subcommand::Build { package: _ } => {
+
             // TODO: restrict stdlibs
             let lua = Lua::new();
+            let planner = basic_lua_plan(lua.clone(), "xuehua/main.lua".to_string())?;
 
-            // register apis
-            logger::register_module(&lua)?;
-            utils::register_module(&lua)?;
-
-            // run planner
-            let mut planner = planner::Planner::new();
-            let chunk = lua.load(fs::read("xuehua/main.lua")?);
-            lua.scope(|scope| {
-                lua.register_module(
-                    planner::MODULE_NAME,
-                    scope.create_userdata_ref_mut(&mut planner)?,
-                )?;
-                scope.add_destructor(|| {
-                    if let Err(err) = lua.unload_module(planner::MODULE_NAME) {
-                        warn!("could not unload {}: {}", planner::MODULE_NAME, err);
-                    }
-                });
-
-                chunk.exec()
-            })?;
             info!(
                 "{:?}",
                 Dot::new(&planner.plan().map(|_, w| w.id.to_string(), |_, w| *w))
@@ -111,7 +94,45 @@ fn main() -> Result<()> {
         Subcommand::Shell { package: _ } => todo!("shell not yet implemented"),
         Subcommand::GC => todo!("gc not yet implemented"),
         Subcommand::Repair => todo!("repair not yet implemented"),
+        Subcommand::Inspect { subcommand } => match subcommand {
+            InspectSub::Plan { path } => {
+                // TODO: restrict stdlibs
+                let lua = Lua::new();
+                let planner = basic_lua_plan(lua.clone(), path.to_string())?;
+
+                println!(
+                    "{:?}",
+                    Dot::new(&planner.plan().map(|_, w| w.id.to_string(), |_, w| *w))
+                );
+            },
+            InspectSub::Package { package: _, } => todo!("package inspect not yet implemented"),
+        }
     }
 
     Ok(())
+}
+
+fn basic_lua_plan(lua: Lua, location: String) -> Result<planner::Planner> {
+    // register apis
+    logger::register_module(&lua)?;
+    utils::register_module(&lua)?;
+
+    // run planner
+    let mut planner = planner::Planner::new();
+    let chunk = lua.load(fs::read(location)?);
+    lua.scope(|scope| {
+        lua.register_module(
+            planner::MODULE_NAME,
+            scope.create_userdata_ref_mut(&mut planner)?,
+        )?;
+        scope.add_destructor(|| {
+            if let Err(err) = lua.unload_module(planner::MODULE_NAME) {
+                warn!("could not unload {}: {}", planner::MODULE_NAME, err);
+            }
+        });
+
+        chunk.exec()
+    })?;
+
+    Ok(planner)
 }
