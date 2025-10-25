@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5.45", features = ["derive", "wrap_help"] }
-fern = "0.7.1"
+fern = { version = "0.7.1", features = ["colored"] }
 eyre = { version = "0.6.12", default-features = false, features = ["track-caller"] }
 xh-engine = { path = "../engine", features = ["bubblewrap-executor", "local-store"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
