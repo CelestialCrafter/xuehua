@@ -170,3 +170,39 @@ impl<E> fmt::Display for Report<E> {
         SimpleRenderer.render(self).fmt(f)
     }
 }
+
+impl<E> Error for Report<E> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        let children = &self.inner.children;
+        (1 == children.len()).then(|| children.first().unwrap() as _)
+    }
+}
+
+pub trait ResultReportExt<T> {
+    fn erased(self) -> Result<T, Report<()>>;
+
+    fn wrap<F>(self, error: impl FnOnce() -> Report<F>) -> Result<T, Report<F>>;
+
+    fn with_frame(self, frame: impl FnOnce() -> Frame) -> Self;
+}
+
+impl<T, E> ResultReportExt<T> for Result<T, Report<E>> {
+    fn erased(self) -> Result<T, Report<()>> {
+        self.map_err(|report| report.erased())
+    }
+
+    fn wrap<F>(self, error: impl FnOnce() -> Report<F>) -> Result<T, Report<F>> {
+        self.map_err(|report| error().with_child(report))
+    }
+
+    fn with_frame(self, frame: impl FnOnce() -> Frame) -> Self {
+        self.map_err(|report| report.with_frame(frame()))
+    }
+}
+
+pub trait IntoReport: Sized + Error + Send + Sync + 'static {
+    #[track_caller]
+    fn into_report(self) -> Report<Self> {
+        Report::new(self)
+    }
+}
