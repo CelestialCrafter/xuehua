@@ -1,10 +1,9 @@
 use std::{
-    ffi::{OsStr, OsString},
-    io,
-    path::PathBuf, process::Command,
+    ffi::{OsStr, OsString}, io, iter::once, path::PathBuf, process::Command
 };
 
 use futures_util::{FutureExt, future::BoxFuture};
+use log::debug;
 use mlua::{AnyUserData, FromLuaMulti, IntoLuaMulti, Lua, MultiValue, Value};
 use tokio::process::Command as TokioCommand;
 
@@ -63,6 +62,16 @@ impl BubblewrapExecutor {
     async fn dispatch_impl(&mut self, lua: Lua, data: AnyUserData) -> Result<MultiValue, Error> {
         let command = Command::new("bwrap");
         let mut command = command;
+
+        debug!(
+            "running command {}",
+            once(command.get_program())
+                .chain(command.get_args())
+                .map(|arg| arg.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+
 
         // essentials
         command
@@ -127,6 +136,13 @@ impl BubblewrapExecutor {
             .arg("--")
             .arg(lua_command.get_program())
             .args(lua_command.get_args());
+
+        let args: Vec<String> = command
+            .get_args()
+            .collect::<Vec<_>>()
+            .iter()
+            .map(|os_str| os_str.to_string_lossy().into_owned())
+            .collect();
 
         // execution
         let output = TokioCommand::from(command)
