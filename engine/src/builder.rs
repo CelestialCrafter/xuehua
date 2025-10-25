@@ -102,6 +102,7 @@ impl Builder {
                 _ => unreachable!(),
             }
         }
+        info!("initialised builder");
 
         Self {
             state,

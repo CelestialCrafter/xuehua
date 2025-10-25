@@ -8,6 +8,7 @@ use std::{collections::HashMap, path::Path};
 
 use mlua::{AnyUserData, Lua, MultiValue};
 use thiserror::Error;
+use log::info;
 
 pub const MODULE_NAME: &str = "xuehua.executor";
 
@@ -44,10 +45,12 @@ pub struct Manager {
 
 impl<'a> Manager {
     pub fn register<F: Fn(&Path) -> DynBoxExecutor + 'static>(&mut self, name: String, func: F) {
+        info!("registered {}", name);
         self.registered.insert(name, Box::new(func));
     }
 
     pub fn create(&self, environment: &Path) -> impl Iterator<Item = (String, DynBoxExecutor)> {
+        info!("created environment {}", environment.display());
         self.registered
             .iter()
             .map(|(name, func)| (name.clone(), func(environment)))

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use log::{Level, Record, logger};
+use log::{Level, Record, logger, info};
 use mlua::{ExternalResult, Lua};
 
 fn log(level: Level, message: String) {
@@ -38,5 +38,6 @@ pub fn register_module(lua: &Lua) -> Result<(), mlua::Error> {
 
     lua.register_module("xuehua.logger", module)?;
 
+    info!("registered {:?}", lua);
     Ok(())
 }

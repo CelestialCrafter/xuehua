@@ -72,6 +72,7 @@ pub struct Namespace(Arc<RwLock<Vec<Arc<str>>>>);
 
 impl Namespace {
     pub fn new() -> Self {
+        info!("initialised planner");
         Self(Arc::new(RwLock::new(vec!["root".into()])))
     }
 

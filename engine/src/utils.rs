@@ -1,6 +1,7 @@
 use std::{fs, io, path::Path};
 
 use mlua::{Function, Lua, chunk};
+use log::info;
 
 #[macro_export]
 macro_rules! impl_into_err {
@@ -114,5 +115,6 @@ pub fn register_module(lua: &Lua) -> Result<(), mlua::Error> {
 
     lua.register_module("xuehua.utils", module)?;
 
+    info!("registered {:?}", lua);
     Ok(())
 }
