@@ -2,6 +2,8 @@ use std::{fs, io, path::Path};
 
 use mlua::{Function, Lua, chunk};
 
+pub type BoxDynError = Box<dyn std::error::Error + Send + Sync>;
+
 #[macro_export]
 macro_rules! impl_into_err {
     ($(($error:ty, $fn:ident)),*) => {
@@ -14,14 +16,14 @@ macro_rules! impl_into_err {
             $(fn $fn(self) -> $error;)*
         }
 
-        impl<T, E: Into<Box<dyn std::error::Error + Send + Sync>>> ExternalResult<T> for Result<T, E>
+        impl<T, E: Into<crate::utils::BoxDynError>> ExternalResult<T> for Result<T, E>
         {
             $(fn $fn(self) -> Result<T, $error> {
                 self.map_err(|err| err.$fn())
             })*
         }
 
-        impl<E: Into<Box<dyn std::error::Error + Send + Sync>>> ExternalError for E
+        impl<E: Into<crate::utils::BoxDynError>> ExternalError for E
         {
             $(fn $fn(self) -> $error {
                 <$error>::ExternalError(self.into())

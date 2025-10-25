@@ -3,17 +3,45 @@ pub mod bubblewrap;
 
 use std::{
     collections::HashMap,
-    ffi::{OsStr, OsString},
-    process::Command,
+    ffi::OsString,
+    process::{Command, Output},
+    string::FromUtf8Error,
 };
 
-use mlua::UserData;
+use mlua::{FromLua, Lua, UserData, Value};
+
+pub struct LuaOutput {
+    stdout: String,
+    stderr: String,
+    code: Option<i32>,
+}
+
+impl TryFrom<Output> for LuaOutput {
+    type Error = FromUtf8Error;
+
+    fn try_from(value: Output) -> Result<Self, Self::Error> {
+        Ok(Self {
+            stdout: String::from_utf8(value.stdout)?,
+            stderr: String::from_utf8(value.stderr)?,
+            code: value.status.code(),
+        })
+    }
+}
+
+impl UserData for LuaOutput {
+    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("stdout", |_, this| Ok(this.stdout.clone()));
+        fields.add_field_method_get("stderr", |_, this| Ok(this.stderr.clone()));
+        fields.add_field_method_get("status", |_, this| Ok(this.code));
+    }
+}
 
 pub struct LuaCommand(pub Command);
 
-impl LuaCommand {
-    fn new(program: &OsStr) -> Self {
-        Self(Command::new(program))
+impl FromLua for LuaCommand {
+    fn from_lua(value: Value, lua: &Lua) -> Result<Self, mlua::Error> {
+        let program = OsString::from_lua(value, lua)?;
+        Ok(Self(Command::new(program)))
     }
 }
 

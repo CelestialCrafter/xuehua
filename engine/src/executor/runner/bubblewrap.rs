@@ -1,15 +1,14 @@
-use std::{
-    ffi::{OsStr, OsString}, io, iter::once, path::PathBuf, process::Command
-};
+use std::{ffi::OsStr, io, iter::once, path::Path, process::Command, sync::Arc};
 
-use futures_util::{FutureExt, future::BoxFuture};
 use log::debug;
-use mlua::{AnyUserData, FromLuaMulti, IntoLuaMulti, Lua, MultiValue, Value};
 use tokio::process::Command as TokioCommand;
 
 use crate::{
     ExternalResult,
-    executor::{Error, Executor, runner::LuaCommand},
+    executor::{
+        Error, Executor,
+        runner::{LuaCommand, LuaOutput},
+    },
 };
 
 #[derive(Debug)]
@@ -47,36 +46,39 @@ impl Default for BubblewrapExecutorOptions {
 /// To execute multiple commands within the sandbox, this executor bundles a command runner.
 /// The runner is embedded within the library at compile-time, and is controlled via stdin/stdout.
 pub struct BubblewrapExecutor {
-    environment: PathBuf,
+    environment: Arc<Path>,
     options: BubblewrapExecutorOptions,
 }
 
 impl BubblewrapExecutor {
-    pub fn new(environment: PathBuf, options: BubblewrapExecutorOptions) -> Self {
+    pub fn new(environment: Arc<Path>, options: BubblewrapExecutorOptions) -> Self {
         Self {
             environment,
             options,
         }
     }
+}
 
-    async fn dispatch_impl(&mut self, lua: Lua, data: AnyUserData) -> Result<MultiValue, Error> {
-        let command = Command::new("bwrap");
-        let mut command = command;
+impl Executor for BubblewrapExecutor {
+    type Request = LuaCommand;
+    type Response = LuaOutput;
 
+    async fn dispatch(&mut self, request: Self::Request) -> Result<Self::Response, Error> {
+        let original = request.0;
         debug!(
-            "running command {}",
-            once(command.get_program())
-                .chain(command.get_args())
-                .map(|arg| arg.to_string_lossy())
+            "running command {:?}",
+            once(original.get_program())
+                .chain(original.get_args())
                 .collect::<Vec<_>>()
-                .join(" ")
+                .join(OsStr::new(" ")),
         );
 
+        let mut sandboxed = Command::new("bwrap");
 
         // essentials
-        command
+        sandboxed
             .arg("--bind")
-            .arg(&self.environment)
+            .arg(&*self.environment)
             .arg("/")
             .args(&[
                 // TODO: remove busybox
@@ -90,14 +92,14 @@ impl BubblewrapExecutor {
             ]);
 
         // restrictions
-        command.args([
+        sandboxed.args([
             "--new-session",
             "--die-with-parent",
             "--clearenv",
             "--unshare-all",
         ]);
 
-        command.args(
+        sandboxed.args(
             self.options
                 .add_capabilities
                 .iter()
@@ -105,7 +107,7 @@ impl BubblewrapExecutor {
                 .flatten(),
         );
 
-        command.args(
+        sandboxed.args(
             self.options
                 .drop_capabilities
                 .iter()
@@ -114,45 +116,35 @@ impl BubblewrapExecutor {
         );
 
         if self.options.network {
-            command.arg("--share-net");
+            sandboxed.arg("--share-net");
         }
 
         // command payload
-        let lua_command = data.take::<LuaCommand>()?.0;
-
-        if let Some(working_dir) = lua_command.get_current_dir() {
-            command.arg("--chdir").arg(working_dir);
+        if let Some(working_dir) = original.get_current_dir() {
+            sandboxed.arg("--chdir").arg(working_dir);
         }
 
-        command.args(
-            lua_command
+        sandboxed.args(
+            original
                 .get_envs()
                 .into_iter()
                 .filter_map(|(key, value)| Some([OsStr::new("--setenv"), key, value?]))
                 .flatten(),
         );
 
-        command
+        sandboxed
             .arg("--")
-            .arg(lua_command.get_program())
-            .args(lua_command.get_args());
-
-        let args: Vec<String> = command
-            .get_args()
-            .collect::<Vec<_>>()
-            .iter()
-            .map(|os_str| os_str.to_string_lossy().into_owned())
-            .collect();
+            .arg(original.get_program())
+            .args(original.get_args());
 
         // execution
-        let output = TokioCommand::from(command)
+        let output = TokioCommand::from(sandboxed)
             .output()
             .await
             .into_executor_err()?;
-        let stdout = String::from_utf8(output.stdout).into_executor_err()?;
-        let stderr = String::from_utf8(output.stderr).into_executor_err()?;
 
         if !output.status.success() {
+            let stderr = String::from_utf8(output.stderr).into_executor_err()?;
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!("{}\nstderr: {}", output.status, stderr),
@@ -160,28 +152,6 @@ impl BubblewrapExecutor {
             .into_executor_err();
         }
 
-        let table = lua.create_table()?;
-        table.set("status", output.status.code().unwrap_or(-1))?;
-        table.set("stdout", stdout)?;
-        table.set("stderr", stderr)?;
-
-        Ok(Value::Table(table).into_lua_multi(&lua)?)
-    }
-}
-
-impl Executor for BubblewrapExecutor {
-    fn create(&self, lua: &Lua, value: MultiValue) -> Result<AnyUserData, Error> {
-        let (program,) = <(OsString,)>::from_lua_multi(value, lua)?;
-        let userdata = lua.create_userdata(LuaCommand::new(&program))?;
-
-        Ok(userdata)
-    }
-
-    fn dispatch(
-        &'_ mut self,
-        lua: Lua,
-        data: AnyUserData,
-    ) -> BoxFuture<'_, Result<MultiValue, Error>> {
-        self.dispatch_impl(lua, data).boxed()
+        LuaOutput::try_from(output).into_executor_err()
     }
 }

@@ -20,7 +20,10 @@ use jiff::Timestamp;
 use thiserror::Error;
 use walkdir::WalkDir;
 
-use crate::package::{Package, PackageId};
+use crate::{
+    package::{Package, PackageId},
+    utils::BoxDynError,
+};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -29,7 +32,7 @@ pub enum Error {
     #[error("artifact {0} not found")]
     ArtifactNotFound(ArtifactId),
     #[error(transparent)]
-    ExternalError(#[from] Box<dyn std::error::Error + Send + Sync>),
+    ExternalError(#[from] BoxDynError),
 }
 
 pub type ArtifactId = blake3::Hash;

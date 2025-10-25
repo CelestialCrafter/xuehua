@@ -4,22 +4,17 @@ use std::{fs, io::stderr, path::Path};
 
 use eyre::{Context, DefaultHandler, Result};
 
+use crate::options::InspectSub;
 use fern::colors::{Color, ColoredLevelConfig};
 use log::{LevelFilter, info, warn};
-use crate::options::InspectSub;
 
 use mlua::Lua;
 use petgraph::{dot::Dot, graph::NodeIndex};
 use tokio::runtime::Runtime;
 use xh_engine::{
     builder::{Builder, BuilderOptions},
-    executor::{
-        Manager,
-        bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
-    },
-    logger,
-    planner,
-    utils,
+    executor::bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
+    logger, planner, utils,
 };
 
 use crate::options::{Subcommand, get_options};
@@ -51,7 +46,6 @@ fn main() -> Result<()> {
 
     match get_options().cli.subcommand {
         Subcommand::Build { package: _ } => {
-
             // TODO: restrict stdlibs
             let lua = Lua::new();
             let planner = basic_lua_plan(lua.clone(), "xuehua/main.lua".to_string())?;
@@ -62,30 +56,24 @@ fn main() -> Result<()> {
             );
 
             // run builder
-            let mut manager = Manager::default();
-            manager.register("runner".to_string(), |env| {
-                Box::new(BubblewrapExecutor::new(
-                    env.to_path_buf(),
-                    BubblewrapExecutorOptions::default(),
-                ))
-            });
-
+            let runtime = Runtime::new()?;
             let build_root = Path::new("builds");
             utils::ensure_dir(build_root)?;
 
-            let mut builder = Builder::new(
-                planner,
-                manager,
-                lua,
-                BuilderOptions {
-                    concurrent: 8,
-                    root: build_root.to_path_buf(),
-                },
+            runtime.block_on(
+                Builder::new(
+                    planner,
+                    lua,
+                    BuilderOptions {
+                        concurrent: 8,
+                        root: build_root.to_path_buf(),
+                    },
+                )
+                .with_executor("runner".to_string(), |env| {
+                    BubblewrapExecutor::new(env, BubblewrapExecutorOptions::default())
+                })
+                .build(NodeIndex::from(3)),
             );
-
-            Runtime::new()
-                .unwrap()
-                .block_on(builder.build(NodeIndex::from(3)));
         }
         Subcommand::Link {
             reverse: _,
@@ -104,9 +92,9 @@ fn main() -> Result<()> {
                     "{:?}",
                     Dot::new(&planner.plan().map(|_, w| w.id.to_string(), |_, w| *w))
                 );
-            },
-            InspectSub::Package { package: _, } => todo!("package inspect not yet implemented"),
-        }
+            }
+            InspectSub::Package { package: _ } => todo!("package inspect not yet implemented"),
+        },
     }
 
     Ok(())

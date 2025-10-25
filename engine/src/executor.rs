@@ -1,24 +1,21 @@
 pub mod runner;
 
-use futures_util::future::BoxFuture;
 #[cfg(feature = "bubblewrap-executor")]
 pub use runner::bubblewrap;
 
-use std::{collections::HashMap, path::Path};
+use crate::utils::BoxDynError;
 
-use mlua::{AnyUserData, Lua, MultiValue};
+use mlua::{AnyUserData, ExternalResult, FromLua, IntoLua, UserData};
 use thiserror::Error;
 
 pub const MODULE_NAME: &str = "xuehua.executor";
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("executor {0} not found")]
-    ExecutorNotFound(String),
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
     #[error(transparent)]
-    ExternalError(#[from] Box<dyn std::error::Error + Send + Sync>),
+    ExternalError(#[from] BoxDynError),
 }
 
 // TODO: add examples for executor implementation and usage
@@ -30,26 +27,30 @@ pub enum Error {
 ///
 /// By nature, executors are full of side effects (fetching data, running processes, creating files, etc),
 /// but they must strive to be deterministic.
-pub trait Executor {
-    fn create(&self, lua: &Lua, value: MultiValue) -> Result<AnyUserData, Error>;
-    fn dispatch(&'_ mut self, lua: Lua, data: AnyUserData) -> BoxFuture<'_, Result<MultiValue, Error>>;
+pub trait Executor: Sized {
+    type Request;
+    type Response;
+
+    fn dispatch(
+        &mut self,
+        request: Self::Request,
+    ) -> impl Future<Output = Result<Self::Response, Error>> + Send;
 }
 
-pub type DynBoxExecutor = Box<dyn Executor + Send + Sync>;
+pub struct LuaExecutor<E: Executor>(pub E);
 
-#[derive(Default)]
-pub struct Manager {
-    registered: HashMap<String, Box<dyn Fn(&Path) -> DynBoxExecutor>>,
-}
+impl<E> UserData for LuaExecutor<E>
+where
+    E: Executor + Send + 'static,
+    E::Request: FromLua + IntoLua,
+    E::Response: IntoLua,
+{
+    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_function("create", |lua, value| E::Request::from_lua(value, lua));
 
-impl<'a> Manager {
-    pub fn register<F: Fn(&Path) -> DynBoxExecutor + 'static>(&mut self, name: String, func: F) {
-        self.registered.insert(name, Box::new(func));
-    }
-
-    pub fn create(&self, environment: &Path) -> impl Iterator<Item = (String, DynBoxExecutor)> {
-        self.registered
-            .iter()
-            .map(|(name, func)| (name.clone(), func(environment)))
+        methods.add_async_method_mut("dispatch", async |_, mut this, request: AnyUserData| {
+            let request = request.take()?;
+            this.0.dispatch(request).await.into_lua_err()
+        });
     }
 }
