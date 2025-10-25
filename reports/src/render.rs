@@ -1,9 +1,13 @@
+#[cfg(feature = "json")]
+pub mod json;
 #[cfg(feature = "pretty")]
 pub mod pretty;
 pub mod simple;
 
 use core::fmt;
 
+#[cfg(feature = "json")]
+pub use json::JsonRenderer;
 #[cfg(feature = "pretty")]
 pub use pretty::PrettyRenderer;
 pub use simple::SimpleRenderer;

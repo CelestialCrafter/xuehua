@@ -1764,6 +1764,7 @@ version = "0.1.0"
 dependencies = [
  "educe",
  "owo-colors",
+ "serde_json",
  "smallvec",
  "smol_str",
  "thiserror",
