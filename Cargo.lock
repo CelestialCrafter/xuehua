@@ -1749,6 +1749,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "xh-reports"
+version = "0.1.0"
+dependencies = [
+ "owo-colors",
+ "serde_json",
+ "smallvec",
+ "smol_str",
+ "thiserror",
+]
+
+[[package]]
 name = "xh-store-local"
 version = "0.1.0"
 dependencies = [

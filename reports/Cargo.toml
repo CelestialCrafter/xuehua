@@ -1,0 +1,15 @@
+[package]
+name = "xh-reports"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["json"]
+json = ["dep:serde_json"]
+
+[dependencies]
+smol_str.workspace = true
+thiserror.workspace = true
+serde_json = { workspace = true, optional = true }
+owo-colors = "4.2.3"
+smallvec = "1.15.1"
