@@ -42,12 +42,31 @@ pub enum Subcommand {
         #[arg(value_name = "PACKAGE")]
         package: String,
     },
+    
+    // inspect a package or xuehua project
+    Inspect {
+        #[command(subcommand)]
+        subcommand: InspectSub,
+    },
 
     /// remove unlinked packages from the store
     GC,
 
     /// verifies store contents, and re-links partially linked packages
     Repair,
+}
+
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum InspectSub {
+    Plan {
+        #[arg(value_name = "PATH")]
+        path: String,
+    },
+    
+    Package {
+        #[arg(value_name = "PACKAGE")]
+        package: String,
+    }
 }
 
 #[derive(Parser, Debug)]
