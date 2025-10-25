@@ -3,7 +3,10 @@ pub mod options;
 use std::{fs, io::stderr, path::Path};
 
 use eyre::{Context, DefaultHandler, Result};
+
+use fern::colors::{Color, ColoredLevelConfig};
 use log::{LevelFilter, info, warn};
+
 use mlua::Lua;
 use petgraph::{dot::Dot, graph::NodeIndex};
 use tokio::runtime::Runtime;
@@ -24,11 +27,18 @@ fn main() -> Result<()> {
     eyre::set_hook(Box::new(DefaultHandler::default_with))
         .wrap_err("error installing eyre handler")?;
 
+    let colors = ColoredLevelConfig::new()
+        .info(Color::Blue)
+        .debug(Color::Magenta)
+        .trace(Color::BrightBlack)
+        .warn(Color::Yellow)
+        .error(Color::Red);
+
     fern::Dispatch::new()
-        .format(|out, message, record| {
+        .format(move |out, message, record| {
             out.finish(format_args!(
-                "[{}] {} {}",
-                record.level(),
+                "({}) {} {}",
+                colors.color(record.level()).to_string().to_lowercase(),
                 record.target(),
                 message
             ))
