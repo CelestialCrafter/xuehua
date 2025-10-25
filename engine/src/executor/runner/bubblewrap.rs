@@ -7,6 +7,7 @@ use std::{
 use futures_util::{FutureExt, future::BoxFuture};
 use mlua::{AnyUserData, FromLuaMulti, IntoLuaMulti, Lua, MultiValue, Value};
 use tokio::process::Command as TokioCommand;
+use log::debug;
 
 use crate::{
     ExternalResult,
@@ -127,6 +128,14 @@ impl BubblewrapExecutor {
             .arg("--")
             .arg(lua_command.get_program())
             .args(lua_command.get_args());
+
+        let args: Vec<String> = command.get_args()
+            .collect::<Vec<_>>()
+            .iter()
+            .map(|os_str| os_str.to_string_lossy().into_owned())
+            .collect();
+
+        debug!("running command {:?} with args {}", command, args.join(", "));
 
         // execution
         let output = TokioCommand::from(command)
