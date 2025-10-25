@@ -4,10 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+default = ["std"]
+std = []
 pretty = ["dep:owo-colors"]
 json = ["dep:serde_json"]
 
 [dependencies]
+xh-reports-derive = { path = "../reports-derive" }
 thiserror.workspace = true
 educe.workspace = true
 smol_str.workspace = true

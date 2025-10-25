@@ -1768,6 +1768,16 @@ dependencies = [
  "smallvec",
  "smol_str",
  "thiserror",
+ "xh-reports-derive",
+]
+
+[[package]]
+name = "xh-reports-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

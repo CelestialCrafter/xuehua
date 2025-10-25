@@ -6,6 +6,7 @@
 extern crate alloc;
 
 use thiserror::Error;
+pub use xh_reports_derive::IntoReport;
 pub mod render;
 use alloc::{
     boxed::Box,
