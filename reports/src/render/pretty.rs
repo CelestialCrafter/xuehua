@@ -1,0 +1,254 @@
+use core::fmt;
+
+use owo_colors::{OwoColorize, Style};
+
+use crate::{Frame, Report, render::Render};
+
+pub struct Styles {
+    guides: Style,
+    error: Style,
+    context: Style,
+    suggestion: Style,
+    attachment: Style,
+    location: Style,
+    type_name: Style,
+    distracting: Style,
+}
+
+impl Default for Styles {
+    fn default() -> Self {
+        Self {
+            guides: Style::new(),
+            error: Style::new().red(),
+            context: Style::new().cyan(),
+            suggestion: Style::new().green(),
+            attachment: Style::new().yellow(),
+            location: Style::new().purple(),
+            type_name: Style::new().blue(),
+            distracting: Style::new(),
+        }
+    }
+}
+
+pub struct Guides {
+    line: &'static str,
+    empty: &'static str,
+    branch: &'static str,
+    last_branch: &'static str,
+}
+
+impl Default for Guides {
+    fn default() -> Self {
+        Self {
+            line: "│ ",
+            empty: "  ",
+            branch: "├─",
+            last_branch: "╰─",
+        }
+    }
+}
+
+pub struct Headers {
+    error: &'static str,
+    context: &'static str,
+    suggestion: &'static str,
+    attachment: &'static str,
+    type_name: &'static str,
+    location: &'static str,
+}
+
+impl Default for Headers {
+    fn default() -> Self {
+        Self {
+            error: "(error)",
+            context: "(context)",
+            suggestion: "(suggestion)",
+            attachment: "(attachment)",
+            type_name: "(type)",
+            location: "(location)",
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Config {
+    guides: Guides,
+    headers: Headers,
+    styles: Styles,
+}
+
+#[derive(Default)]
+pub struct PrettyRenderer {
+    pub config: Config,
+}
+
+impl Render for PrettyRenderer {
+    fn render<'a, E>(&'a self, report: &'a Report<E>) -> impl fmt::Display + 'a {
+        PrettyDisplayer {
+            inner: self,
+            report,
+        }
+    }
+}
+
+struct PrettyDisplayer<'a, E> {
+    inner: &'a PrettyRenderer,
+    report: &'a Report<E>,
+}
+
+impl<E> fmt::Display for PrettyDisplayer<'_, E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.render_report(f, self.report, format_args!(""), format_args!(""))
+    }
+}
+
+impl<E> PrettyDisplayer<'_, E> {
+    fn render_report<F>(
+        &self,
+        fmt: &mut fmt::Formatter<'_>,
+        report: &Report<F>,
+        prefix: fmt::Arguments<'_>,
+        next_prefix: fmt::Arguments<'_>,
+    ) -> fmt::Result {
+        let headers = &self.inner.config.headers;
+        let guides = &self.inner.config.guides;
+        let styles = &self.inner.config.styles;
+
+        writeln!(
+            fmt,
+            "{prefix}{} {}",
+            headers.error.style(styles.error),
+            report.error().bold()
+        )?;
+
+        let children = report.children();
+        let guide = if children.is_empty() {
+            guides.empty
+        } else {
+            guides.line
+        };
+
+        let sub_prefix = format_args!("{}{}", next_prefix, guide.style(styles.guides));
+        self.render_extra(fmt, report, sub_prefix)?;
+        self.render_frames(fmt, report.frames(), sub_prefix)?;
+
+        self.render_children(fmt, children, next_prefix)
+    }
+
+    fn render_extra<F>(
+        &self,
+        fmt: &mut fmt::Formatter<'_>,
+        report: &Report<F>,
+        prefix: fmt::Arguments<'_>,
+    ) -> fmt::Result {
+        let headers = &self.inner.config.headers;
+        let styles = &self.inner.config.styles;
+
+        writeln!(
+            fmt,
+            "{prefix}{} {}",
+            headers.location.style(styles.location),
+            report.location().style(styles.distracting)
+        )?;
+
+        writeln!(
+            fmt,
+            "{prefix}{} {}",
+            headers.type_name.style(styles.type_name),
+            report.type_name().style(styles.distracting)
+        )?;
+
+        Ok(())
+    }
+
+    // loops over every frame n times because sorting would require
+    // allocation and we aren't going to be handling many frames anyways
+    fn render_frames(
+        &self,
+        fmt: &mut fmt::Formatter<'_>,
+        frames: &[Frame],
+        prefix: fmt::Arguments<'_>,
+    ) -> fmt::Result {
+        let headers = &self.inner.config.headers;
+        let styles = &self.inner.config.styles;
+
+        // suggestion pass
+        for frame in frames {
+            let Frame::Suggestion(suggestion) = frame else {
+                continue;
+            };
+
+            writeln!(
+                fmt,
+                "{prefix}{} {}",
+                headers.suggestion.style(styles.suggestion),
+                suggestion
+            )?;
+        }
+
+        // context pass
+        for frame in frames {
+            let Frame::Context(context) = frame else {
+                continue;
+            };
+
+            writeln!(fmt, "{prefix}{}", headers.context.style(styles.context))?;
+
+            for (k, v) in context {
+                writeln!(
+                    fmt,
+                    "{prefix}  {}",
+                    format_args!("{k}: {v}").style(styles.distracting)
+                )?;
+            }
+        }
+
+        // attachment pass
+        for frame in frames {
+            let Frame::Attachment(attachment) = frame else {
+                continue;
+            };
+
+            writeln!(
+                fmt,
+                "{prefix}{}",
+                headers.attachment.style(styles.attachment)
+            )?;
+
+            for line in attachment.lines() {
+                writeln!(fmt, "{prefix}  {}", line.style(styles.distracting))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_children(
+        &self,
+        fmt: &mut fmt::Formatter<'_>,
+        children: &[Report<()>],
+        prefix: fmt::Arguments<'_>,
+    ) -> fmt::Result {
+        let guides = &self.inner.config.guides;
+        let styles = &self.inner.config.styles;
+
+        let mut children = children.iter().peekable();
+        while let Some(child) = children.next() {
+            let last = children.peek().is_none();
+
+            let guide = if last {
+                guides.last_branch
+            } else {
+                guides.branch
+            };
+            let next_prefix = format_args!("{}{}", prefix, guide.style(styles.guides));
+
+            let guide = if last { guides.empty } else { guides.line };
+            let next_next_prefix = format_args!("{}{}", prefix, guide.style(styles.guides));
+
+            self.render_report(fmt, &child, next_prefix, next_next_prefix)?;
+        }
+
+        Ok(())
+    }
+}
