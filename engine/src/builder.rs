@@ -6,7 +6,7 @@ use std::{
 
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use log::{debug, error, info};
-use mlua::Lua;
+use mlua::{AnyUserData, FromLua, IntoLua, Lua};
 use petgraph::{
     Direction,
     graph::{DiGraph, NodeIndex},
@@ -16,7 +16,7 @@ use thiserror::Error;
 use tokio::sync::{AcquireError, Semaphore};
 
 use crate::{
-    executor::{Error as ExecutorError, Manager},
+    executor::{self, Executor, LuaExecutor, MODULE_NAME},
     package::Package,
     planner::{LinkTime, Planner},
     store,
@@ -32,7 +32,7 @@ pub enum Error {
     #[error(transparent)]
     StoreError(#[from] store::Error),
     #[error(transparent)]
-    ExecutorError(#[from] ExecutorError),
+    ExecutorError(#[from] executor::Error),
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
@@ -57,7 +57,7 @@ enum PackageState {
 }
 
 struct BuildModules {
-    executors: Manager,
+    executors: Vec<(String, Box<dyn Fn(Arc<Path>, &Lua) -> Result<AnyUserData, mlua::Error>>)>,
     lua: Lua,
     root: PathBuf,
     semaphore: Semaphore,
@@ -84,7 +84,7 @@ fn invalid_state(node: NodeIndex, state: &PackageState) -> ! {
 }
 
 impl Builder {
-    pub fn new(planner: Planner, executors: Manager, lua: Lua, options: BuilderOptions) -> Self {
+    pub fn new(planner: Planner, lua: Lua, options: BuilderOptions) -> Self {
         let mut state = planner.into_inner().into_inner().map_owned(
             |_, weight| PackageState::Unbuilt {
                 remaining: 0,
@@ -106,12 +106,28 @@ impl Builder {
         Self {
             state,
             modules: Arc::new(BuildModules {
-                executors,
+                executors: Vec::new(),
                 lua,
                 root: options.root,
                 semaphore: Semaphore::new(options.concurrent),
             }),
         }
+    }
+
+    pub fn with_executor<F, E>(&mut self, name: String, func: F) -> &mut Self
+    where
+        F: Fn(Arc<Path>) -> E + 'static,
+        E: Executor + Send + 'static,
+        E::Request: FromLua + IntoLua,
+        E::Response: IntoLua,
+    {
+        let modules =
+            Arc::get_mut(&mut self.modules).expect("only 1 reference to modules should exist");
+        modules.executors.push((
+            name,
+            Box::new(move |path, lua| lua.create_userdata(LuaExecutor(func(path)))),
+        ));
+        self
     }
 
     fn environment_dir(root: &Path, node: NodeIndex) -> PathBuf {
@@ -235,12 +251,27 @@ async fn build_impl_impl(modules: Arc<BuildModules>, info: &BuildInfo) -> Result
     let permit = modules.semaphore.acquire().await?;
     info!("building package {}", info.package.id);
 
+    let lua = &modules.lua;
+
+    // create environment
     // TODO: link dependencies
-    let environment = Builder::environment_dir(&modules.root, info.node);
+    let environment = Arc::from(Builder::environment_dir(&modules.root, info.node));
     fs::create_dir(&environment)?;
 
-    // TODO: re-add executors
+    // register executors
+    let executors = modules
+        .executors
+        .iter()
+        .map(|(name, func)| Ok((name.clone(), func(environment.clone(), lua)?)))
+        .collect::<Result<Vec<_>, mlua::Error>>()?;
+    let executors = lua.create_table_from(executors)?;
+    lua.register_module(MODULE_NAME, &executors)?;
+
+    // build pkg
     info.package.build().await?;
+
+    // cleanup
+    executors.for_each::<String, AnyUserData>(|_, executor| executor.destroy())?;
     drop(permit);
     Ok(())
 }
