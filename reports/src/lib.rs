@@ -6,6 +6,7 @@
 extern crate alloc;
 
 use thiserror::Error;
+pub mod render;
 use alloc::{
     boxed::Box,
     string::{String, ToString},
@@ -15,6 +16,8 @@ use smol_str::SmolStr;
 use core::{any::type_name, error::Error, fmt, marker::PhantomData, panic::Location};
 use educe::Educe;
 use smallvec::SmallVec;
+
+use crate::render::{Render, SimpleRenderer};
 
 pub type BoxDynError = Box<dyn Error + Send + Sync + 'static>;
 
@@ -159,5 +162,11 @@ impl<E> Report<E> {
 
     pub fn with_children<F>(self, children: impl IntoIterator<Item = Report<F>>) -> Self {
         children.into_iter().fold(self, |acc, x| acc.with_child(x))
+    }
+}
+
+impl<E> fmt::Display for Report<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        SimpleRenderer.render(self).fmt(f)
     }
 }
