@@ -82,4 +82,57 @@ impl<E> Report<E> {
             _marker: PhantomData,
         }
     }
+
+    pub fn error(&self) -> &(dyn Error + Send + Sync) {
+        &*self.inner.error
+    }
+
+    pub fn type_name(&self) -> &'static str {
+        self.inner.type_name
+    }
+
+    pub fn location(&self) -> &'static Location<'static> {
+        self.inner.location
+    }
+
+    pub fn erased(self) -> Report<()> {
+        Report {
+            inner: self.inner,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn frames(&self) -> &[Frame] {
+        &self.inner.frames
+    }
+
+    pub fn push_frame(&mut self, frame: Frame) {
+        self.inner.frames.push(frame);
+    }
+
+    pub fn with_frame(mut self, frame: Frame) -> Self {
+        self.push_frame(frame);
+        self
+    }
+
+    pub fn with_frames(self, frames: impl IntoIterator<Item = Frame>) -> Self {
+        frames.into_iter().fold(self, |acc, x| acc.with_frame(x))
+    }
+
+    pub fn children(&self) -> &[Report<()>] {
+        &self.inner.children
+    }
+
+    pub fn push_child<F>(&mut self, child: Report<F>) {
+        self.inner.children.push(child.erased());
+    }
+
+    pub fn with_child<F>(mut self, child: Report<F>) -> Self {
+        self.push_child(child);
+        self
+    }
+
+    pub fn with_children<F>(self, children: impl IntoIterator<Item = Report<F>>) -> Self {
+        children.into_iter().fold(self, |acc, x| acc.with_child(x))
+    }
 }
