@@ -1,5 +1,7 @@
 use std::{
-    collections::HashSet, fmt, io, sync::{Arc, RwLock}
+    collections::HashSet,
+    fmt, io,
+    sync::{Arc, RwLock},
 };
 
 use log::info;
@@ -23,10 +25,14 @@ pub enum LinkTime {
 
 impl fmt::Display for LinkTime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self {
-            LinkTime::Runtime => "runtime",
-            LinkTime::Buildtime => "buildtime",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                LinkTime::Runtime => "runtime",
+                LinkTime::Buildtime => "buildtime",
+            }
+        )
     }
 }
 
