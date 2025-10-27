@@ -1,6 +1,6 @@
 pub mod options;
 
-use std::{fs, io::stderr, path::Path};
+use std::{fs, io::stderr, path::Path, sync::mpsc};
 
 use eyre::{Context, DefaultHandler, Result};
 
@@ -60,6 +60,14 @@ fn main() -> Result<()> {
             let build_root = Path::new("builds");
             utils::ensure_dir(build_root)?;
 
+            let (results_tx, results_rx) = mpsc::channel();
+
+            let handle = runtime.spawn(async move {
+                while let Ok(result) = results_rx.recv() {
+                    warn!("build result streamed: {result:?}");
+                }
+            });
+
             runtime.block_on(
                 Builder::new(
                     planner,
@@ -72,8 +80,9 @@ fn main() -> Result<()> {
                 .with_executor("runner".to_string(), |env| {
                     BubblewrapExecutor::new(env, BubblewrapExecutorOptions::default())
                 })
-                .build(NodeIndex::from(3)),
+                .build(NodeIndex::from(3), results_tx),
             );
+            runtime.block_on(async move { handle.await })?;
         }
         Subcommand::Link {
             reverse: _,

@@ -1,7 +1,7 @@
 use std::{
     fs, io, mem,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, mpsc},
 };
 
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -16,8 +16,8 @@ use thiserror::Error;
 use tokio::sync::{AcquireError, Semaphore};
 
 use crate::{
-    executor::{self, Executor, LuaExecutor, MODULE_NAME},
-    package::Package,
+    executor::{Error as ExecutorError, Executor, LuaExecutor, MODULE_NAME},
+    package::{Package, PackageId},
     planner::{LinkTime, Planner},
     store,
     utils::passthru::PassthruHashSet,
@@ -32,7 +32,7 @@ pub enum Error {
     #[error(transparent)]
     StoreError(#[from] store::Error),
     #[error(transparent)]
-    ExecutorError(#[from] executor::Error),
+    ExecutorError(#[from] ExecutorError),
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
@@ -56,18 +56,27 @@ enum PackageState {
     },
 }
 
-struct BuildModules {
-    executors: Vec<(String, Box<dyn Fn(Arc<Path>, &Lua) -> Result<AnyUserData, mlua::Error>>)>,
+struct Modules {
+    executors: Vec<(
+        String,
+        Box<dyn Fn(Arc<Path>, &Lua) -> Result<AnyUserData, mlua::Error>>,
+    )>,
     lua: Lua,
     root: PathBuf,
     semaphore: Semaphore,
 }
 
-struct BuildInfo {
+struct Info {
     node: NodeIndex,
     package: Package,
     runtime: Vec<NodeIndex>,
     buildtime: Vec<NodeIndex>,
+}
+
+#[derive(Debug)]
+pub enum Event {
+    Started,
+    Finished(Result<(), Error>),
 }
 
 /// Package build runner
@@ -75,7 +84,7 @@ struct BuildInfo {
 /// The builder traverses through a [`Planner`]'s instructions and builds all of the environments needed to link the target package
 pub struct Builder {
     state: DiGraph<PackageState, LinkTime>,
-    modules: Arc<BuildModules>,
+    modules: Arc<Modules>,
 }
 
 #[cold]
@@ -105,7 +114,7 @@ impl Builder {
 
         Self {
             state,
-            modules: Arc::new(BuildModules {
+            modules: Arc::new(Modules {
                 executors: Vec::new(),
                 lua,
                 root: options.root,
@@ -134,7 +143,7 @@ impl Builder {
         root.join(node.index().to_string())
     }
 
-    pub async fn build(&mut self, target: NodeIndex) {
+    pub async fn build(&mut self, target: NodeIndex, events: mpsc::Sender<(PackageId, Event)>) {
         let mut futures = FuturesUnordered::new();
         let mut subset = PassthruHashSet::default();
 
@@ -145,29 +154,29 @@ impl Builder {
 
             if let Some(info) = self.prepare_build(node) {
                 debug!("adding package {} as a leaf", info.package.id);
-                futures.push(build_impl(self.modules.clone(), info));
+                futures.push(build_impl(&events, self.modules.clone(), info));
             }
         }
 
         // main build loop
         // TODO: write out builds result somewhere
-        while let Some(finished) = futures.next().await {
-            let finished = match finished {
-                Ok(info) => info,
-                Err((info, err)) => {
-                    error!("could not build package {}: {err}", info.package.id);
-                    self.state[info.node] = PackageState::Unbuilt {
-                        package: info.package,
-                        remaining: 0,
-                    };
-                    continue;
-                }
-            };
+        while let Some((finished, result)) = futures.next().await {
+            let errored = result.is_err();
+            let _ = events.send((finished.package.id.clone(), Event::Finished(result)));
 
-            self.state[finished.node] = PackageState::Built {
-                runtime: finished.runtime,
-                package: finished.package,
-            };
+            if errored {
+                self.state[finished.node] = PackageState::Unbuilt {
+                    package: finished.package,
+                    remaining: 0,
+                };
+
+                continue;
+            } else {
+                self.state[finished.node] = PackageState::Built {
+                    runtime: finished.runtime,
+                    package: finished.package,
+                };
+            }
 
             for parent in self
                 .state
@@ -184,13 +193,13 @@ impl Builder {
                 }
 
                 if let Some(info) = self.prepare_build(parent) {
-                    futures.push(build_impl(self.modules.clone(), info));
+                    futures.push(build_impl(&events, self.modules.clone(), info));
                 }
             }
         }
     }
 
-    fn prepare_build(&mut self, node: NodeIndex) -> Option<BuildInfo> {
+    fn prepare_build(&mut self, node: NodeIndex) -> Option<Info> {
         let pkg_state = &mut self.state[node];
 
         // check if package can be built
@@ -227,7 +236,7 @@ impl Builder {
             }
         }
 
-        Some(BuildInfo {
+        Some(Info {
             node,
             package,
             runtime,
@@ -237,41 +246,38 @@ impl Builder {
 }
 
 async fn build_impl(
-    modules: Arc<BuildModules>,
-    info: BuildInfo,
-) -> Result<BuildInfo, (BuildInfo, Error)> {
-    match build_impl_impl(modules, &info).await {
-        Ok(()) => Ok(info),
-        Err(err) => Err((info, err)),
-    }
-}
+    events: &mpsc::Sender<(PackageId, Event)>,
+    modules: Arc<Modules>,
+    info: Info,
+) -> (Info, Result<(), Error>) {
+    let _ = events.send((info.package.id.clone(), Event::Started));
+    let result = (async || {
+        debug!("awaiting permit to build package {}", info.package.id);
+        let permit = modules.semaphore.acquire().await?;
 
-async fn build_impl_impl(modules: Arc<BuildModules>, info: &BuildInfo) -> Result<(), Error> {
-    debug!("awaiting permit to build package {}", info.package.id);
-    let permit = modules.semaphore.acquire().await?;
-    info!("building package {}", info.package.id);
+        // create environment
+        // TODO: link dependencies
+        let environment = Arc::from(Builder::environment_dir(&modules.root, info.node));
+        fs::create_dir(&environment)?;
 
-    let lua = &modules.lua;
+        // register executors
+        let executors = modules
+            .executors
+            .iter()
+            .map(|(name, func)| Ok((name.clone(), func(environment.clone(), &modules.lua)?)))
+            .collect::<Result<Vec<_>, mlua::Error>>()?;
+        let executors = modules.lua.create_table_from(executors)?;
+        modules.lua.register_module(MODULE_NAME, &executors)?;
 
-    // create environment
-    // TODO: link dependencies
-    let environment = Arc::from(Builder::environment_dir(&modules.root, info.node));
-    fs::create_dir(&environment)?;
+        // build pkg
+        info.package.build().await?;
 
-    // register executors
-    let executors = modules
-        .executors
-        .iter()
-        .map(|(name, func)| Ok((name.clone(), func(environment.clone(), lua)?)))
-        .collect::<Result<Vec<_>, mlua::Error>>()?;
-    let executors = lua.create_table_from(executors)?;
-    lua.register_module(MODULE_NAME, &executors)?;
+        // cleanup
+        executors.for_each::<String, AnyUserData>(|_, executor| executor.destroy())?;
+        drop(permit);
+        Ok(())
+    })()
+    .await;
 
-    // build pkg
-    info.package.build().await?;
-
-    // cleanup
-    executors.for_each::<String, AnyUserData>(|_, executor| executor.destroy())?;
-    drop(permit);
-    Ok(())
+    (info, result)
 }

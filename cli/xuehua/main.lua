@@ -1,11 +1,9 @@
 local plan = require("xuehua.planner")
 local utils = require("xuehua.utils")
-local log = require("xuehua.logger");
 local ns = plan.namespace
 
 local build = function(name)
   return function()
-    log.info("building " .. name .. "!! from lua")
     local runner = require("xuehua.executor").runner
 
     do
