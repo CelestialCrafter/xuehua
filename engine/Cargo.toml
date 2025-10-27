@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-bubblewrap-executor = []
+bubblewrap-executor = ["tokio/process"]
 local-store = ["dep:rusqlite"]
 
 [dependencies]
@@ -12,8 +12,7 @@ petgraph.workspace = true
 mlua.workspace = true
 log.workspace = true
 serde.workspace = true
-tempfile.workspace = true
-tokio = { workspace = true, features = ["sync", "process"] }
+tokio = { workspace = true, features = ["sync"] }
 thiserror = "2.0.16"
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 blake3 = "1.8.2"
