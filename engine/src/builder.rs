@@ -159,7 +159,6 @@ impl Builder {
         }
 
         // main build loop
-        // TODO: write out builds result somewhere
         while let Some((finished, result)) = futures.next().await {
             let errored = result.is_err();
             let _ = events.send((finished.package.id.clone(), Event::Finished(result)));
@@ -270,7 +269,7 @@ async fn build_impl(
         modules.lua.register_module(MODULE_NAME, &executors)?;
 
         // build pkg
-        info.package.build().await?;
+        info.package.build()?;
 
         // cleanup
         executors.for_each::<String, AnyUserData>(|_, executor| executor.destroy())?;

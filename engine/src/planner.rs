@@ -1,7 +1,5 @@
 use std::{
-    collections::HashSet,
-    io,
-    sync::{Arc, RwLock},
+    collections::HashSet, fmt, io, sync::{Arc, RwLock}
 };
 
 use log::info;
@@ -21,6 +19,15 @@ use crate::package::{Package, PackageId};
 pub enum LinkTime {
     Runtime,
     Buildtime,
+}
+
+impl fmt::Display for LinkTime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", match self {
+            LinkTime::Runtime => "runtime",
+            LinkTime::Buildtime => "buildtime",
+        })
+    }
 }
 
 impl FromLua for LinkTime {
