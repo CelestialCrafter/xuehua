@@ -4,12 +4,11 @@ use std::{fs, io::stderr, path::Path, sync::mpsc};
 
 use eyre::{Context, DefaultHandler, Result};
 
-use crate::options::InspectSub;
 use fern::colors::{Color, ColoredLevelConfig};
-use log::{LevelFilter, info, warn};
+use log::{LevelFilter, warn};
 
 use mlua::Lua;
-use petgraph::{dot::Dot, graph::NodeIndex};
+use petgraph::{dot, graph::NodeIndex};
 use tokio::runtime::Runtime;
 use xh_engine::{
     builder::{Builder, BuilderOptions},
@@ -17,7 +16,7 @@ use xh_engine::{
     logger, planner, utils,
 };
 
-use crate::options::{Subcommand, get_options};
+use crate::options::{Action, InspectAction, OPTIONS, ProjectFormat};
 
 fn main() -> Result<()> {
     eyre::set_hook(Box::new(DefaultHandler::default_with))
@@ -44,72 +43,75 @@ fn main() -> Result<()> {
         .apply()
         .wrap_err("error installing logger")?;
 
-    match get_options().cli.subcommand {
-        Subcommand::Build { package: _ } => {
-            // TODO: restrict stdlibs
-            let lua = Lua::new();
-            let planner = basic_lua_plan(lua.clone(), "xuehua/main.lua".to_string())?;
-
-            info!(
-                "{:?}",
-                Dot::new(&planner.plan().map(|_, w| w.id.to_string(), |_, w| *w))
-            );
+    match &OPTIONS.cli.action {
+        Action::Build { packages, .. } => {
+            let (lua, planner) = basic_lua_plan(Path::new("xuehua/main.lua"))?;
 
             // run builder
             let runtime = Runtime::new()?;
             let build_root = Path::new("builds");
             utils::ensure_dir(build_root)?;
 
-            let (results_tx, results_rx) = mpsc::channel();
+            let mut builder = Builder::new(
+                planner,
+                lua,
+                BuilderOptions {
+                    concurrent: 12,
+                    root: build_root.to_path_buf(),
+                },
+            );
 
+            builder.with_executor("runner".to_string(), |env| {
+                BubblewrapExecutor::new(env, BubblewrapExecutorOptions::default())
+            });
+
+            let (results_tx, results_rx) = mpsc::channel();
             let handle = runtime.spawn(async move {
                 while let Ok(result) = results_rx.recv() {
                     warn!("build result streamed: {result:?}");
                 }
             });
 
-            runtime.block_on(
-                Builder::new(
-                    planner,
-                    lua,
-                    BuilderOptions {
-                        concurrent: 8,
-                        root: build_root.to_path_buf(),
-                    },
-                )
-                .with_executor("runner".to_string(), |env| {
-                    BubblewrapExecutor::new(env, BubblewrapExecutorOptions::default())
-                })
-                .build(NodeIndex::from(3), results_tx),
-            );
-            runtime.block_on(async move { handle.await })?;
-        }
-        Subcommand::Link {
-            reverse: _,
-            package: _,
-        } => todo!("link not yet implemented"),
-        Subcommand::Shell { package: _ } => todo!("shell not yet implemented"),
-        Subcommand::GC => todo!("gc not yet implemented"),
-        Subcommand::Repair => todo!("repair not yet implemented"),
-        Subcommand::Inspect { ref subcommand } => match subcommand {
-            InspectSub::Plan { path } => {
-                // TODO: restrict stdlibs
-                let lua = Lua::new();
-                let planner = basic_lua_plan(lua.clone(), path.to_string())?;
+            runtime.block_on(async move {
+                // TODO: add resolver api
+                for i in 0..4 {
+                    builder.build(NodeIndex::from(i), results_tx.clone()).await;
+                }
 
-                println!(
-                    "{:?}",
-                    Dot::new(&planner.plan().map(|_, w| w.id.to_string(), |_, w| *w))
-                );
+                handle.await
+            })?;
+        }
+        Action::Link { .. } => todo!("link action not implemented"),
+        Action::Inspect(action) => match action {
+            InspectAction::Project { format } => {
+                let (_, planner) = basic_lua_plan(&OPTIONS.cli.project)?;
+
+                match format {
+                    ProjectFormat::Dot => println!(
+                        "{:?}",
+                        dot::Dot::with_attr_getters(
+                            &planner.plan(),
+                            &[dot::Config::EdgeNoLabel, dot::Config::NodeNoLabel],
+                            &|_, linktime| format!(r#"label="{}""#, linktime.weight()),
+                            &|_, (_, pkg)| format!(r#"label="{}""#, pkg.id),
+                        )
+                    ),
+                    ProjectFormat::Json => todo!("json format not yet implemented"),
+                };
             }
-            InspectSub::Package { package: _ } => todo!("package inspect not yet implemented"),
+            InspectAction::Packages { .. } => {
+                todo!("package inspect not yet implemented")
+            }
         },
     }
 
     Ok(())
 }
 
-fn basic_lua_plan(lua: Lua, location: String) -> Result<planner::Planner> {
+fn basic_lua_plan(location: &Path) -> Result<(mlua::Lua, planner::Planner)> {
+    // FIX: restrict stdlibs
+    let lua = Lua::new();
+
     // register apis
     logger::register_module(&lua)?;
     utils::register_module(&lua)?;
@@ -131,5 +133,5 @@ fn basic_lua_plan(lua: Lua, location: String) -> Result<planner::Planner> {
         chunk.exec()
     })?;
 
-    Ok(planner)
+    Ok((lua, planner))
 }
