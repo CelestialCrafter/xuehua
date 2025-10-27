@@ -62,10 +62,10 @@ impl Scheduler {
         Self { state }
     }
 
-    pub async fn schedule(
+    pub async fn schedule<T>(
         &mut self,
         targets: &[NodeIndex],
-        builder: &Builder<'_>,
+        builder: &Builder<'_, T>,
         events: mpsc::Sender<(PackageId, Event)>,
     ) {
         let mut futures = FuturesUnordered::new();

@@ -1,18 +1,17 @@
 use std::{
     fs, io,
+    marker::PhantomData,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use mlua::{AnyUserData, ExternalResult, FromLua, IntoLua, Lua, Table, UserData};
+use frunk_core::hlist::{HCons, HList, HNil};
+use mlua::{AnyUserData, ExternalResult, FromLua, IntoLua, Lua, UserData};
 use petgraph::graph::NodeIndex;
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
-use crate::{
-    executor::{Executor, MODULE_NAME},
-    package::Package,
-};
+use crate::{executor::Executor, package::Package, utils::scope::LuaScope};
 
 pub struct BuildInfo {
     pub node: NodeIndex,
@@ -40,6 +39,46 @@ where
     }
 }
 
+trait PopulateScope<'a, T> {
+    fn populate(environment: Arc<Path>) -> Result<LuaScope<'a, T>, mlua::Error>;
+}
+
+impl<'a, T> PopulateScope<'a, T> for HNil {
+    fn populate(self, _environment: Arc<Path>) -> Result<LuaScope<'a, T>, mlua::Error> {
+        Ok(scope)
+    }
+}
+
+impl<'a, E, F> PopulateScope<'a, F> for HCons<F, HNil>
+where
+    T: PopulateScope,
+    F: Fn(Arc<Path>) -> E + Send + 'static,
+    E: Executor + Send + 'static,
+    E::Request: FromLua + IntoLua,
+    E::Response: IntoLua,
+{
+    fn populate(self, environment: Arc<Path>) -> Result<LuaScope<'a, HCons<E, HNil>>, mlua::Error> {
+        let scope = self.tail.populate(environment.clone())?;
+        let environment = self.head(environment);
+        scope.push_data(&name, lua_executor)
+    }
+}
+
+impl<'a, E, H, O> PopulateScope<'a, E> for HCons<H, T>
+where
+    T: PopulateScope,
+    H: Fn(Arc<Path>) -> E + Send + 'static,
+    E: Executor + Send + 'static,
+    E::Request: FromLua + IntoLua,
+    E::Response: IntoLua,
+{
+    fn populate(self, environment: Arc<Path>) -> Result<LuaScope<'a, HCons<E, O>>, mlua::Error> {
+        let scope = self.tail.populate(environment.clone())?;
+        let environment = self.head(environment);
+        scope.push_data(&name, lua_executor)
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -48,71 +87,65 @@ pub enum Error {
     LuaError(#[from] mlua::Error),
 }
 
-pub struct Builder<'a> {
+pub struct Builder<'a, T> {
     root: &'a Path,
     lua: &'a Lua,
-    executors: Vec<(
-        String,
-        Box<dyn Fn(&Lua, Arc<Path>) -> Result<AnyUserData, mlua::Error>>,
-    )>,
+    executors: T,
 }
 
-impl<'a> Builder<'a> {
+impl<'a> Builder<'a, HNil> {
     pub fn new(root: &'a Path, lua: &'a Lua) -> Self {
         Self {
             root,
             lua,
-            executors: Default::default(),
+            executors: HNil,
         }
     }
+}
 
-    pub fn register<F, E>(mut self, name: String, concurrent: usize, func: F) -> Self
+impl<'a, T: HList> Builder<'a, T> {
+    pub fn register<F, E>(
+        self,
+        name: String,
+        concurrent: usize,
+        func: F,
+    ) -> Builder<'a, HCons<(String, Arc<Semaphore>, F, PhantomData<E>), T>>
     where
         F: Fn(Arc<Path>) -> E + Send + 'static,
         E: Executor + Send + 'static,
-        E::Request: FromLua + IntoLua,
-        E::Response: IntoLua,
     {
-        let semaphore = Arc::new(Semaphore::new(concurrent));
-        let wrapped = move |lua: &Lua, environment| {
-            let executor = func(environment);
-            lua.create_userdata(LuaExecutor(semaphore.clone(), executor))
-        };
-
-        self.executors.push((name, Box::new(wrapped)));
-        self
+        Builder {
+            root: self.root,
+            lua: self.lua,
+            executors: HCons {
+                head: (
+                    name,
+                    Arc::new(Semaphore::new(concurrent)),
+                    func,
+                    PhantomData,
+                ),
+                tail: self.executors,
+            },
+        }
     }
+}
 
-    fn create(&self, lua: &Lua, environment: PathBuf) -> Result<Table, mlua::Error> {
-        let environment: Arc<Path> = Arc::from(environment);
-        let iter = self
-            .executors
-            .iter()
-            .map(|(name, func)| Ok((name.clone(), func(lua, environment.clone())?)))
-            .collect::<Result<Vec<_>, mlua::Error>>()?;
-        lua.create_table_from(iter)
-    }
-
-    fn environment_dir(&self, node: NodeIndex) -> PathBuf {
-        self.root.join(node.index().to_string())
-    }
-
-    pub async fn build(&self, info: &BuildInfo) -> Result<(), Error> {
+// The trait bound here is now simple and clean.
+impl<'a, T: PopulateScope<'a>> Builder<'a, T> {
+    pub async fn build(self, info: &BuildInfo) -> Result<(), Error> {
         // create environment
         // TODO: link dependencies
-        let environment = self.environment_dir(info.node);
+        let environment = self.root.join(info.node.index().to_string());
         fs::create_dir(&environment)?;
 
-        // register executors
-        let executors = self.create(self.lua, environment)?;
-        self.lua.register_module(MODULE_NAME, &executors)?;
+        let func = info.package.build();
 
-        // build pkg
-        info.package.build();
+        let scope = LuaScope::from_function(self.lua, &func)?;
+        let scope = self.executors.populate(scope, environment.into())?;
 
-        // cleanup
-        executors.for_each::<String, AnyUserData>(|_, executor| executor.destroy())?;
+        func.call_async::<()>(()).await?;
 
+        scope.release()?;
         Ok(())
     }
 }
