@@ -1,282 +1,118 @@
 use std::{
-    fs, io, mem,
+    fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, mpsc},
+    sync::Arc,
 };
 
-use futures_util::{StreamExt, stream::FuturesUnordered};
-use log::{debug, error, info};
-use mlua::{AnyUserData, FromLua, IntoLua, Lua};
-use petgraph::{
-    Direction,
-    graph::{DiGraph, NodeIndex},
-    visit::{Dfs, EdgeRef},
-};
+use mlua::{AnyUserData, ExternalResult, FromLua, IntoLua, Lua, Table, UserData};
+use petgraph::graph::NodeIndex;
 use thiserror::Error;
-use tokio::sync::{AcquireError, Semaphore};
+use tokio::sync::Semaphore;
 
 use crate::{
-    executor::{Error as ExecutorError, Executor, LuaExecutor, MODULE_NAME},
-    package::{Package, PackageId},
-    planner::{LinkTime, Planner},
-    store,
-    utils::passthru::PassthruHashSet,
+    executor::{Executor, MODULE_NAME},
+    package::Package,
 };
+
+pub struct BuildInfo {
+    pub node: NodeIndex,
+    pub package: Package,
+    pub runtime: Vec<NodeIndex>,
+    pub buildtime: Vec<NodeIndex>,
+}
+
+pub struct LuaExecutor<E>(Arc<Semaphore>, E);
+
+impl<E> UserData for LuaExecutor<E>
+where
+    E: Executor + Send + 'static,
+    E::Request: FromLua + IntoLua,
+    E::Response: IntoLua,
+{
+    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_function("create", |lua, value| E::Request::from_lua(value, lua));
+
+        methods.add_async_method_mut("dispatch", async |_, mut this, request: AnyUserData| {
+            let _ = this.0.acquire().await.into_lua_err()?;
+            let request = request.take()?;
+            this.1.dispatch(request).await.into_lua_err()
+        });
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("could not acquire build permit")]
-    AcquireError(#[from] AcquireError),
     #[error(transparent)]
     IOError(#[from] io::Error),
-    #[error(transparent)]
-    StoreError(#[from] store::Error),
-    #[error(transparent)]
-    ExecutorError(#[from] ExecutorError),
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
 }
 
-#[derive(Debug, Clone)]
-pub struct BuilderOptions {
-    pub concurrent: usize,
-    pub root: PathBuf,
-}
-
-#[derive(Debug)]
-enum PackageState {
-    Unbuilt {
-        package: Package,
-        remaining: usize,
-    },
-    Building,
-    Built {
-        package: Package,
-        runtime: Vec<NodeIndex>,
-    },
-}
-
-struct Modules {
+pub struct Builder<'a> {
+    root: &'a Path,
+    lua: &'a Lua,
     executors: Vec<(
         String,
-        Box<dyn Fn(Arc<Path>, &Lua) -> Result<AnyUserData, mlua::Error>>,
+        Box<dyn Fn(&Lua, Arc<Path>) -> Result<AnyUserData, mlua::Error>>,
     )>,
-    lua: Lua,
-    root: PathBuf,
-    semaphore: Semaphore,
 }
 
-struct Info {
-    node: NodeIndex,
-    package: Package,
-    runtime: Vec<NodeIndex>,
-    buildtime: Vec<NodeIndex>,
-}
-
-#[derive(Debug)]
-pub enum Event {
-    Started,
-    Finished(Result<(), Error>),
-}
-
-/// Package build runner
-///
-/// The builder traverses through a [`Planner`]'s instructions and builds all of the environments needed to link the target package
-pub struct Builder {
-    state: DiGraph<PackageState, LinkTime>,
-    modules: Arc<Modules>,
-}
-
-#[cold]
-fn invalid_state(node: NodeIndex, state: &PackageState) -> ! {
-    panic!("node {node:?} should not be in the {state:?} state")
-}
-
-impl Builder {
-    pub fn new(planner: Planner, lua: Lua, options: BuilderOptions) -> Self {
-        let mut state = planner.into_inner().into_inner().map_owned(
-            |_, weight| PackageState::Unbuilt {
-                remaining: 0,
-                package: weight,
-            },
-            |_, weight| weight,
-        );
-
-        for node in state.node_indices() {
-            let count = state.neighbors_directed(node, Direction::Outgoing).count();
-            match state[node] {
-                PackageState::Unbuilt {
-                    ref mut remaining, ..
-                } => *remaining = count,
-                _ => unreachable!(),
-            }
-        }
-
+impl<'a> Builder<'a> {
+    pub fn new(root: &'a Path, lua: &'a Lua) -> Self {
         Self {
-            state,
-            modules: Arc::new(Modules {
-                executors: Vec::new(),
-                lua,
-                root: options.root,
-                semaphore: Semaphore::new(options.concurrent),
-            }),
+            root,
+            lua,
+            executors: Default::default(),
         }
     }
 
-    pub fn with_executor<F, E>(&mut self, name: String, func: F) -> &mut Self
+    pub fn register<F, E>(mut self, name: String, concurrent: usize, func: F) -> Self
     where
-        F: Fn(Arc<Path>) -> E + 'static,
+        F: Fn(Arc<Path>) -> E + Send + 'static,
         E: Executor + Send + 'static,
         E::Request: FromLua + IntoLua,
         E::Response: IntoLua,
     {
-        let modules =
-            Arc::get_mut(&mut self.modules).expect("only 1 reference to modules should exist");
-        modules.executors.push((
-            name,
-            Box::new(move |path, lua| lua.create_userdata(LuaExecutor(func(path)))),
-        ));
+        let semaphore = Arc::new(Semaphore::new(concurrent));
+        let wrapped = move |lua: &Lua, environment| {
+            let executor = func(environment);
+            lua.create_userdata(LuaExecutor(semaphore.clone(), executor))
+        };
+
+        self.executors.push((name, Box::new(wrapped)));
         self
     }
 
-    fn environment_dir(root: &Path, node: NodeIndex) -> PathBuf {
-        root.join(node.index().to_string())
+    fn create(&self, lua: &Lua, environment: PathBuf) -> Result<Table, mlua::Error> {
+        let environment: Arc<Path> = Arc::from(environment);
+        let iter = self
+            .executors
+            .iter()
+            .map(|(name, func)| Ok((name.clone(), func(lua, environment.clone())?)))
+            .collect::<Result<Vec<_>, mlua::Error>>()?;
+        lua.create_table_from(iter)
     }
 
-    pub async fn build(&mut self, target: NodeIndex, events: mpsc::Sender<(PackageId, Event)>) {
-        let mut futures = FuturesUnordered::new();
-        let mut subset = PassthruHashSet::default();
-
-        // compute subset and build leaf packages
-        let mut visitor = Dfs::new(&self.state, target);
-        while let Some(node) = visitor.next(&self.state) {
-            subset.insert(node);
-
-            if let Some(info) = self.prepare_build(node) {
-                debug!("adding package {} as a leaf", info.package.id);
-                futures.push(build_impl(&events, self.modules.clone(), info));
-            }
-        }
-
-        // main build loop
-        while let Some((finished, result)) = futures.next().await {
-            let errored = result.is_err();
-            let _ = events.send((finished.package.id.clone(), Event::Finished(result)));
-
-            if errored {
-                self.state[finished.node] = PackageState::Unbuilt {
-                    package: finished.package,
-                    remaining: 0,
-                };
-
-                continue;
-            } else {
-                self.state[finished.node] = PackageState::Built {
-                    runtime: finished.runtime,
-                    package: finished.package,
-                };
-            }
-
-            for parent in self
-                .state
-                .neighbors_directed(finished.node, Direction::Incoming)
-                .filter(|node| subset.contains(node))
-                .collect::<Vec<_>>()
-            {
-                match &mut self.state[parent] {
-                    PackageState::Unbuilt { remaining, package } => {
-                        *remaining -= 1;
-                        debug!("{} has {} dependencies remaining", package.id, remaining);
-                    }
-                    state => invalid_state(parent, state),
-                }
-
-                if let Some(info) = self.prepare_build(parent) {
-                    futures.push(build_impl(&events, self.modules.clone(), info));
-                }
-            }
-        }
+    fn environment_dir(&self, node: NodeIndex) -> PathBuf {
+        self.root.join(node.index().to_string())
     }
 
-    fn prepare_build(&mut self, node: NodeIndex) -> Option<Info> {
-        let pkg_state = &mut self.state[node];
-
-        // check if package can be built
-        match pkg_state {
-            PackageState::Unbuilt { remaining, .. } if *remaining == 0 => (),
-            _ => return None,
-        };
-
-        // set state to building and get pkg
-        let package = match mem::replace(pkg_state, PackageState::Building) {
-            PackageState::Unbuilt { package, .. } => package,
-            _ => unreachable!(),
-        };
-
-        // gather dependencies into the build closure
-        let mut buildtime = Vec::default();
-        let mut runtime = Vec::default();
-        for edge in self.state.edges_directed(node, Direction::Outgoing) {
-            let child = edge.target();
-            match &self.state[child] {
-                PackageState::Built {
-                    runtime: dep_runtime,
-                    ..
-                } => {
-                    let closure = match edge.weight() {
-                        LinkTime::Runtime => &mut runtime,
-                        LinkTime::Buildtime => &mut buildtime,
-                    };
-
-                    closure.extend(dep_runtime.into_iter());
-                    closure.push(child);
-                }
-                state => invalid_state(child, state),
-            }
-        }
-
-        Some(Info {
-            node,
-            package,
-            runtime,
-            buildtime,
-        })
-    }
-}
-
-async fn build_impl(
-    events: &mpsc::Sender<(PackageId, Event)>,
-    modules: Arc<Modules>,
-    info: Info,
-) -> (Info, Result<(), Error>) {
-    let _ = events.send((info.package.id.clone(), Event::Started));
-    let result = (async || {
-        debug!("awaiting permit to build package {}", info.package.id);
-        let permit = modules.semaphore.acquire().await?;
-
+    pub async fn build(&self, info: &BuildInfo) -> Result<(), Error> {
         // create environment
         // TODO: link dependencies
-        let environment = Arc::from(Builder::environment_dir(&modules.root, info.node));
+        let environment = self.environment_dir(info.node);
         fs::create_dir(&environment)?;
 
         // register executors
-        let executors = modules
-            .executors
-            .iter()
-            .map(|(name, func)| Ok((name.clone(), func(environment.clone(), &modules.lua)?)))
-            .collect::<Result<Vec<_>, mlua::Error>>()?;
-        let executors = modules.lua.create_table_from(executors)?;
-        modules.lua.register_module(MODULE_NAME, &executors)?;
+        let executors = self.create(self.lua, environment)?;
+        self.lua.register_module(MODULE_NAME, &executors)?;
 
         // build pkg
-        info.package.build()?;
+        info.package.build().await?;
 
         // cleanup
         executors.for_each::<String, AnyUserData>(|_, executor| executor.destroy())?;
-        drop(permit);
-        Ok(())
-    })()
-    .await;
 
-    (info, result)
+        Ok(())
+    }
 }

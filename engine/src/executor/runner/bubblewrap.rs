@@ -3,13 +3,9 @@ use std::{ffi::OsStr, io, iter::once, path::Path, process::Command, sync::Arc};
 use log::debug;
 use tokio::process::Command as TokioCommand;
 
-use crate::{
-    ExternalResult,
-    executor::{
-        Error, Executor,
-        runner::{LuaCommand, LuaOutput},
-    },
-};
+use crate::{executor::{
+    runner::{LuaCommand, LuaOutput}, Executor
+}, utils::BoxDynError};
 
 #[derive(Debug)]
 pub struct BubblewrapExecutorOptions {
@@ -63,7 +59,7 @@ impl Executor for BubblewrapExecutor {
     type Request = LuaCommand;
     type Response = LuaOutput;
 
-    async fn dispatch(&mut self, request: Self::Request) -> Result<Self::Response, Error> {
+    async fn dispatch(&mut self, request: Self::Request) -> Result<Self::Response, BoxDynError> {
         let original = request.0;
         debug!(
             "running command {:?}",
@@ -140,18 +136,16 @@ impl Executor for BubblewrapExecutor {
         // execution
         let output = TokioCommand::from(sandboxed)
             .output()
-            .await
-            .into_executor_err()?;
+            .await?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8(output.stderr).into_executor_err()?;
+            let stderr = String::from_utf8(output.stderr)?;
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!("{}\nstderr: {}", output.status, stderr),
-            ))
-            .into_executor_err();
+            ).into());
         }
 
-        LuaOutput::try_from(output).into_executor_err()
+        Ok(LuaOutput::try_from(output)?)
     }
 }

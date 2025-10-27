@@ -11,7 +11,8 @@ use mlua::Lua;
 use petgraph::{dot, graph::NodeIndex};
 use tokio::runtime::Runtime;
 use xh_engine::{
-    builder::{Builder, BuilderOptions},
+    builder::Builder,
+    scheduler::Scheduler,
     executor::bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
     logger, planner, utils,
 };
@@ -52,18 +53,11 @@ fn main() -> Result<()> {
             let build_root = Path::new("builds");
             utils::ensure_dir(build_root)?;
 
-            let mut builder = Builder::new(
-                planner,
-                lua,
-                BuilderOptions {
-                    concurrent: 12,
-                    root: build_root.to_path_buf(),
-                },
-            );
-
-            builder.with_executor("runner".to_string(), |env| {
-                BubblewrapExecutor::new(env, BubblewrapExecutorOptions::default())
-            });
+            let mut scheduler = Scheduler::new(planner.into_inner());
+            let builder =
+                Builder::new(Path::new("builds"), &lua).register("runner".to_string(), 12, |env| {
+                    BubblewrapExecutor::new(env, BubblewrapExecutorOptions::default())
+                });
 
             let (results_tx, results_rx) = mpsc::channel();
             let handle = runtime.spawn(async move {
@@ -75,11 +69,13 @@ fn main() -> Result<()> {
             runtime.block_on(async move {
                 // TODO: add resolver api
                 for i in 0..4 {
-                    builder.build(NodeIndex::from(i), results_tx.clone()).await;
+                    scheduler
+                        .schedule(&[NodeIndex::from(i)], &builder, results_tx.clone())
+                        .await;
                 }
+            });
 
-                handle.await
-            })?;
+            runtime.block_on(handle)?;
         }
         Action::Link { .. } => todo!("link action not implemented"),
         Action::Inspect(action) => match action {
