@@ -16,15 +16,13 @@ macro_rules! impl_into_err {
             $(fn $fn(self) -> $error;)*
         }
 
-        impl<T, E: Into<crate::utils::BoxDynError>> ExternalResult<T> for Result<T, E>
-        {
+        impl<T, E: Into<crate::utils::BoxDynError>> ExternalResult<T> for Result<T, E> {
             $(fn $fn(self) -> Result<T, $error> {
                 self.map_err(|err| err.$fn())
             })*
         }
 
-        impl<E: Into<crate::utils::BoxDynError>> ExternalError for E
-        {
+        impl<E: Into<crate::utils::BoxDynError>> ExternalError for E {
             $(fn $fn(self) -> $error {
                 <$error>::ExternalError(self.into())
             })*
@@ -73,6 +71,86 @@ pub mod passthru {
 
     pub type PassthruHashMap<K, V> = HashMap<K, V, BuildHasherDefault<PassthruHasher>>;
     pub type PassthruHashSet<T> = HashSet<T, BuildHasherDefault<PassthruHasher>>;
+}
+
+pub mod scope {
+    use frunk_core::hlist::{HCons, HNil};
+    use mlua::{AnyUserData, Error, Function, Lua, Table, UserData};
+    use std::marker::PhantomData;
+
+    pub trait LuaScopeRelease: Sized {
+        fn release_inner(data: &mut Vec<AnyUserData>) -> Result<Self, Error>;
+    }
+
+    pub struct LuaScope<'a, T> {
+        lua: &'a Lua,
+        environment: Table,
+        data: Vec<AnyUserData>,
+        _marker: PhantomData<T>,
+    }
+
+    impl<'a> LuaScope<'a, HNil> {
+        pub fn from_function(lua: &'a Lua, function: &Function) -> Result<Self, Error> {
+            let environment = function.environment().ok_or(Error::external(
+                "LuaScope::from_function can't be used with rust/c functions",
+            ))?;
+            Ok(Self::new(lua, environment))
+        }
+
+        pub fn new(lua: &'a Lua, environment: Table) -> Self {
+            Self {
+                lua,
+                environment,
+                data: Vec::new(),
+                _marker: PhantomData,
+            }
+        }
+    }
+
+    impl<'a, T> LuaScope<'a, T> {
+        pub fn push_data<H: UserData + Send + 'static>(
+            mut self,
+            key: &str,
+            data: H,
+        ) -> Result<LuaScope<'a, HCons<H, T>>, Error> {
+            let userdatum = self.lua.create_userdata(data)?;
+            self.environment.set(key, &userdatum)?;
+            self.data.push(userdatum);
+
+            Ok(LuaScope::<'_, HCons<H, T>> {
+                lua: self.lua,
+                environment: self.environment,
+                data: self.data,
+                _marker: PhantomData,
+            })
+        }
+    }
+
+    impl<T: LuaScopeRelease> LuaScope<'_, T> {
+        pub fn release(mut self) -> Result<T, Error> {
+            T::release_inner(&mut self.data)
+        }
+    }
+
+    impl LuaScopeRelease for HNil {
+        fn release_inner(_data: &mut Vec<AnyUserData>) -> Result<Self, Error> {
+            Ok(HNil)
+        }
+    }
+
+    impl<H: 'static, T: LuaScopeRelease> LuaScopeRelease for HCons<H, T> {
+        fn release_inner(data: &mut Vec<AnyUserData>) -> Result<Self, Error> {
+            let datum = data
+                .pop()
+                .expect("not enough userdata in scope for type constraints")
+                .take()?;
+
+            Ok(HCons {
+                head: datum,
+                tail: T::release_inner(data)?,
+            })
+        }
+    }
 }
 
 pub fn ensure_dir(path: &Path) -> io::Result<()> {

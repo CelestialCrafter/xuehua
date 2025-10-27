@@ -108,7 +108,7 @@ impl<'a> Builder<'a> {
         self.lua.register_module(MODULE_NAME, &executors)?;
 
         // build pkg
-        info.package.build().await?;
+        info.package.build();
 
         // cleanup
         executors.for_each::<String, AnyUserData>(|_, executor| executor.destroy())?;

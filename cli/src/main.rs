@@ -12,9 +12,10 @@ use petgraph::{dot, graph::NodeIndex};
 use tokio::runtime::Runtime;
 use xh_engine::{
     builder::Builder,
-    scheduler::Scheduler,
     executor::bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
-    logger, planner, utils,
+    logger, planner,
+    scheduler::Scheduler,
+    utils,
 };
 
 use crate::options::{Action, InspectAction, OPTIONS, ProjectFormat};
@@ -113,21 +114,13 @@ fn basic_lua_plan(location: &Path) -> Result<(mlua::Lua, planner::Planner)> {
     utils::register_module(&lua)?;
 
     // run planner
-    let mut planner = planner::Planner::new();
-    let chunk = lua.load(fs::read(location)?);
-    lua.scope(|scope| {
-        lua.register_module(
-            planner::MODULE_NAME,
-            scope.create_userdata_ref_mut(&mut planner)?,
-        )?;
-        scope.add_destructor(|| {
-            if let Err(err) = lua.unload_module(planner::MODULE_NAME) {
-                warn!("could not unload {}: {}", planner::MODULE_NAME, err);
-            }
-        });
+    let func = lua.load(fs::read(location)?).into_function()?;
 
-        chunk.exec()
-    })?;
+    let scope = utils::scope::LuaScope::from_function(&lua, &func)?
+        .push_data("planner", planner::Planner::new())?
+        .push_data("planner", planner::Planner::new())?;
+    func.call::<()>(())?;
+    let (planner, _) = scope.release()?.pop();
 
     Ok((lua, planner))
 }
