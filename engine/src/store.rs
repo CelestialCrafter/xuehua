@@ -60,7 +60,7 @@ pub trait Store {
     ) -> impl Future<Output = Result<Option<StoreArtifact>, Self::Error>> + Send;
 }
 
-pub fn hash_directory(dir: &Path) -> Result<ArtifactId, std::io::Error> {
+pub(crate) fn hash_directory(dir: &Path) -> Result<ArtifactId, std::io::Error> {
     let mut hasher = blake3::Hasher::new();
     todo!();
     Ok(hasher.finalize())
