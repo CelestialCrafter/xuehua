@@ -1,10 +1,9 @@
-local plan = require("xuehua.planner")
 local utils = require("xuehua.utils")
-local ns = plan.namespace
+local ns = planner.namespace
 
 local build = function(name)
   return function()
-    local runner = require("xuehua.executor").runner
+    local runner = executors.runner
 
     do
       local command = runner.create("/busybox")
@@ -21,14 +20,14 @@ local build = function(name)
 end
 
 
-local p2 = plan:package(utils.no_config {
+local p2 = planner:package(utils.no_config {
   name = "p2",
   dependencies = {},
   metadata = {},
   build = build("p2")
 })
 
-local p3 = plan:package(utils.no_config {
+local p3 = planner:package(utils.no_config {
   name = "p3",
   dependencies = { utils.runtime(p2) },
   metadata = {},
@@ -36,7 +35,7 @@ local p3 = plan:package(utils.no_config {
 })
 
 local p3a = ns:scope("my-ns", function()
-  local pkg = plan:package(utils.no_config {
+  local pkg = planner:package(utils.no_config {
     name = "p3",
     dependencies = { utils.runtime(p2) },
     metadata = {},
@@ -45,7 +44,7 @@ local p3a = ns:scope("my-ns", function()
   return pkg
 end)
 
-plan:package(utils.no_config {
+planner:package(utils.no_config {
   name = "p1",
   dependencies = { utils.runtime(p3a), utils.buildtime(p3) },
   metadata = {},

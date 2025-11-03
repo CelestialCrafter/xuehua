@@ -59,7 +59,10 @@ fn main() -> Result<()> {
             let mut scheduler = Scheduler::new(planner.into_inner());
             let builder =
                 Builder::new(Path::new("builds"), &lua).register("runner".to_string(), 2, |env| {
-                    BubblewrapExecutor::new(env, BubblewrapExecutorOptions::default())
+                    Ok(BubblewrapExecutor::new(
+                        env,
+                        BubblewrapExecutorOptions::default(),
+                    ))
                 });
 
             let (results_tx, results_rx) = mpsc::channel();
@@ -117,19 +120,14 @@ fn basic_lua_plan(location: &Path) -> Result<(mlua::Lua, planner::Planner)> {
 
     // run planner
     let mut planner = planner::Planner::new();
-    let chunk = lua.load(fs::read(location)?);
+    let chunk = lua.load(fs::read(location)?).into_function()?;
     lua.scope(|scope| {
-        lua.register_module(
-            planner::MODULE_NAME,
-            scope.create_userdata_ref_mut(&mut planner)?,
-        )?;
-        scope.add_destructor(|| {
-            if let Err(err) = lua.unload_module(planner::MODULE_NAME) {
-                warn!("could not unload {}: {}", planner::MODULE_NAME, err);
-            }
-        });
+        let environment = chunk
+            .environment()
+            .ok_or(mlua::Error::external("chunk does not have an environment"))?;
+        environment.set("planner", scope.create_userdata_ref_mut(&mut planner)?)?;
 
-        chunk.exec()
+        chunk.call::<()>(())
     })?;
 
     Ok((lua, planner))
