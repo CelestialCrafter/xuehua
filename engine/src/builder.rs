@@ -1,20 +1,12 @@
-use std::{
-    fmt::Debug,
-    fs, io,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fmt::Debug, fs, io, path::Path, sync::Arc};
 
 use log::trace;
-use mlua::{AnyUserData, ExternalResult, FromLua, IntoLua, Lua, Table, UserData};
+use mlua::{AnyUserData, ExternalResult, FromLua, IntoLua, Lua, UserData};
 use petgraph::graph::NodeIndex;
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
-use crate::{
-    executor::{Executor, MODULE_NAME},
-    package::Package,
-};
+use crate::{executor::Executor, package::Package};
 
 pub struct BuildInfo {
     pub node: NodeIndex,
@@ -61,7 +53,7 @@ pub struct Builder<'a> {
     lua: &'a Lua,
     executors: Vec<(
         String,
-        Box<dyn Fn(&Lua, Arc<Path>) -> Result<AnyUserData, mlua::Error>>,
+        Box<dyn Fn(&Lua, Arc<Path>) -> Result<AnyUserData, Error>>,
     )>,
 }
 
@@ -76,47 +68,47 @@ impl<'a> Builder<'a> {
 
     pub fn register<F, E>(mut self, name: String, concurrent: usize, func: F) -> Self
     where
-        F: Fn(Arc<Path>) -> E + Send + 'static,
+        F: Fn(Arc<Path>) -> Result<E, Error> + 'static,
         E: Executor + Send + 'static,
         E::Request: FromLua + IntoLua + Send + Debug,
         E::Response: IntoLua + Send + Debug,
     {
-        let semaphore = Arc::new(Semaphore::new(concurrent));
         let wrapped = move |lua: &Lua, environment| {
-            let executor = func(environment);
-            lua.create_userdata(LuaExecutor(semaphore.clone(), executor))
+            let executor = func(environment)?;
+            let semaphore = Arc::new(Semaphore::new(concurrent));
+            let executor = lua.create_userdata(LuaExecutor(semaphore, executor))?;
+            Ok(executor)
         };
 
         self.executors.push((name, Box::new(wrapped)));
         self
     }
 
-    fn create(&self, lua: &Lua, environment: PathBuf) -> Result<Table, mlua::Error> {
-        let environment: Arc<Path> = Arc::from(environment);
-        let iter = self
-            .executors
-            .iter()
-            .map(|(name, func)| Ok((name.clone(), func(lua, environment.clone())?)))
-            .collect::<Result<Vec<_>, mlua::Error>>()?;
-        lua.create_table_from(iter)
-    }
-
-    fn environment_dir(&self, node: NodeIndex) -> PathBuf {
-        self.root.join(node.index().to_string())
-    }
-
     pub async fn build(&self, info: &BuildInfo) -> Result<(), Error> {
         // create environment
         // TODO: link dependencies
-        let environment = self.environment_dir(info.node);
+        let environment = self.root.join(info.node.index().to_string());
         fs::create_dir(&environment)?;
 
         // register executors
-        let executors = self.create(self.lua, environment)?;
-        self.lua.register_module(MODULE_NAME, &executors)?;
+        let environment: Arc<Path> = Arc::from(environment);
+        let executors = self.lua.create_table_from(
+            self.executors
+                .iter()
+                .map(|(name, func)| {
+                    let executor = func(self.lua, environment.clone())?;
+                    Ok((name.clone(), executor))
+                })
+                .collect::<Result<Vec<_>, Error>>()?,
+        )?;
+
+        let func = info.package.build();
+        if let Some(environment) = func.environment() {
+            environment.set("executors", &executors)?;
+        }
 
         // build pkg
-        info.package.build().await?;
+        func.call_async::<()>(()).await?;
 
         // cleanup
         executors.for_each::<String, AnyUserData>(|_, executor| executor.destroy())?;
