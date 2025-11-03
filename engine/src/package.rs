@@ -54,8 +54,8 @@ impl Package {
         Ok(())
     }
 
-    pub fn build(&self) -> impl Future<Output = Result<(), mlua::Error>> {
-        self.partial.build.call_async(())
+    pub fn build(&self) -> &Function {
+        &self.partial.build
     }
 
     pub fn metadata(&self) -> &Metadata {
