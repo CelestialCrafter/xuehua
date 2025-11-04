@@ -7,7 +7,7 @@ use std::{
     sync::mpsc,
 };
 
-use eyre::{Context, DefaultHandler, Result};
+use eyre::{Context, ContextCompat, DefaultHandler, Result};
 
 use fern::colors::{Color, ColoredLevelConfig};
 use jiff::Timestamp;
@@ -29,7 +29,9 @@ use xh_engine::{
 };
 
 use crate::options::{
-    OPTIONS, cli::Action, cli::InspectAction, cli::PackageFormat, cli::ProjectFormat,
+    OPTIONS, Options,
+    cli::{Action, InspectAction, PackageFormat, ProjectFormat},
+    get_opts,
 };
 
 fn resolve_many(
@@ -48,9 +50,11 @@ fn resolve_many(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // init errors
     eyre::set_hook(Box::new(DefaultHandler::default_with))
-        .wrap_err("error installing eyre handler")?;
+        .wrap_err("could not install eyre handler")?;
 
+    // init logging
     let colors = ColoredLevelConfig::new()
         .info(Color::Blue)
         .debug(Color::Magenta)
@@ -72,15 +76,23 @@ async fn main() -> Result<()> {
         .level(LevelFilter::Debug)
         .chain(stderr())
         .apply()
-        .wrap_err("error installing logger")?;
+        .wrap_err("could not install logger")?;
 
-    match &OPTIONS.cli.action {
+    // init opts
+    OPTIONS
+        .set(Options::run()?)
+        .ok()
+        .wrap_err("could not resolve options")?;
+
+    // actions
+    let opts = get_opts();
+    match &opts.cli.action {
         Action::Build { packages, .. } => {
-            let (lua, planner) = populate_lua(&OPTIONS.cli.project)?;
+            let (lua, planner) = populate_lua(&opts.cli.project)?;
             let nodes = resolve_many(&planner, packages)?;
 
             // run builder
-            let build_root = tempfile::tempdir_in(&OPTIONS.base.build_directory)?;
+            let build_root = tempfile::tempdir_in(&opts.base.locations.build)?;
             debug!("building to {:?}", build_root.path());
 
             let mut scheduler = Scheduler::new(planner.into_inner());
@@ -110,7 +122,7 @@ async fn main() -> Result<()> {
         Action::Link { .. } => todo!("link action not implemented"),
         Action::Inspect(action) => match action {
             InspectAction::Project { format } => {
-                let (_, planner) = populate_lua(&OPTIONS.cli.project)?;
+                let (_, planner) = populate_lua(&opts.cli.project)?;
 
                 match format {
                     ProjectFormat::Dot => println!(
@@ -129,7 +141,7 @@ async fn main() -> Result<()> {
                 // TODO: styled output instead of "markdown"
                 // TODO: output store artifacts for pkg
                 PackageFormat::Human => {
-                    let (_, planner) = populate_lua(&OPTIONS.cli.project)?;
+                    let (_, planner) = populate_lua(&opts.cli.project)?;
                     let plan = planner.plan();
 
                     let mut stdout = stdout().lock();
