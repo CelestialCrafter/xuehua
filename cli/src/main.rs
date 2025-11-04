@@ -89,8 +89,8 @@ fn main() -> Result<()> {
         }
         Action::Link { .. } => todo!("link action not implemented"),
         Action::Inspect(action) => match action {
-            InspectAction::Project { format } => {
-                let (_, planner) = basic_lua_plan(&OPTIONS.cli.project)?;
+            InspectAction::Project { format, project } => {
+                let (_, planner) = basic_lua_plan(&project)?;
 
                 match format {
                     ProjectFormat::Dot => println!(
