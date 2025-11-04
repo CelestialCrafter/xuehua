@@ -1,3 +1,6 @@
+pub mod empty;
+pub use empty::EmptyStore;
+
 #[cfg(feature = "local-store")]
 pub mod local;
 
