@@ -17,3 +17,4 @@ petgraph.workspace = true
 mlua.workspace = true
 bpaf = { version = "0.9.20", features = ["bright-color"] }
 jiff.workspace = true
+tempfile = "3.23.0"

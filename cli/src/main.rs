@@ -1,12 +1,17 @@
 pub mod options;
 
-use std::{fs, io::{Write, stdout, stderr}, path::Path, sync::mpsc};
+use std::{
+    fs,
+    io::{Write, stderr, stdout},
+    path::Path,
+    sync::mpsc,
+};
 
 use eyre::{Context, DefaultHandler, Result};
 
 use fern::colors::{Color, ColoredLevelConfig};
 use jiff::Timestamp;
-use log::{LevelFilter, warn};
+use log::{LevelFilter, debug, warn};
 use mlua::Lua;
 use petgraph::{dot, graph::NodeIndex};
 use tokio::task;
@@ -23,7 +28,9 @@ use xh_engine::{
     utils,
 };
 
-use crate::options::{Action, InspectAction, OPTIONS, PackageFormat, ProjectFormat};
+use crate::options::{
+    OPTIONS, cli::Action, cli::InspectAction, cli::PackageFormat, cli::ProjectFormat,
+};
 
 fn resolve_many(
     planner: &Planner,
@@ -69,15 +76,15 @@ async fn main() -> Result<()> {
 
     match &OPTIONS.cli.action {
         Action::Build { packages, .. } => {
-            let (lua, planner) = basic_lua_plan(&OPTIONS.cli.project)?;
+            let (lua, planner) = populate_lua(&OPTIONS.cli.project)?;
             let nodes = resolve_many(&planner, packages)?;
 
             // run builder
-            let build_root = Path::new("builds");
-            utils::ensure_dir(build_root)?;
+            let build_root = tempfile::tempdir_in(&OPTIONS.base.build_directory)?;
+            debug!("building to {:?}", build_root.path());
 
             let mut scheduler = Scheduler::new(planner.into_inner());
-            let builder = Builder::new(Path::new("builds"), &lua)
+            let builder = Builder::new(build_root.path(), &lua)
                 .register("bubblewrap".to_string(), 2, |env| {
                     Ok(BubblewrapExecutor::new(
                         env,
@@ -95,12 +102,15 @@ async fn main() -> Result<()> {
 
             scheduler.schedule(&nodes, &builder, results_tx).await;
 
+            // TODO: push builds into store and delete build dir
+            let _ = build_root.keep();
+
             handle.await?
         }
         Action::Link { .. } => todo!("link action not implemented"),
         Action::Inspect(action) => match action {
             InspectAction::Project { format } => {
-                let (_, planner) = basic_lua_plan(&OPTIONS.cli.project)?;
+                let (_, planner) = populate_lua(&OPTIONS.cli.project)?;
 
                 match format {
                     ProjectFormat::Dot => println!(
@@ -119,7 +129,7 @@ async fn main() -> Result<()> {
                 // TODO: styled output instead of "markdown"
                 // TODO: output store artifacts for pkg
                 PackageFormat::Human => {
-                    let (_, planner) = basic_lua_plan(&OPTIONS.cli.project)?;
+                    let (_, planner) = populate_lua(&OPTIONS.cli.project)?;
                     let plan = planner.plan();
 
                     let mut stdout = stdout().lock();
@@ -147,7 +157,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn basic_lua_plan(location: &Path) -> Result<(mlua::Lua, Planner)> {
+fn populate_lua(location: &Path) -> Result<(mlua::Lua, Planner)> {
     // FIX: restrict stdlibs
     let lua = Lua::new();
 
