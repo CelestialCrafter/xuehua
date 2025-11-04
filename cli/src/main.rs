@@ -18,7 +18,7 @@ use xh_engine::{
     },
     logger, planner,
     scheduler::Scheduler,
-    utils::{self, BoxDynError},
+    utils,
 };
 
 use crate::options::{Action, InspectAction, OPTIONS, ProjectFormat};
@@ -67,11 +67,7 @@ fn main() -> Result<()> {
                         BubblewrapExecutorOptions::default(),
                     ))
                 })
-                .register("http".to_string(), 2, |env| {
-                    HttpExecutor::new(env)
-                        .map_err(BoxDynError::from)
-                        .map_err(Into::into)
-                });
+                .register("http".to_string(), 2, |env| Ok(HttpExecutor::new(env)));
 
             let (results_tx, results_rx) = mpsc::channel();
             let handle = runtime.spawn(async move {

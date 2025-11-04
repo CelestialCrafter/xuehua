@@ -5,7 +5,7 @@ edition = "2024"
 
 [features]
 bubblewrap-executor = ["tokio/process"]
-http-executor = ["dep:reqwest"]
+http-executor = ["dep:ureq", "dep:tokio-util", "tokio/fs"]
 local-store = ["dep:rusqlite"]
 
 [dependencies]
@@ -21,4 +21,5 @@ blake3 = "1.8.2"
 walkdir = "2.5.0"
 serde_json = "1.0.145"
 rusqlite = { version = "0.37.0", features = ["jiff"], optional = true }
-reqwest = { version = "0.12.24", optional = true }
+ureq = { version = "3.1.2", optional = true }
+tokio-util = { version = "0.7.17", optional = true, features = ["io-util"] }

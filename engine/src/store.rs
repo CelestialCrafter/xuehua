@@ -86,6 +86,7 @@ pub trait Store {
     ) -> impl Future<Output = Result<Option<PathBuf>, Error>> + Send;
 }
 
+// TODO: implement async hashing
 pub fn hash_directory(dir: &Path) -> io::Result<Hash> {
     let mut hasher = blake3::Hasher::new();
     let map_walkdir_err = |err: walkdir::Error| {

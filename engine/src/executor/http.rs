@@ -1,6 +1,5 @@
 use std::{
-    fs::OpenOptions,
-    io::Write,
+    io::copy,
     path::{Component, Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -8,7 +7,13 @@ use std::{
 
 use log::debug;
 use mlua::{ExternalResult, FromLua, Table, UserData};
-use reqwest::{Client, Method, StatusCode, Url};
+use tokio::{fs::OpenOptions, task::spawn_blocking};
+use tokio_util::io::SyncIoBridge;
+use ureq::{
+    Agent,
+    config::Config,
+    http::{Method, Request, StatusCode, Uri},
+};
 
 use crate::{executor::Executor, utils::BoxDynError};
 
@@ -17,7 +22,7 @@ const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VE
 #[derive(Debug)]
 pub struct HttpRequest {
     pub path: PathBuf,
-    pub url: Url,
+    pub url: Uri,
     pub method: Method,
 }
 
@@ -33,15 +38,14 @@ impl FromLua for HttpRequest {
     fn from_lua(value: mlua::Value, lua: &mlua::Lua) -> mlua::Result<Self> {
         let table = Table::from_lua(value, lua)?;
 
+        let url = Uri::from_str(&table.get::<String>("url")?).into_lua_err()?;
         let method = Method::from_str(&table.get::<String>("method")?).into_lua_err()?;
         // ensure the method is:
         // 1. a valid method, and not an accidental extension
         // 2. a read-only method, to prevent misuse
         if !method.is_safe() {
-            return Err(mlua::Error::external("unsafe request method"))
+            return Err(mlua::Error::external("unsafe request method"));
         }
-
-        let url = Url::parse(&table.get::<String>("url")?).into_lua_err()?;
 
         Ok(Self {
             path: table.get("path")?,
@@ -64,23 +68,20 @@ impl UserData for HttpResponse {
 
 pub struct HttpExecutor {
     environment: Arc<Path>,
-    client: Client,
+    agent: Agent,
 }
 
 impl HttpExecutor {
-    pub fn new(environment: Arc<Path>) -> Result<Self, reqwest::Error> {
-        let client = Client::builder().user_agent(USER_AGENT).build()?;
-
-        Ok(Self {
+    pub fn new(environment: Arc<Path>) -> Self {
+        Self {
             environment,
-            client,
-        })
+            agent: Config::builder().user_agent(USER_AGENT).build().new_agent(),
+        }
     }
 }
 
 impl Executor for HttpExecutor {
     type Request = HttpRequest;
-
     type Response = HttpResponse;
 
     async fn dispatch(&mut self, request: Self::Request) -> Result<Self::Response, BoxDynError> {
@@ -96,24 +97,29 @@ impl Executor for HttpExecutor {
             return Err("paths referencing parent directories are not allowed".into());
         }
 
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .write(true)
             .create(true)
-            .open(self.environment.join(request.path))?;
+            .open(self.environment.join(request.path))
+            .await?;
+        let mut sync_file = SyncIoBridge::new(file);
 
-        let mut resp = self
-            .client
-            .request(request.method, request.url)
-            .send()
-            .await?
-            .error_for_status()?;
+        // TODO: switch to hyper if this becomes an issue
+        let agent = self.agent.clone();
+        let status = spawn_blocking(move || {
+            let request = Request::builder()
+                .method(request.method)
+                .uri(request.url)
+                .body(())?;
 
-        while let Some(chunk) = resp.chunk().await? {
-            file.write_all(&chunk)?;
-        }
+            let response = agent.run(request)?;
+            let status = response.status();
+            copy(&mut response.into_body().into_reader(), &mut sync_file)?;
 
-        Ok(HttpResponse {
-            status: resp.status(),
+            Ok::<_, ureq::Error>(status)
         })
+        .await??;
+
+        Ok(HttpResponse { status: status })
     }
 }
