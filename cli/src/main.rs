@@ -1,6 +1,6 @@
 pub mod options;
 
-use std::{fs, io::stderr, path::Path, sync::mpsc};
+use std::{fs, io::{Write, stdout, stderr}, path::Path, sync::mpsc};
 
 use eyre::{Context, DefaultHandler, Result};
 
@@ -8,7 +8,7 @@ use fern::colors::{Color, ColoredLevelConfig};
 use jiff::Timestamp;
 use log::{LevelFilter, warn};
 use mlua::Lua;
-use petgraph::dot;
+use petgraph::{dot, graph::NodeIndex};
 use tokio::task;
 use xh_engine::{
     builder::Builder,
@@ -16,12 +16,28 @@ use xh_engine::{
         bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
         http::HttpExecutor,
     },
-    logger, planner,
+    logger,
+    package::PackageId,
+    planner::{Error as PlannerError, Planner},
     scheduler::Scheduler,
     utils,
 };
 
-use crate::options::{Action, InspectAction, OPTIONS, ProjectFormat};
+use crate::options::{Action, InspectAction, OPTIONS, PackageFormat, ProjectFormat};
+
+fn resolve_many(
+    planner: &Planner,
+    packages: &Vec<PackageId>,
+) -> Result<Vec<NodeIndex>, PlannerError> {
+    packages
+        .iter()
+        .map(|id| {
+            planner
+                .resolve(id)
+                .ok_or_else(|| PlannerError::PackageNotFound(id.clone()))
+        })
+        .collect::<Result<Vec<_>, PlannerError>>()
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -53,15 +69,8 @@ async fn main() -> Result<()> {
 
     match &OPTIONS.cli.action {
         Action::Build { packages, .. } => {
-            let (lua, planner) = basic_lua_plan(Path::new("xuehua/main.lua"))?;
-            let nodes = packages
-                .iter()
-                .map(|id| {
-                    planner
-                        .resolve(id)
-                        .ok_or_else(|| planner::Error::PackageNotFound(id.clone()))
-                })
-                .collect::<Result<Vec<_>, planner::Error>>()?;
+            let (lua, planner) = basic_lua_plan(&OPTIONS.cli.project)?;
+            let nodes = resolve_many(&planner, packages)?;
 
             // run builder
             let build_root = Path::new("builds");
@@ -90,8 +99,8 @@ async fn main() -> Result<()> {
         }
         Action::Link { .. } => todo!("link action not implemented"),
         Action::Inspect(action) => match action {
-            InspectAction::Project { format, project } => {
-                let (_, planner) = basic_lua_plan(&project)?;
+            InspectAction::Project { format } => {
+                let (_, planner) = basic_lua_plan(&OPTIONS.cli.project)?;
 
                 match format {
                     ProjectFormat::Dot => println!(
@@ -106,16 +115,39 @@ async fn main() -> Result<()> {
                     ProjectFormat::Json => todo!("json format not yet implemented"),
                 };
             }
-            InspectAction::Packages { .. } => {
-                todo!("package inspect not yet implemented")
-            }
+            InspectAction::Packages { packages, format } => match format {
+                // TODO: styled output instead of "markdown"
+                // TODO: output store artifacts for pkg
+                PackageFormat::Human => {
+                    let (_, planner) = basic_lua_plan(&OPTIONS.cli.project)?;
+                    let plan = planner.plan();
+
+                    let mut stdout = stdout().lock();
+                    for (i, node) in resolve_many(&planner, packages)?.into_iter().enumerate() {
+                        let pkg = &plan[node];
+                        writeln!(stdout, "# {}\n", pkg.id)?;
+
+                        for dependency in pkg.dependencies() {
+                            let id = plan[dependency.node].id.to_string();
+                            let time = dependency.time.to_string();
+                            writeln!(stdout, "**Dependency**: {id} at {time}")?;
+                        }
+
+                        // .join would be less efficient here
+                        if i + 1 != packages.len() {
+                            writeln!(stdout, "")?;
+                        }
+                    }
+                }
+                PackageFormat::Json => todo!("json format not yet implemented"),
+            },
         },
     }
 
     Ok(())
 }
 
-fn basic_lua_plan(location: &Path) -> Result<(mlua::Lua, planner::Planner)> {
+fn basic_lua_plan(location: &Path) -> Result<(mlua::Lua, Planner)> {
     // FIX: restrict stdlibs
     let lua = Lua::new();
 
@@ -124,7 +156,7 @@ fn basic_lua_plan(location: &Path) -> Result<(mlua::Lua, planner::Planner)> {
     utils::register_module(&lua)?;
 
     // run planner
-    let mut planner = planner::Planner::new();
+    let mut planner = Planner::new();
     let chunk = lua.load(fs::read(location)?).into_function()?;
     lua.scope(|scope| {
         let environment = chunk
