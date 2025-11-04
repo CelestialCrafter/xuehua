@@ -8,8 +8,8 @@ use fern::colors::{Color, ColoredLevelConfig};
 use jiff::Timestamp;
 use log::{LevelFilter, warn};
 use mlua::Lua;
-use petgraph::{dot, graph::NodeIndex};
-use tokio::runtime::Runtime;
+use petgraph::dot;
+use tokio::task;
 use xh_engine::{
     builder::Builder,
     executor::{
@@ -23,7 +23,8 @@ use xh_engine::{
 
 use crate::options::{Action, InspectAction, OPTIONS, ProjectFormat};
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     eyre::set_hook(Box::new(DefaultHandler::default_with))
         .wrap_err("error installing eyre handler")?;
 
@@ -53,9 +54,16 @@ fn main() -> Result<()> {
     match &OPTIONS.cli.action {
         Action::Build { packages, .. } => {
             let (lua, planner) = basic_lua_plan(Path::new("xuehua/main.lua"))?;
+            let nodes = packages
+                .iter()
+                .map(|id| {
+                    planner
+                        .resolve(id)
+                        .ok_or_else(|| planner::Error::PackageNotFound(id.clone()))
+                })
+                .collect::<Result<Vec<_>, planner::Error>>()?;
 
             // run builder
-            let runtime = Runtime::new()?;
             let build_root = Path::new("builds");
             utils::ensure_dir(build_root)?;
 
@@ -70,22 +78,15 @@ fn main() -> Result<()> {
                 .register("http".to_string(), 2, |env| Ok(HttpExecutor::new(env)));
 
             let (results_tx, results_rx) = mpsc::channel();
-            let handle = runtime.spawn(async move {
+            let handle = task::spawn(async move {
                 while let Ok((id, result)) = results_rx.recv() {
                     warn!("package {id} build result streamed: {result:?}");
                 }
             });
 
-            runtime.block_on(async move {
-                // TODO: add resolver api
-                // for i in 0..4 {
-                scheduler
-                    .schedule(&[NodeIndex::from(0)], &builder, results_tx.clone())
-                    .await;
-                // }
-            });
+            scheduler.schedule(&nodes, &builder, results_tx).await;
 
-            runtime.block_on(handle)?;
+            handle.await?
         }
         Action::Link { .. } => todo!("link action not implemented"),
         Action::Inspect(action) => match action {

@@ -22,11 +22,16 @@ impl FromStr for PackageId {
     type Err = ParseIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (name, namespace) = s.split_once("@").ok_or(ParseIdError)?;
+        let (name, segments) = s.split_once("@").ok_or(ParseIdError)?;
+        let segments: Vec<_> = segments.split("/").map(Arc::from).collect();
+
+        if **segments.first().ok_or(ParseIdError)? != *"root" {
+            return Err(ParseIdError);
+        }
 
         Ok(Self {
             name: name.to_string(),
-            namespace: namespace.split("/").map(Arc::from).collect(),
+            namespace: segments,
         })
     }
 }
