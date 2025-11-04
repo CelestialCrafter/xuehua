@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fmt, io,
+    io,
     str::FromStr,
     sync::{Arc, RwLock},
 };
@@ -16,56 +16,7 @@ use petgraph::{
 };
 use thiserror::Error;
 
-use crate::package::{Package, PackageId};
-
-#[derive(Debug, Clone, Copy)]
-pub enum LinkTime {
-    Runtime,
-    Buildtime,
-}
-
-impl fmt::Display for LinkTime {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                LinkTime::Runtime => "runtime",
-                LinkTime::Buildtime => "buildtime",
-            }
-        )
-    }
-}
-
-impl FromLua for LinkTime {
-    fn from_lua(value: mlua::Value, _: &Lua) -> Result<Self, mlua::Error> {
-        match value.to_string()?.as_str() {
-            "buildtime" => Ok(LinkTime::Buildtime),
-            "runtime" => Ok(LinkTime::Runtime),
-            _ => Err(mlua::Error::FromLuaConversionError {
-                from: value.type_name(),
-                to: "LinkTime".to_string(),
-                message: Some(r#"value is not "buildtime" or "runtime""#.to_string()),
-            }),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Dependency {
-    pub node: NodeIndex,
-    pub time: LinkTime,
-}
-impl FromLua for Dependency {
-    fn from_lua(value: mlua::Value, lua: &Lua) -> Result<Self, mlua::Error> {
-        let table = Table::from_lua(value, lua)?;
-
-        Ok(Self {
-            node: *table.get::<AnyUserData>("package")?.borrow::<NodeIndex>()?,
-            time: table.get("type")?,
-        })
-    }
-}
+use crate::package::{LinkTime, Package, PackageId};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -222,11 +173,7 @@ impl Planner {
         Ok(self.plan.add_node(dest_pkg))
     }
 
-    pub fn package(
-        &mut self,
-        mut pkg: Package,
-        dependencies: Vec<Dependency>,
-    ) -> Result<NodeIndex, Error> {
+    pub fn package(&mut self, mut pkg: Package) -> Result<NodeIndex, Error> {
         pkg.id.namespace = self.namespace.current();
         trace!("registering package {}", pkg.id);
 
@@ -237,6 +184,7 @@ impl Planner {
 
         // register node and add dependency edges
         let id = pkg.id.clone();
+        let dependencies = pkg.dependencies().clone();
         let node = self.plan.add_node(pkg);
         self.registered.insert(id, node);
 
@@ -276,12 +224,9 @@ impl UserData for Planner {
         });
 
         methods.add_method_mut("package", |lua, this, table: Table| {
-            let dependencies = table.get("dependencies")?;
             let pkg = Package::from_lua(Value::Table(table), lua)?;
 
-            this.package(pkg, dependencies)
-                .map(AnyUserData::wrap)
-                .into_lua_err()
+            this.package(pkg).map(AnyUserData::wrap).into_lua_err()
         });
 
         methods.add_method("resolve", |_, this, id: String| {
