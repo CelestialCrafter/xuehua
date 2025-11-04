@@ -15,7 +15,7 @@ use std::{
         ffi::OsStrExt,
         fs::{MetadataExt, PermissionsExt},
     },
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use blake3::Hash;
@@ -66,9 +66,9 @@ pub trait Store {
         &mut self,
         package: &Package,
         artifact: &ArtifactId,
-    ) -> impl Future<Output = Result<PackageId, Error>> + Send;
+    ) -> impl Future<Output = Result<StorePackage, Error>> + Send;
 
-    fn packages(
+    fn package(
         &self,
         package: &PackageId,
     ) -> impl Future<Output = Result<impl Iterator<Item = StorePackage>, Error>> + Send;
@@ -76,21 +76,22 @@ pub trait Store {
     fn register_artifact(
         &mut self,
         content: &Path,
-    ) -> impl Future<Output = Result<ArtifactId, Error>> + Send;
+    ) -> impl Future<Output = Result<StoreArtifact, Error>> + Send;
 
     fn artifact(
         &self,
         artifact: &ArtifactId,
-    ) -> impl Future<Output = Result<Option<StoreArtifact>, Error>> + Send;
+    ) -> impl Future<Output = Result<StoreArtifact, Error>> + Send;
 
-    fn content(
+    fn unpack(
         &self,
         artifact: &ArtifactId,
-    ) -> impl Future<Output = Result<Option<PathBuf>, Error>> + Send;
+        output_directory: &Path,
+    ) -> impl Future<Output = Result<(), Error>> + Send;
 }
 
 // TODO: implement async hashing
-pub fn hash_directory(dir: &Path) -> io::Result<Hash> {
+pub fn hash_directory(dir: &Path) -> Result<Hash, io::Error> {
     let mut hasher = blake3::Hasher::new();
     let map_walkdir_err = |err: walkdir::Error| {
         let fallback = io::Error::new(io::ErrorKind::Other, err.to_string());

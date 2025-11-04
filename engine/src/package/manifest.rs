@@ -25,7 +25,7 @@ impl Manifest {
     ) -> Result<Self, StoreError> {
         for id in iter {
             store
-                .packages(id)
+                .package(id)
                 .await?
                 .next()
                 .and_then(|pkg| self.0.insert(pkg.package, pkg.artifact));

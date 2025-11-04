@@ -1,7 +1,4 @@
-use std::{
-    iter::empty,
-    path::{Path, PathBuf},
-};
+use std::{iter::Empty, path::Path};
 
 use crate::{
     package::{Package, PackageId},
@@ -15,6 +12,10 @@ use crate::store::{ArtifactId, Error, StoreArtifact, StorePackage};
 #[error("registry is unimplemented for EmptyStore")]
 struct CannotRegister;
 
+#[derive(Error, Debug)]
+#[error("unpacking is unimplemented for EmptyStore")]
+struct CannotUnpack;
+
 #[derive(Default, Clone, Copy)]
 pub struct EmptyStore;
 
@@ -23,26 +24,26 @@ impl Store for EmptyStore {
         &mut self,
         _package: &Package,
         _artifact: &ArtifactId,
-    ) -> Result<PackageId, Error> {
+    ) -> Result<StorePackage, Error> {
         Err(BoxDynError::from(CannotRegister).into())
     }
 
-    async fn packages(
+    async fn package(
         &self,
-        _package: &PackageId,
+        package: &PackageId,
     ) -> Result<impl Iterator<Item = StorePackage>, Error> {
-        Ok(empty())
+        Err::<Empty<_>, _>(Error::PackageNotFound(package.clone()))
     }
 
-    async fn register_artifact(&mut self, _content: &Path) -> Result<ArtifactId, Error> {
+    async fn register_artifact(&mut self, _content: &Path) -> Result<StoreArtifact, Error> {
         Err(BoxDynError::from(CannotRegister).into())
     }
 
-    async fn artifact(&self, _artifact: &ArtifactId) -> Result<Option<StoreArtifact>, Error> {
-        Ok(None)
+    async fn artifact(&self, artifact: &ArtifactId) -> Result<StoreArtifact, Error> {
+        Err(Error::ArtifactNotFound(artifact.clone()))
     }
 
-    async fn content(&self, _artifact: &ArtifactId) -> Result<Option<PathBuf>, Error> {
-        Ok(None)
+    async fn unpack(&self, _artifact: &ArtifactId, _output_directory: &Path) -> Result<(), Error> {
+        Err(BoxDynError::from(CannotUnpack).into())
     }
 }
