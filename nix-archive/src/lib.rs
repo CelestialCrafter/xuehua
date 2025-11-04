@@ -46,6 +46,8 @@ pub mod decoding;
 pub mod encoding;
 #[cfg(all(feature = "std", unix))]
 pub mod unpacking;
+#[cfg(all(feature = "std", unix))]
+pub mod packing;
 pub(crate) mod utils;
 pub mod validation;
 
