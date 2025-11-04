@@ -1,10 +1,8 @@
 use std::{env, fmt, fs, path::PathBuf, str::FromStr, sync::LazyLock};
 
-use bpaf::{construct, long, positional, pure, OptionParser, Parser};
+use bpaf::{OptionParser, Parser, construct, long, positional, pure};
 use eyre::{Context, OptionExt, Result};
 use xh_engine::package::PackageId;
-
-pub const DISPLAY_NAME: &str = "Xuehua";
 
 pub static OPTIONS: LazyLock<Options> = LazyLock::new(|| Options {
     // TODO: use .run_inner() and completely overhaul the display
@@ -67,6 +65,7 @@ impl FromStr for PackageFormat {
 #[derive(Debug, Clone)]
 pub enum InspectAction {
     Project {
+        project: PathBuf,
         format: ProjectFormat,
     },
     Packages {
@@ -78,12 +77,17 @@ pub enum InspectAction {
 impl InspectAction {
     fn parser() -> impl Parser<Self> {
         let project = {
+            let project = positional("PATH").help("Project path");
             let format = long("format")
                 .short('f')
                 .help("Project output format")
-                .argument("FORMAT");
+                .argument("FORMAT")
+                .fallback(ProjectFormat::Dot);
 
-            construct!(Self::Project { format })
+            construct!(Self::Project { format, project })
+                .to_options()
+                .descr("Inspects the given project")
+                .command("project")
         };
 
         let packages = {
@@ -91,9 +95,13 @@ impl InspectAction {
             let format = long("format")
                 .short('f')
                 .help("Package output format")
-                .argument("FORMAT");
+                .argument("FORMAT")
+                .fallback(PackageFormat::Human);
 
             construct!(Self::Packages { format, packages })
+                .to_options()
+                .descr("Inspects the given packages declarations")
+                .command("package")
         };
 
         construct!([project, packages])
