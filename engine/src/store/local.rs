@@ -5,9 +5,9 @@ use std::{
 };
 
 use jiff::Timestamp;
-use rusqlite::{Connection, OptionalExtension, named_params, types::FromSqlError};
-use tokio::sync::Mutex;
 use log::debug;
+use rusqlite::{Connection, named_params, types::FromSqlError};
+use tokio::sync::Mutex;
 
 use crate::{
     ExternalError, ExternalResult,
@@ -57,8 +57,11 @@ impl Store for LocalStore<'_> {
         &mut self,
         package: &Package,
         artifact: &ArtifactId,
-    ) -> Result<PackageId, Error> {
-        debug!("registering package {} with artifact {}", package.id, artifact);
+    ) -> Result<StorePackage, Error> {
+        debug!(
+            "registering package {} with artifact {}",
+            package.id, artifact
+        );
         self.db
             .lock()
             .await
@@ -70,11 +73,15 @@ impl Store for LocalStore<'_> {
                     ":created_at": Timestamp::now()
                 },
             )
-            .map(|_| package.id.clone())
-            .into_store_err()
+            .into_store_err()?;
+
+        self.package(&package.id)
+            .await?
+            .next()
+            .ok_or_else(|| Error::PackageNotFound(package.id.clone()))
     }
 
-    async fn packages(&self, id: &PackageId) -> Result<impl Iterator<Item = StorePackage>, Error> {
+    async fn package(&self, id: &PackageId) -> Result<impl Iterator<Item = StorePackage>, Error> {
         Ok(self
             .db
             .lock()
@@ -89,13 +96,12 @@ impl Store for LocalStore<'_> {
                     created_at: row.get("created_at")?,
                 })
             })
-            .into_store_err()?
-            .collect::<Result<Vec<_>, rusqlite::Error>>()
+            .and_then(|iter| -> Result<Vec<_>, _> { iter.collect() })
             .into_store_err()?
             .into_iter())
     }
 
-    async fn register_artifact(&mut self, content: &Path) -> Result<blake3::Hash, Error> {
+    async fn register_artifact(&mut self, content: &Path) -> Result<StoreArtifact, Error> {
         let hash = hash_directory(content).into_store_err()?;
         debug!("registering artifact {:?} as {}", content, hash);
 
@@ -106,27 +112,27 @@ impl Store for LocalStore<'_> {
                 ":created_at": Timestamp::now()
             },
         ) {
-            Ok(_) => fs::rename(content, self.artifact_path(&hash))
-                .map(|_| hash)
-                .into_store_err(),
+            Ok(_) => fs::rename(content, self.artifact_path(&hash)).into_store_err()?,
             Err(rusqlite::Error::SqliteFailure(
                 rusqlite::ffi::Error {
                     code: rusqlite::ffi::ErrorCode::ConstraintViolation,
                     ..
                 },
                 ..,
-            )) => Ok(hash),
-            Err(err) => Err(err.into_store_err()),
-        }
+            )) => (),
+            Err(err) => return Err(err.into_store_err()),
+        };
+
+        self.artifact(&hash).await
     }
 
-    async fn artifact(&self, id: &ArtifactId) -> Result<Option<StoreArtifact>, Error> {
+    async fn artifact(&self, artifact: &ArtifactId) -> Result<StoreArtifact, Error> {
         self.db
             .lock()
             .await
             .query_one(
                 Queries::GET_ARTIFACT,
-                named_params! { ":artifact": id.as_bytes() },
+                named_params! { ":artifact": artifact.as_bytes() },
                 |row| {
                     Ok(StoreArtifact {
                         artifact: ArtifactId::from_bytes(row.get("artifact")?),
@@ -134,16 +140,13 @@ impl Store for LocalStore<'_> {
                     })
                 },
             )
-            .optional()
-            .into_store_err()
+            .map_err(|err| match err {
+                rusqlite::Error::QueryReturnedNoRows => Error::ArtifactNotFound(*artifact),
+                err => err.into_store_err(),
+            })
     }
 
-    async fn content(&self, artifact: &ArtifactId) -> Result<Option<PathBuf>, Error> {
-        let path = self.artifact_path(artifact);
-        Ok(if !path.try_exists().into_store_err()? {
-            None
-        } else {
-            Some(path)
-        })
+    async fn unpack(&self, _artifact: &ArtifactId, _output_directory: &Path) -> Result<(), Error> {
+        todo!("unpacking not yet implemented");
     }
 }
