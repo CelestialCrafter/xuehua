@@ -1,6 +1,7 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fmt, io,
+    str::FromStr,
     sync::{Arc, RwLock},
 };
 
@@ -69,7 +70,9 @@ impl FromLua for Dependency {
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("node {0:?} not found")]
-    NotFound(NodeIndex),
+    NodeNotFound(NodeIndex),
+    #[error("package {0} not found")]
+    PackageNotFound(PackageId),
     #[error("package {package} has conflicting definitions")]
     Conflict { package: PackageId },
     #[error("cycle detected from package {from:?} to package {to:?}")]
@@ -178,7 +181,7 @@ pub type Plan = Acyclic<DiGraph<Package, LinkTime>>;
 /// ```
 pub struct Planner {
     plan: Plan,
-    registered: HashSet<PackageId>,
+    registered: HashMap<PackageId, NodeIndex>,
     namespace: Namespace,
 }
 
@@ -186,7 +189,7 @@ impl Planner {
     pub fn new() -> Self {
         Self {
             plan: Plan::default(),
-            registered: HashSet::default(),
+            registered: HashMap::default(),
             namespace: Namespace::new(),
         }
     }
@@ -209,7 +212,7 @@ impl Planner {
         let source_pkg = self
             .plan
             .node_weight(source)
-            .ok_or(Error::NotFound(source))?;
+            .ok_or(Error::NodeNotFound(source))?;
 
         let mut dest_pkg = source_pkg.clone();
         dest_pkg.id.name = destination;
@@ -228,12 +231,15 @@ impl Planner {
         trace!("registering package {}", pkg.id);
 
         // ensure no conflicts
-        if !self.registered.insert(pkg.id.clone()) {
+        if self.registered.contains_key(&pkg.id) {
             return Err(Error::Conflict { package: pkg.id });
         }
 
         // register node and add dependency edges
+        let id = pkg.id.clone();
         let node = self.plan.add_node(pkg);
+        self.registered.insert(id, node);
+
         for dependency in dependencies {
             self.plan
                 .try_add_edge(node, dependency.node, dependency.time)
@@ -246,6 +252,10 @@ impl Planner {
 
         Ok(node)
     }
+
+    pub fn resolve(&self, id: &PackageId) -> Option<NodeIndex> {
+        self.registered.get(id).copied()
+    }
 }
 
 impl UserData for Planner {
@@ -254,15 +264,6 @@ impl UserData for Planner {
     }
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method_mut("package", |lua, this, table: Table| {
-            let dependencies = table.get("dependencies")?;
-            let pkg = Package::from_lua(Value::Table(table), lua)?;
-
-            this.package(pkg, dependencies)
-                .map(AnyUserData::wrap)
-                .into_lua_err()
-        });
-
         methods.add_method_mut("configure", |lua, this, table: Table| {
             this.configure(
                 lua,
@@ -272,6 +273,20 @@ impl UserData for Planner {
             )
             .map(AnyUserData::wrap)
             .into_lua_err()
+        });
+
+        methods.add_method_mut("package", |lua, this, table: Table| {
+            let dependencies = table.get("dependencies")?;
+            let pkg = Package::from_lua(Value::Table(table), lua)?;
+
+            this.package(pkg, dependencies)
+                .map(AnyUserData::wrap)
+                .into_lua_err()
+        });
+
+        methods.add_method("resolve", |_, this, id: String| {
+            let id = PackageId::from_str(&id).into_lua_err()?;
+            Ok(this.resolve(&id).map(AnyUserData::wrap))
         });
     }
 }
