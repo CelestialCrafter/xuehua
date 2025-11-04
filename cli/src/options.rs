@@ -65,7 +65,6 @@ impl FromStr for PackageFormat {
 #[derive(Debug, Clone)]
 pub enum InspectAction {
     Project {
-        project: PathBuf,
         format: ProjectFormat,
     },
     Packages {
@@ -77,14 +76,13 @@ pub enum InspectAction {
 impl InspectAction {
     fn parser() -> impl Parser<Self> {
         let project = {
-            let project = positional("PATH").help("Project path");
             let format = long("format")
                 .short('f')
                 .help("Project output format")
                 .argument("FORMAT")
                 .fallback(ProjectFormat::Dot);
 
-            construct!(Self::Project { format, project })
+            construct!(Self::Project { format })
                 .to_options()
                 .descr("Inspects the given project")
                 .command("project")
