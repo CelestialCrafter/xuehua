@@ -10,8 +10,8 @@ use petgraph::{
 
 use crate::{
     builder::{BuildInfo, Builder, Error},
-    package::{Package, PackageId},
-    planner::{LinkTime, Plan},
+    package::{Package, PackageId, LinkTime},
+    planner::Plan,
     utils::passthru::PassthruHashSet,
 };
 
