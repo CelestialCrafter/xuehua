@@ -1,3 +1,23 @@
+//! Decodes bytes into a NAR [`Event`] stream
+//!
+//! Keep in mind that [`Decoder`] allocates memory before
+//! parsing events, which could lead to memory exhaustion
+//! when parsing large events (such as [`Event::RegularContentChunk`])
+//!
+//! # Examples
+//!
+//! Decoding a NAR file from stdin into events on stderr
+//!
+//! ```rust,no_run
+//! use nix_archive_format::decoding::Decoder;
+//!
+//! for event in Decoder::new(std::io::stdin()) {
+//!     eprintln!("{:?}", event?);
+//! }
+//!
+//! # Ok::<_, nix_archive_format::decoding::Error>(())
+//! ```
+
 use std::{fmt::Debug, io, num::TryFromIntError, path::PathBuf, string::FromUtf8Error};
 
 use thiserror::Error;
@@ -10,16 +30,27 @@ use crate::{
     },
 };
 
+/// Error type for the [Decoder]
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("unexpected token: expected {expected}, found {found}")]
-    UnexpectedToken { expected: String, found: String },
+    /// The underlying had unexpected non-NAR data
+    #[error("unexpected token (expected {expected}, found {found})")]
+    UnexpectedToken {
+        /// A description of the expected token
+        expected: String,
+        /// The token that was read
+        found: String,
+    },
+    /// Usually because underlying reader returned an error
     #[error(transparent)]
     IOError(#[from] io::Error),
+    /// Usually due to paths being non-UTF-8
     #[error(transparent)]
     Utf8Error(#[from] FromUtf8Error),
+    /// A number that was too big
     #[error(transparent)]
     ConversionError(#[from] TryFromIntError),
+    /// The internal coder state errored
     #[error(transparent)]
     CoderError(#[from] CoderStateError),
 }
@@ -31,6 +62,7 @@ fn unexpected(expected: &str, found: &[u8]) -> Error {
     }
 }
 
+/// Decodes bytes into NAR [`Events`](Event)
 #[derive(Debug)]
 pub struct Decoder<R> {
     state: CoderState,
@@ -47,6 +79,7 @@ impl<R: io::Read> Iterator for Decoder<R> {
 }
 
 impl<R: io::Read> Decoder<R> {
+    /// Constructs a new [`Decoder`] from something that implements [`Read`](io::Read)
     pub fn new(reader: R) -> Self {
         Self {
             state: CoderState::new(),

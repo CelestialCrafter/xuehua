@@ -1,3 +1,40 @@
+//! Encoder for NAR data streams
+//!
+//! One thing to keep in mind is that [`Encoder`] has an internal buffer,
+//! Which means it will allocate as much memory as needed to contain an event.
+//! This is usually not an issue because:
+//! - All events except for [`Event::RegularContentChunk`]'s are tiny
+//! - The decoder chunks [`Event::RegularContentChunk`] events to a reasonable size
+//!
+//! But if you encode custom event streams, keep this in mind.
+//!
+//! # Examples
+//!
+//! Encoding NAR events to a NAR file on stdout
+//!
+//! ```rust
+//! use nix_archive_format::{encoding::Encoder, state::Event};
+//!
+//! let content = "hello world!";
+//! let events = vec![
+//!     Event::Header,
+//!     Event::Directory,
+//!     Event::DirectoryEntry {
+//!         name: std::path::PathBuf::from("my-file"),
+//!     },
+//!     Event::Regular {
+//!         executable: true,
+//!         size: content.len() as u64,
+//!     },
+//!     Event::RegularContentChunk(content.as_bytes().to_vec()),
+//!     Event::DirectoryEnd,
+//! ];
+//!
+//! std::io::copy(&mut Encoder::new(events.iter()), &mut std::io::stdout())?;
+//!
+//! # Ok::<_, std::io::Error>(())
+//! ```
+
 use std::{
     io::{self, Write},
     iter::repeat,
@@ -15,14 +52,18 @@ use crate::{
     },
 };
 
+/// Error type for the [Encoder]
 #[derive(Error, Debug)]
 pub enum Error {
+    /// The internal state errored, usually because the underlying reader had its events in an incorrect order
     #[error(transparent)]
     CoderError(#[from] CoderStateError),
+    /// Usually due to paths being non-UTF-8
     #[error(transparent)]
     Utf8Error(#[from] Utf8Error),
 }
 
+/// Encodes NAR [Events](Event) into bytes
 #[derive(Debug)]
 pub struct Encoder<I> {
     state: CoderState,
@@ -57,6 +98,7 @@ fn path_to_str(path: &Path) -> Result<&str, Utf8Error> {
 }
 
 impl<'a, I: Iterator<Item = &'a Event>> Encoder<I> {
+    /// Constructs a new [`Encoder`] from an [`Iterator`] of [`Events`](Event)
     pub fn new(events: I) -> Self {
         Self {
             events,
