@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["cli", "engine"]
+members = ["cli", "engine", "nix-archive-format"]
 
 [workspace.dependencies]
 log = { version = "0.4.27", features = ["std"] }
