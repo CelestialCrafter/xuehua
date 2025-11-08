@@ -1,3 +1,5 @@
+pub mod arbitrary;
+
 use std::path::PathBuf;
 
 use log::debug;
