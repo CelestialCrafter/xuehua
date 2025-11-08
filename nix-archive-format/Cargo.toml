@@ -1,0 +1,12 @@
+[package]
+name = "nix-archive-format"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arbitrary = "1.4.2"
+log.workspace = true
+thiserror = "2.0.17"
+
+[dev-dependencies]
+arbtest = "0.3.2"
