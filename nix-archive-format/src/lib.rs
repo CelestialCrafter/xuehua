@@ -1,5 +1,68 @@
-// TODO: deny unsafe and undocumented
 // TODO: maybe include testing blobs in src control
+// TODO: inline tiny functions
+
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
+
+//! Minimal streaming encoder and decoder for the Nix Archive Format.
+//!
+//! The format specification can be found [here](https://nix.dev/manual/nix/2.25/protocols/nix-archive).
+//!
+//! # Caveats
+//!
+//! - Streaming only, no full encoding or decoding will ever exist in this crate
+//! - Unix only\
+//!     Doing things like checking if files are executable or handling symlinks
+//!     are more difficult on windows, and would most likely be handled better
+//!     via external dependencies, which I don't want to add.
+//! - Only UTF-8 encodable paths are supported\
+//!     This shouldn't be an issue because the crate is unix-only, but
+//!     the rationale for this is from [`OsStr::as_encoded_bytes`](std::ffi::OsStr::as_encoded_bytes):
+//!     "As the encoding is unspecified, any sub-slice of bytes that is not valid UTF-8
+//!     should be treated as opaque and only comparable within the same Rust version
+//!     built for the same target platform."
+//!
+//! # Examples
+//!
+//! Encode then decode a stream of NAR [`Event`](crate::state::Event)
+//!
+//! ```rust
+//! use nix_archive_format::{decoding::Decoder, encoding::Encoder, state::Event};
+//!
+//! let content = "hello world!";
+//! let events = vec![
+//!     Event::Header,
+//!     Event::Directory,
+//!     Event::DirectoryEntry {
+//!         name: std::path::PathBuf::from("my-file"),
+//!     },
+//!     Event::Regular {
+//!         executable: true,
+//!         size: content.len() as u64,
+//!     },
+//!     Event::RegularContentChunk(content.as_bytes().to_vec()),
+//!     Event::DirectoryEnd,
+//! ];
+//!
+//! # #[derive(thiserror::Error, Debug)]
+//! # enum Error {
+//! #      #[error(transparent)]
+//! #      DecodeError(#[from] nix_archive_format::decoding::Error),
+//! #      #[error(transparent)]
+//! #      IOError(#[from] std::io::Error)
+//! # }
+//!
+//! // first we encode our events into a buffer (or anything else that impl Write)
+//! let mut encoded = Vec::new();
+//! std::io::copy(&mut Encoder::new(events.iter()), &mut encoded)?;
+//!
+//! // and next we decode the buffer (or anything else that impl Read) back into a list of events!
+//! let decoded = Decoder::new(encoded.as_slice())
+//!     .collect::<Result<Vec<_>, _>>()?;
+//! assert_eq!(events, decoded, "decoded events did not match original");
+//!
+//! Ok::<_, Error>(())
+//! ```
 
 pub mod decoding;
 pub mod encoding;

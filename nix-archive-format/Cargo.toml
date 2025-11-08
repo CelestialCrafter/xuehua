@@ -8,8 +8,8 @@ log = ["dep:log"]
 
 [dependencies]
 arbitrary = "1.4.2"
-log = { workspace = true, optional = true }
 thiserror = "2.0.17"
+log = { workspace = true, optional = true }
 
 [dev-dependencies]
 arbtest = "0.3.2"
