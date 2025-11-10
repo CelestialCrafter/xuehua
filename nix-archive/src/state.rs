@@ -7,7 +7,7 @@
 #[allow(dead_code)]
 pub(crate) mod arbitrary;
 
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 use thiserror::Error;
 
@@ -56,7 +56,7 @@ pub enum Event {
     /// The next event must be an object
     DirectoryEntry {
         /// The basename of the entry
-        name: PathBuf,
+        name: OsString,
     },
     /// The end of a directory object
     DirectoryEnd,

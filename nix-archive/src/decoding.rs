@@ -18,7 +18,7 @@
 //! # Ok::<_, nix_archive::decoding::Error>(())
 //! ```
 
-use std::{fmt::Debug, io, num::TryFromIntError, path::PathBuf, string::FromUtf8Error};
+use std::{ffi::OsString, fmt::Debug, io, num::TryFromIntError, os::unix::ffi::OsStringExt, path::PathBuf, string::FromUtf8Error};
 
 use thiserror::Error;
 
@@ -93,8 +93,6 @@ impl<R: io::Read> Decoder<R> {
 
     /// Decodes an individual event from the underlying reader
     pub fn decode(&mut self) -> Result<Event, Error> {
-        let bytes_to_path = |bytes| String::from_utf8(bytes).map(PathBuf::from);
-
         let frame = self.state.peek()?;
         debug!("decoding event with {frame:?} context frame ");
 
@@ -127,7 +125,7 @@ impl<R: io::Read> Decoder<R> {
                     b"symlink" => {
                         self.expect("target")?;
                         Event::Symlink {
-                            target: bytes_to_path(self.string()?)?,
+                            target: String::from_utf8(self.string()?).map(PathBuf::from)?,
                         }
                     }
                     b"directory" => Event::Directory,
@@ -139,7 +137,7 @@ impl<R: io::Read> Decoder<R> {
                     self.lookahead = None;
                     self.expect("(")?;
                     self.expect("name")?;
-                    let name = bytes_to_path(self.string()?)?;
+                    let name = OsString::from_vec(self.string()?);
                     self.expect("node")?;
 
                     Event::DirectoryEntry { name }

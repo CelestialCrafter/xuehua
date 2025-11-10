@@ -30,7 +30,7 @@
 //!     Event::Header,
 //!     Event::Directory,
 //!     Event::DirectoryEntry {
-//!         name: std::path::PathBuf::from("my-file"),
+//!         name: std::ffi::OsString::from("my-file"),
 //!     },
 //!     Event::Regular {
 //!         executable: true,
@@ -62,6 +62,8 @@
 
 pub mod decoding;
 pub mod encoding;
+mod filesystem;
+pub use filesystem::*;
 pub mod state;
 
 #[allow(dead_code)]
