@@ -12,7 +12,7 @@
 //!     Event::Header,
 //!     Event::Directory,
 //!     Event::DirectoryEntry {
-//!         name: std::path::PathBuf::from("my-file"),
+//!         name: std::ffi::OsString::from("my-file"),
 //!     },
 //!     Event::Regular {
 //!         executable: true,
@@ -27,11 +27,7 @@
 //! # Ok::<_, nix_archive::encoding::Error>(())
 //! ```
 
-use std::{
-    io,
-    path::Path,
-    str::Utf8Error,
-};
+use std::{io, str::Utf8Error};
 
 use thiserror::Error;
 
@@ -62,11 +58,6 @@ pub enum Error {
 pub struct Encoder<W> {
     state: CoderState,
     writer: W,
-}
-
-#[inline]
-fn path_to_str(path: &Path) -> Result<&str, Utf8Error> {
-    str::from_utf8(path.as_os_str().as_encoded_bytes())
 }
 
 impl<'a, W: io::Write> Encoder<W> {
@@ -109,7 +100,7 @@ impl<'a, W: io::Write> Encoder<W> {
                 self.string("type")?;
                 self.string("symlink")?;
                 self.string("target")?;
-                self.string(path_to_str(target)?)?;
+                self.string(str::from_utf8(target.as_os_str().as_encoded_bytes())?)?;
             }
             Event::Directory => {
                 self.string("(")?;
@@ -120,7 +111,7 @@ impl<'a, W: io::Write> Encoder<W> {
                 self.string("entry")?;
                 self.string("(")?;
                 self.string("name")?;
-                self.string(path_to_str(name)?)?;
+                self.string(str::from_utf8(name.as_encoded_bytes())?)?;
                 self.string("node")?;
             }
             Event::DirectoryEnd => (),
