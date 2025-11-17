@@ -1,0 +1,28 @@
+name: Test workspace
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test workspace
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+          - beta
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update ${{ matrix.toolchain }}
+      - run: rustup default ${{ matrix.toolchain }}
+      - run: cargo install cargo-hack
+      - run: cargo hack --each-feature --verbose test
