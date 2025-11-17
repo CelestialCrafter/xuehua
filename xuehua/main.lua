@@ -1,4 +1,4 @@
-local utils = require("xuehua.utils")
+local planner = require("xuehua.planner")
 local ns = planner.namespace
 
 ns:scope("alpine", function()
@@ -10,6 +10,8 @@ ns:scope("alpine", function()
       return {
         metadata = {},
         build = function()
+          local executors = require("xuehua.executors")
+
           executors.http:dispatch(executors.http.create({
             url = string.format("https://dl-cdn.alpinelinux.org/v%s/releases/%s/alpine-minirootfs-%s-%s.tar.gz",
               opts.release, opts.arch, opts.version, opts.arch),
