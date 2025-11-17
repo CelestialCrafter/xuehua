@@ -4,6 +4,7 @@
 //! but if you do need stuff from this module,
 //! you probably want [`Event`] or [`enum@Error`]
 
+#[allow(dead_code)]
 pub(crate) mod arbitrary;
 
 use std::path::PathBuf;
@@ -80,20 +81,24 @@ pub(crate) struct CoderState {
 }
 
 impl CoderState {
+    #[inline]
     pub fn new() -> Self {
         Self {
             stack: vec![StackFrame::Header],
         }
     }
 
+    #[inline]
     pub fn finished(&self) -> bool {
         self.stack.is_empty()
     }
 
+    #[inline]
     pub fn peek(&self) -> Result<StackFrame, Error> {
         self.stack.last().ok_or(Error::Finished).copied()
     }
 
+    #[inline]
     fn deconstruct(&mut self, actions: &mut Vec<StackFrame>, expected: StackFrame) {
         let frame = self.stack.pop().expect("stack should not be empty");
         debug!("deconstructing frame: {frame:?}");
@@ -101,11 +106,13 @@ impl CoderState {
         actions.push(frame);
     }
 
+    #[inline]
     fn construct(&mut self, frame: StackFrame) {
         debug!("constructing frame: {frame:?}");
         self.stack.push(frame);
     }
 
+    #[inline]
     fn post_object(&mut self, actions: &mut Vec<StackFrame>) {
         self.deconstruct(actions, StackFrame::Object);
         if let Some(StackFrame::DirectoryEntry) = self.stack.last() {

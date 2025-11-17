@@ -93,12 +93,14 @@ impl<'a, I: Iterator<Item = &'a Event>> io::Read for Encoder<I> {
     }
 }
 
+#[inline]
 fn path_to_str(path: &Path) -> Result<&str, Utf8Error> {
     str::from_utf8(path.as_os_str().as_encoded_bytes())
 }
 
 impl<'a, I: Iterator<Item = &'a Event>> Encoder<I> {
     /// Constructs a new [`Encoder`] from an [`Iterator`] of [`Events`](Event)
+    #[inline]
     pub fn new(events: I) -> Self {
         Self {
             events,
@@ -160,16 +162,19 @@ impl<'a, I: Iterator<Item = &'a Event>> Encoder<I> {
         Ok(())
     }
 
+    #[inline]
     fn padding(&mut self, strlen: u64) {
         let padding = calculate_padding(strlen);
         trace!("writing {padding} bytes of padding");
         self.buffer.extend(repeat(0).take(padding));
     }
 
+    #[inline]
     fn integer(&mut self, value: u64) {
         self.buffer.extend_from_slice(&value.to_le_bytes());
     }
 
+    #[inline]
     fn string(&mut self, value: impl AsRef<[u8]>) {
         let data = value.as_ref();
         let len = data.len() as u64;

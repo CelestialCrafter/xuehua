@@ -5,7 +5,6 @@ use arbitrary::Arbitrary;
 use crate::state::Event;
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct ArbitraryObject(pub Vec<Event>);
 
 impl Arbitrary<'_> for ArbitraryObject {
@@ -52,10 +51,10 @@ impl Arbitrary<'_> for ArbitraryObject {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct ArbitraryNar(pub Vec<Event>);
 
 impl Arbitrary<'_> for ArbitraryNar {
+    #[inline]
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> Result<Self, arbitrary::Error> {
         let mut events = Vec::with_capacity(1);
         events.push(Event::Header);

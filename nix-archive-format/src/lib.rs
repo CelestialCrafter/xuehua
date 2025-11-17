@@ -1,5 +1,5 @@
 // TODO: maybe include testing blobs in src control
-// TODO: inline tiny functions
+// TODO: think of an ergonomic way to do zero-alloc coding
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]

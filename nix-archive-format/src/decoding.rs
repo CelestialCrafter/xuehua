@@ -55,6 +55,7 @@ pub enum Error {
     CoderError(#[from] CoderStateError),
 }
 
+#[inline]
 fn unexpected(expected: &str, found: &[u8]) -> Error {
     Error::UnexpectedToken {
         expected: format!("{:?}", expected),
@@ -73,6 +74,7 @@ pub struct Decoder<R> {
 impl<R: io::Read> Iterator for Decoder<R> {
     type Item = Result<Event, Error>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         (!self.state.finished()).then(|| self.decode())
     }
@@ -80,6 +82,7 @@ impl<R: io::Read> Iterator for Decoder<R> {
 
 impl<R: io::Read> Decoder<R> {
     /// Constructs a new [`Decoder`] from something that implements [`Read`](io::Read)
+    #[inline]
     pub fn new(reader: R) -> Self {
         Self {
             state: CoderState::new(),
@@ -146,6 +149,7 @@ impl<R: io::Read> Decoder<R> {
                 unreachable!("directory entry stack frame should not be reachable")
             }
             StackFrame::RegularData { expected, written } => {
+                // NOTE: ensure MAX_CHUNK_SIZE never goes above usize::MAX
                 const MAX_CHUNK_SIZE: u64 = 4 * 1024;
 
                 let mut buffer = vec![0; (expected - written).min(MAX_CHUNK_SIZE) as usize];
@@ -168,12 +172,14 @@ impl<R: io::Read> Decoder<R> {
         Ok(event)
     }
 
+    #[inline]
     fn expect(&mut self, expect: &str) -> Result<(), Error> {
         let found = self.string()?;
         trace!(
             "verifying that {expect:?} equals {:?}",
             String::from_utf8_lossy(&found)
         );
+
         if expect.as_bytes() != found {
             Err(unexpected(expect, &found))
         } else {
@@ -181,6 +187,7 @@ impl<R: io::Read> Decoder<R> {
         }
     }
 
+    #[inline]
     fn padding(&mut self, strlen: u64) -> Result<(), Error> {
         let padding = calculate_padding(strlen);
         trace!("discarding {padding} bytes of padding");
@@ -195,6 +202,7 @@ impl<R: io::Read> Decoder<R> {
         }
     }
 
+    #[inline]
     fn integer(&mut self) -> Result<u64, Error> {
         let mut len = [0; size_of::<u64>()];
         self.reader.read_exact(&mut len)?;
@@ -215,6 +223,7 @@ impl<R: io::Read> Decoder<R> {
         Ok(Some(self.lookahead.as_ref().unwrap()))
     }
 
+    #[inline]
     fn string(&mut self) -> Result<Vec<u8>, Error> {
         match self.lookahead.take() {
             Some(v) => Ok(v),
