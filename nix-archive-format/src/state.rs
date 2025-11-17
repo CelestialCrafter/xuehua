@@ -2,8 +2,9 @@ pub mod arbitrary;
 
 use std::path::PathBuf;
 
-use log::debug;
 use thiserror::Error;
+
+use crate::utils::log::debug;
 
 #[derive(Error, Debug)]
 pub enum Error {
