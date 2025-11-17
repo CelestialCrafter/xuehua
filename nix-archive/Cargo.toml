@@ -2,6 +2,11 @@
 name = "nix-archive"
 version = "0.1.0"
 edition = "2024"
+description = "Minimal encoder and decoder for the Nix Archive Format"
+repository = "https://github.com/CelestialCrafter/xuehua"
+license = "MPL-2.0"
+keywords = ["nix", "nar", "archive", "encoding", "decoding"]
+categories = ["encoding", "parser-implementations"]
 
 [features]
 log = ["dep:log"]
