@@ -2,7 +2,7 @@ pub mod passthru;
 
 use std::{fs, io, path::Path};
 
-use mlua::{Function, Lua, chunk};
+use mlua::{AnyUserData, Function, Lua, MetaMethod, Table, chunk};
 
 pub type BoxDynError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -32,6 +32,29 @@ macro_rules! impl_into_err {
             })*
         }
     };
+}
+
+pub fn register_local_module(
+    lua: &Lua,
+    name: &str,
+    table: &'static str,
+) -> Result<(), mlua::Error> {
+    let metatable = lua.create_table()?;
+    metatable.set(
+        MetaMethod::Index.name(),
+        lua.create_function(move |lua, (_, executor): (Table, String)| {
+            lua.globals()
+                .get::<Table>(table)?
+                .get::<AnyUserData>(executor)
+        })?,
+    )?;
+
+    let table = lua.create_table()?;
+    table.set_metatable(Some(metatable))?;
+
+    lua.register_module(name, table)?;
+
+    Ok(())
 }
 
 pub fn ensure_dir(path: &Path) -> io::Result<()> {

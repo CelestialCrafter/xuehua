@@ -1,12 +1,22 @@
-use std::{fmt::Debug, fs, io, path::Path, sync::Arc};
+use std::{
+    any::Any,
+    fmt::Debug,
+    fs, io,
+    path::Path,
+    sync::{Arc, Weak},
+};
 
 use log::trace;
 use mlua::{AnyUserData, ExternalResult, FromLua, IntoLua, Lua, UserData};
 use petgraph::graph::NodeIndex;
 use thiserror::Error;
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Semaphore};
 
-use crate::{executor::Executor, package::Package, utils::BoxDynError};
+use crate::{
+    executor::Executor,
+    package::Package,
+    utils::{BoxDynError, register_local_module},
+};
 
 pub struct BuildInfo {
     pub node: NodeIndex,
@@ -15,24 +25,26 @@ pub struct BuildInfo {
     pub buildtime: Vec<NodeIndex>,
 }
 
-pub struct LuaExecutor<E>(Arc<Semaphore>, E);
+pub struct LuaExecutor<E>(Weak<(Semaphore, Mutex<E>)>);
 
 impl<E> UserData for LuaExecutor<E>
 where
-    E: Executor + Send + 'static,
+    E: Executor + Send + Sync + 'static,
     E::Request: FromLua + IntoLua + Debug + Send,
     E::Response: IntoLua + Debug,
 {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_function("create", |lua, value| E::Request::from_lua(value, lua));
 
-        methods.add_async_method_mut("dispatch", async |_, mut this, request: AnyUserData| {
-            let semaphore = this.0.clone();
-            let _permit = semaphore.acquire().await.into_lua_err()?;
-            let request = request.take()?;
+        methods.add_async_method_mut("dispatch", async |_, this, request: AnyUserData| {
+            let data = this.0.upgrade().ok_or(mlua::Error::UserDataDestructed)?;
+            let mut executor = data.1.lock().await;
 
+            let _permit = data.0.acquire().await.into_lua_err()?;
+
+            let request = request.take()?;
             trace!("dispatching request: {request:?}");
-            let response = this.1.dispatch(request).await.into_lua_err();
+            let response = executor.dispatch(request).await.into_lua_err();
             trace!("received response: {response:?}");
 
             response
@@ -47,7 +59,7 @@ pub enum Error {
     #[error(transparent)]
     LuaError(#[from] mlua::Error),
     #[error(transparent)]
-    ExternalError(#[from] BoxDynError)
+    ExternalError(#[from] BoxDynError),
 }
 
 pub struct Builder<'a> {
@@ -55,7 +67,7 @@ pub struct Builder<'a> {
     lua: &'a Lua,
     executors: Vec<(
         String,
-        Box<dyn Fn(&Lua, Arc<Path>) -> Result<AnyUserData, Error>>,
+        Box<dyn Fn(&Lua, Arc<Path>) -> Result<(Arc<dyn Any>, AnyUserData), Error>>,
     )>,
 }
 
@@ -68,18 +80,26 @@ impl<'a> Builder<'a> {
         }
     }
 
+    pub fn register_module(lua: &Lua) -> Result<(), mlua::Error> {
+        register_local_module(lua, "xuehua.executors", "__executors")
+    }
+
     pub fn register<F, E>(mut self, name: String, concurrent: usize, func: F) -> Self
     where
         F: Fn(Arc<Path>) -> Result<E, Error> + 'static,
-        E: Executor + Send + 'static,
+        E: Executor + Send + Sync + 'static,
         E::Request: FromLua + IntoLua + Send + Debug,
         E::Response: IntoLua + Send + Debug,
     {
         let wrapped = move |lua: &Lua, environment| {
-            let executor = func(environment)?;
-            let semaphore = Arc::new(Semaphore::new(concurrent));
-            let executor = lua.create_userdata(LuaExecutor(semaphore, executor))?;
-            Ok(executor)
+            let executor = Mutex::new(func(environment)?);
+            let semaphore = Semaphore::new(concurrent);
+
+            let data = Arc::new((semaphore, executor));
+            let weak = Arc::downgrade(&data);
+
+            let executor = lua.create_userdata(LuaExecutor(weak))?;
+            Ok((data as Arc<dyn Any>, executor))
         };
 
         self.executors.push((name, Box::new(wrapped)));
@@ -94,26 +114,25 @@ impl<'a> Builder<'a> {
 
         // register executors
         let environment: Arc<Path> = Arc::from(environment);
-        let executors = self.lua.create_table_from(
-            self.executors
-                .iter()
-                .map(|(name, func)| {
-                    let executor = func(self.lua, environment.clone())?;
-                    Ok((name.clone(), executor))
-                })
-                .collect::<Result<Vec<_>, Error>>()?,
-        )?;
+        let (_handles, executors): (Vec<_>, Vec<_>) = self
+            .executors
+            .iter()
+            .map(|(name, func)| {
+                let (handle, executor) = func(self.lua, environment.clone())?;
+                Ok((handle, (name.clone(), executor)))
+            })
+            .collect::<Result<Vec<_>, Error>>()?
+            .into_iter()
+            .unzip();
+        let executors = self.lua.create_table_from(executors)?;
 
         let func = info.package.build();
         if let Some(environment) = func.environment() {
-            environment.set("executors", &executors)?;
+            environment.set("__executors", &executors)?;
         }
 
         // build pkg
         func.call_async::<()>(()).await?;
-
-        // cleanup
-        executors.for_each::<String, AnyUserData>(|_, executor| executor.destroy())?;
 
         Ok(())
     }

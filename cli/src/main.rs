@@ -89,6 +89,8 @@ async fn main() -> Result<()> {
     match &opts.cli.action {
         Action::Build { packages, .. } => {
             let (lua, planner) = populate_lua(&opts.cli.project)?;
+            Builder::register_module(&lua)?;
+
             let nodes = resolve_many(&planner, packages)?;
 
             // run builder
@@ -176,6 +178,7 @@ fn populate_lua(location: &Path) -> Result<(mlua::Lua, Planner)> {
     // register apis
     logger::register_module(&lua)?;
     utils::register_module(&lua)?;
+    Planner::register_module(&lua)?;
 
     // run planner
     let mut planner = Planner::new();
@@ -184,7 +187,7 @@ fn populate_lua(location: &Path) -> Result<(mlua::Lua, Planner)> {
         let environment = chunk
             .environment()
             .ok_or(mlua::Error::external("chunk does not have an environment"))?;
-        environment.set("planner", scope.create_userdata_ref_mut(&mut planner)?)?;
+        environment.set("__planner", scope.create_userdata_ref_mut(&mut planner)?)?;
 
         chunk.call::<()>(())
     })?;

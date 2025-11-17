@@ -16,7 +16,10 @@ use petgraph::{
 };
 use thiserror::Error;
 
-use crate::package::{LinkTime, Package, PackageId};
+use crate::{
+    package::{LinkTime, Package, PackageId},
+    utils::register_local_module,
+};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -151,6 +154,10 @@ impl Planner {
 
     pub fn into_inner(self) -> Plan {
         self.plan
+    }
+
+    pub fn register_module(lua: &Lua) -> Result<(), mlua::Error> {
+        register_local_module(lua, "xuehua.planner", "__planner")
     }
 
     pub fn configure(
