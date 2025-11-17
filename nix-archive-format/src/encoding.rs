@@ -1,6 +1,8 @@
 use std::{
     io::{self, Write},
     iter::repeat,
+    path::Path,
+    str::Utf8Error,
 };
 
 use thiserror::Error;
@@ -17,6 +19,8 @@ use crate::{
 pub enum Error {
     #[error(transparent)]
     CoderError(#[from] CoderStateError),
+    #[error(transparent)]
+    Utf8Error(#[from] Utf8Error),
 }
 
 #[derive(Debug)]
@@ -46,6 +50,10 @@ impl<'a, I: Iterator<Item = &'a Event>> io::Read for Encoder<I> {
         self.position += n;
         Ok(n)
     }
+}
+
+fn path_to_str(path: &Path) -> Result<&str, Utf8Error> {
+    str::from_utf8(path.as_os_str().as_encoded_bytes())
 }
 
 impl<'a, I: Iterator<Item = &'a Event>> Encoder<I> {
@@ -82,7 +90,7 @@ impl<'a, I: Iterator<Item = &'a Event>> Encoder<I> {
                 self.string("type");
                 self.string("symlink");
                 self.string("target");
-                self.string(target.as_os_str().as_encoded_bytes());
+                self.string(path_to_str(target)?);
             }
             Event::Directory => {
                 self.string("(");
@@ -93,7 +101,7 @@ impl<'a, I: Iterator<Item = &'a Event>> Encoder<I> {
                 self.string("entry");
                 self.string("(");
                 self.string("name");
-                self.string(name.as_os_str().as_encoded_bytes());
+                self.string(path_to_str(name)?);
                 self.string("node");
             }
             Event::DirectoryEnd => (),
