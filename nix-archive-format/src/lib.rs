@@ -1,10 +1,13 @@
-// TODO: make logging an optional feature
 // TODO: deny unsafe and undocumented
 // TODO: maybe include testing blobs in src control
 
 pub mod decoding;
 pub mod encoding;
 pub mod state;
+
+#[allow(dead_code)]
+#[allow(unused_macros)]
+#[allow(unused_imports)]
 pub(crate) mod utils;
 
 #[cfg(test)]
@@ -13,11 +16,12 @@ mod tests {
 
     use arbitrary::Arbitrary;
     use arbtest::arbtest;
-    use log::info;
 
     use crate::{
-        decoding::Decoder, encoding::Encoder, state::Event, state::arbitrary::ArbitraryNar,
-        utils::TestingLogger,
+        decoding::Decoder,
+        encoding::Encoder,
+        state::{Event, arbitrary::ArbitraryNar},
+        utils::log::{TestingLogger, info},
     };
 
     // collapses multiple chunk events so comparing equality between

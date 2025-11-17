@@ -3,12 +3,14 @@ use std::{
     iter::repeat,
 };
 
-use log::{debug, trace};
 use thiserror::Error;
 
 use crate::{
     state::{CoderState, Error as CoderStateError, Event, StackFrame},
-    utils::calculate_padding,
+    utils::{
+        calculate_padding,
+        log::{debug, trace},
+    },
 };
 
 #[derive(Error, Debug)]

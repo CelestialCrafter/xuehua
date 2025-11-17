@@ -2,12 +2,14 @@ use std::{
     ffi::OsString, fmt::Debug, io, num::TryFromIntError, os::unix::ffi::OsStringExt, str::Utf8Error,
 };
 
-use log::{debug, trace};
 use thiserror::Error;
 
 use crate::{
     state::{CoderState, Error as CoderStateError, Event, StackFrame},
-    utils::{PADDING, calculate_padding},
+    utils::{
+        PADDING, calculate_padding,
+        log::{debug, trace},
+    },
 };
 
 #[derive(Error, Debug)]
