@@ -1,6 +1,6 @@
 [package]
 name = "nix-archive"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 description = "Minimal encoder and decoder for the Nix Archive Format"
 repository = "https://github.com/CelestialCrafter/xuehua"
