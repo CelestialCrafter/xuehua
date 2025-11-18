@@ -3,7 +3,6 @@
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
-
 #![doc = include_str!("../README.md")]
 //! ## Caveats
 //!
@@ -46,12 +45,12 @@
 //! #      #[error(transparent)]
 //! #      DecodeError(#[from] nix_archive::decoding::Error),
 //! #      #[error(transparent)]
-//! #      IOError(#[from] std::io::Error)
+//! #      EncodeError(#[from] nix_archive::encoding::Error)
 //! # }
 //!
 //! // first we encode our events into a buffer (or anything else that impl Write)
 //! let mut encoded = Vec::new();
-//! std::io::copy(&mut Encoder::new(events.iter()), &mut encoded)?;
+//! Encoder::new(&mut encoded).copy(events.iter())?;
 //!
 //! // and next we decode the buffer (or anything else that impl Read) back into a list of events!
 //! let decoded = Decoder::new(encoded.as_slice())
@@ -72,8 +71,6 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
-
     use arbitrary::Arbitrary;
     use arbtest::arbtest;
 
@@ -111,12 +108,12 @@ mod tests {
         let decoded = Decoder::new(contents)
             .collect::<Result<Vec<_>, _>>()
             .expect("decoding should not fail");
-        let decoded = chunk_collapse(decoded);
+        let events = chunk_collapse(decoded);
         info!("decoder output: {:#?}", decoded);
 
         let mut encoded = Vec::new();
-        Encoder::new(decoded.iter())
-            .read_to_end(&mut encoded)
+        Encoder::new(&mut encoded)
+            .copy(events.iter())
             .expect("encoding should not fail");
         info!("encoder output: {:?}", encoded);
 
@@ -152,8 +149,8 @@ mod tests {
             info!("event stream: {:#?}", events);
 
             let mut encoded = Vec::new();
-            Encoder::new(events.iter())
-                .read_to_end(&mut encoded)
+            Encoder::new(&mut encoded)
+                .copy(events.iter())
                 .expect("encoding should not fail");
             info!("encoder output: {:?}", encoded);
 
