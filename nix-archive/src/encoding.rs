@@ -1,13 +1,5 @@
 //! Encoder for NAR data streams
 //!
-//! One thing to keep in mind is that [`Encoder`] has an internal buffer,
-//! Which means it will allocate as much memory as needed to contain an event.
-//! This is usually not an issue because:
-//! - All events except for [`Event::RegularContentChunk`]'s are tiny
-//! - The decoder chunks [`Event::RegularContentChunk`] events to a reasonable size
-//!
-//! But if you encode custom event streams, keep this in mind.
-//!
 //! # Examples
 //!
 //! Encoding NAR events to a NAR file on stdout
@@ -30,14 +22,13 @@
 //!     Event::DirectoryEnd,
 //! ];
 //!
-//! std::io::copy(&mut Encoder::new(events.iter()), &mut std::io::stdout())?;
+//! Encoder::new(std::io::stdout()).copy(events.iter())?;
 //!
-//! # Ok::<_, std::io::Error>(())
+//! # Ok::<_, nix_archive::encoding::Error>(())
 //! ```
 
 use std::{
-    io::{self, Write},
-    iter::repeat,
+    io,
     path::Path,
     str::Utf8Error,
 };
@@ -47,7 +38,7 @@ use thiserror::Error;
 use crate::{
     state::{CoderState, Error as CoderStateError, Event, StackFrame},
     utils::{
-        calculate_padding,
+        PADDING, calculate_padding,
         log::{debug, trace},
     },
 };
@@ -78,7 +69,7 @@ fn path_to_str(path: &Path) -> Result<&str, Utf8Error> {
     str::from_utf8(path.as_os_str().as_encoded_bytes())
 }
 
-impl<'a, W: Write> Encoder<W> {
+impl<'a, W: io::Write> Encoder<W> {
     /// Constructs a new [`Encoder`] from an [`Iterator`] of [`Events`](Event)
     #[inline]
     pub fn new(writer: W) -> Self {
@@ -150,8 +141,9 @@ impl<'a, W: Write> Encoder<W> {
     fn padding(&mut self, strlen: u64) -> Result<(), io::Error> {
         let padding = calculate_padding(strlen);
         trace!("writing {padding} bytes of padding");
-        self.writer
-            .write_all(&repeat(0).take(padding).collect::<Vec<_>>())
+
+        let buffer = [0; PADDING];
+        self.writer.write_all(&buffer[..padding])
     }
 
     #[inline]
