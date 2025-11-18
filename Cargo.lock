@@ -552,7 +552,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nix-archive-format"
+name = "nix-archive"
 version = "0.1.0"
 dependencies = [
  "arbitrary",

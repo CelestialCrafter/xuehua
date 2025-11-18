@@ -9,13 +9,13 @@
 //! Decoding a NAR file from stdin into events on stderr
 //!
 //! ```rust,no_run
-//! use nix_archive_format::decoding::Decoder;
+//! use nix_archive::decoding::Decoder;
 //!
 //! for event in Decoder::new(std::io::stdin()) {
 //!     eprintln!("{:?}", event?);
 //! }
 //!
-//! # Ok::<_, nix_archive_format::decoding::Error>(())
+//! # Ok::<_, nix_archive::decoding::Error>(())
 //! ```
 
 use std::{fmt::Debug, io, num::TryFromIntError, path::PathBuf, string::FromUtf8Error};

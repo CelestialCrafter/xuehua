@@ -27,7 +27,7 @@
 //! Encode then decode a stream of NAR [`Event`](crate::state::Event)
 //!
 //! ```rust
-//! use nix_archive_format::{decoding::Decoder, encoding::Encoder, state::Event};
+//! use nix_archive::{decoding::Decoder, encoding::Encoder, state::Event};
 //!
 //! let content = "hello world!";
 //! let events = vec![
@@ -47,7 +47,7 @@
 //! # #[derive(thiserror::Error, Debug)]
 //! # enum Error {
 //! #      #[error(transparent)]
-//! #      DecodeError(#[from] nix_archive_format::decoding::Error),
+//! #      DecodeError(#[from] nix_archive::decoding::Error),
 //! #      #[error(transparent)]
 //! #      IOError(#[from] std::io::Error)
 //! # }
