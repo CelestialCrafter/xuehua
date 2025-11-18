@@ -4,11 +4,8 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
-//! Minimal streaming encoder and decoder for the Nix Archive Format.
-//!
-//! The format specification can be found [here](https://nix.dev/manual/nix/2.25/protocols/nix-archive).
-//!
-//! # Caveats
+#![doc = include_str!("../README.md")]
+//! ## Caveats
 //!
 //! - Streaming only, no full encoding or decoding will ever exist in this crate
 //! - Unix only\
@@ -22,7 +19,7 @@
 //!     should be treated as opaque and only comparable within the same Rust version
 //!     built for the same target platform."
 //!
-//! # Examples
+//! ## Examples
 //!
 //! Encode then decode a stream of NAR [`Event`](crate::state::Event)
 //!
@@ -59,9 +56,9 @@
 //! // and next we decode the buffer (or anything else that impl Read) back into a list of events!
 //! let decoded = Decoder::new(encoded.as_slice())
 //!     .collect::<Result<Vec<_>, _>>()?;
-//! assert_eq!(events, decoded, "decoded events did not match original");
 //!
-//! Ok::<_, Error>(())
+//! assert_eq!(events, decoded, "decoded events did not match original");
+//! # Ok::<_, Error>(())
 //! ```
 
 pub mod decoding;
