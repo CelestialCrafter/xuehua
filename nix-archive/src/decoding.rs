@@ -91,7 +91,8 @@ impl<R: io::Read> Decoder<R> {
         }
     }
 
-    fn decode(&mut self) -> Result<Event, Error> {
+    /// Decodes an individual event from the underlying reader
+    pub fn decode(&mut self) -> Result<Event, Error> {
         let bytes_to_path = |bytes| String::from_utf8(bytes).map(PathBuf::from);
 
         let frame = self.state.peek()?;
