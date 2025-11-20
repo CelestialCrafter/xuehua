@@ -18,8 +18,8 @@ pub enum Error {
     #[error("validation has finished")]
     Finished,
     /// The processed event was invalid for the current parse state
-    #[error("unexpected event {1:?} in state {0:?}")]
-    Unexpected(StackFrame, Event),
+    #[error("unexpected event {0:?} in state {1:?}")]
+    Unexpected(Event, StackFrame),
 }
 
 /// A frame of the validator's internal stack
@@ -85,7 +85,7 @@ impl EventValidator {
 
         let mut deconstructed = vec![];
         let frame = *self.stack.last().ok_or(Error::Finished)?;
-        let unexpected = || Err(Error::Unexpected(frame, event.clone()));
+        let unexpected = || Err(Error::Unexpected(event.clone(), frame));
 
         match (frame, event) {
             (StackFrame::Header, Event::Header) => {
@@ -103,9 +103,6 @@ impl EventValidator {
                     };
 
                     self.construct(regular);
-                    // ensure at least 1 regular chunk is emitted
-                    // to properly handle ending regular objects
-                    deconstructed.extend(self.advance(&Event::RegularContentChunk(vec![]))?);
                 }
                 Event::Symlink { .. } => self.post_object(&mut deconstructed),
                 Event::Directory => self.construct(StackFrame::Directory),
@@ -122,7 +119,7 @@ impl EventValidator {
             (StackFrame::RegularData { expected, written }, Event::RegularContentChunk(chunk)) => {
                 let written = written + chunk.len() as u64;
 
-                let frame = self.stack.pop().unwrap();
+                let frame = self.stack.pop().expect("stack frame should exist");
                 if expected == written {
                     debug!("deconstructing frame: {frame:?}");
                     deconstructed.push(frame);

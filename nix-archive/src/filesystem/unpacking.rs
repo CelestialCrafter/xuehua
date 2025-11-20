@@ -16,24 +16,33 @@
 //! #     UnpackError(#[from] nix_archive::unpacking::Error),
 //! # }
 //!
-//! let events = Decoder::new(std::io::stdin())
+//! let events = Decoder::new()
+//!     .decode_reader(std::io::stdin())
 //!     .collect::<Result<Vec<_>, _>>()?;
 //! let output = std::env::current_dir()?.join("unpacked");
-//! Unpacker::default().unpack(output, events.iter())?;
+//! Unpacker::default().unpack(output, events)?;
 //!
 //! # Ok::<_, Error>(())
 //! ```
 
 use std::{
-    fs::{File, create_dir},
+    borrow::Borrow,
+    ffi::OsStr,
+    fs::{File, Permissions, create_dir},
     io::{Error as IOError, Write},
-    os::unix::fs::{PermissionsExt, symlink},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{PermissionsExt, symlink},
+    },
     path::{Component, Path, PathBuf},
 };
 
 use thiserror::Error;
 
-use crate::{Event, validation::{Error as ValidationError, EventValidator}};
+use crate::{
+    Event,
+    validation::{Error as ValidationError, EventValidator},
+};
 
 // TODO: use std's normalize_lexically if/when it becomes stable
 // NOTE: vendored from std at 1.91.1 ed61e7d7e 2025-11-07
@@ -143,12 +152,13 @@ impl Unpacker {
     }
 
     /// Applies an iterator of [Events](Event) onto the filesystem
-    pub fn unpack<'a>(
+    pub fn unpack(
         &self,
         root: PathBuf,
-        mut events: impl Iterator<Item = &'a Event>,
+        events: impl IntoIterator<Item = impl Borrow<Event>>,
     ) -> Result<(), Error> {
         events
+            .into_iter()
             .try_fold(
                 State {
                     path: root.clone(),
@@ -156,6 +166,7 @@ impl Unpacker {
                     validator: EventValidator::new(),
                 },
                 |mut state, event| {
+                    let event = event.borrow();
                     state.validator.advance(event)?;
 
                     // allow the file to be dropped since we dont need it anymore
@@ -168,25 +179,27 @@ impl Unpacker {
                         Event::Header => (),
                         Event::Regular { executable, size } => {
                             let file = File::create_new(&state.path)?;
+
                             file.set_len(*size)?;
-                            if *executable {
-                                let mut permissions = file.metadata()?.permissions();
-                                permissions.set_mode(permissions.mode() | 0o111);
-                                file.set_permissions(permissions)?;
-                            }
+                            file.set_permissions(Permissions::from_mode(if *executable {
+                                0o755
+                            } else {
+                                0o644
+                            }))?;
 
                             state.file = Some(file);
                             state.path.pop();
                         }
                         Event::RegularContentChunk(data) => {
                             let Some(ref mut file) = state.file else {
-                                unreachable!("frame was not regular during content chunk");
+                                panic!("file was None during content chunk");
                             };
 
                             file.write_all(&data)?;
                         }
                         Event::Symlink { target } => {
-                            if self.options.symlink_escape_root && escapes_root(&root, target) {
+                            let target = Path::new(OsStr::from_bytes(&target));
+                            if !self.options.symlink_escape_root && escapes_root(&root, target) {
                                 return Err(Error::AttemptedEscape(target.to_path_buf()));
                             }
 
@@ -195,8 +208,8 @@ impl Unpacker {
                         }
                         Event::Directory => create_dir(&state.path)?,
                         Event::DirectoryEntry { name } => {
-                            state.path.push(name);
-                            if self.options.path_escape_root && escapes_root(&root, &state.path) {
+                            state.path.push(OsStr::from_bytes(&name));
+                            if !self.options.path_escape_root && escapes_root(&root, &state.path) {
                                 return Err(Error::AttemptedEscape(state.path));
                             }
                         }
