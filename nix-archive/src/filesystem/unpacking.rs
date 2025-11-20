@@ -33,7 +33,7 @@ use std::{
 
 use thiserror::Error;
 
-use crate::state::{self, CoderState, Event};
+use crate::{Event, validation::{Error as ValidationError, EventValidator}};
 
 // TODO: use std's normalize_lexically if/when it becomes stable
 // NOTE: vendored from std at 1.91.1 ed61e7d7e 2025-11-07
@@ -100,9 +100,9 @@ pub enum Error {
     /// A path attempted to traverse outside (or escape from) the root
     #[error("file attempted escape to {0}")]
     AttemptedEscape(PathBuf),
-    /// The internal coder state errored
+    /// The internal validator errored
     #[error(transparent)]
-    CoderStateError(#[from] state::Error),
+    ValidationError(#[from] ValidationError),
     /// Usually due to an error from the filesystem
     #[error(transparent)]
     IOError(#[from] IOError),
@@ -125,7 +125,7 @@ pub struct Options {
 struct State {
     path: PathBuf,
     file: Option<File>,
-    coder: CoderState,
+    validator: EventValidator,
 }
 
 /// "Unpacks" NARs into the filesystem
@@ -153,10 +153,10 @@ impl Unpacker {
                 State {
                     path: root.clone(),
                     file: None,
-                    coder: state::CoderState::new(),
+                    validator: EventValidator::new(),
                 },
                 |mut state, event| {
-                    state.coder.advance(event)?;
+                    state.validator.advance(event)?;
 
                     // allow the file to be dropped since we dont need it anymore
                     match event {

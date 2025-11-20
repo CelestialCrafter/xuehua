@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 
 use arbitrary::Arbitrary;
 
-use crate::state::Event;
+use crate::Event;
 
 #[derive(Debug)]
 pub struct ArbitraryObject(pub Vec<Event>);
