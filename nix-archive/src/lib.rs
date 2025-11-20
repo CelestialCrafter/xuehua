@@ -60,11 +60,11 @@
 //! # Ok::<_, Error>(())
 //! ```
 
-pub mod decoding;
-pub mod encoding;
+pub mod state;
 mod filesystem;
 pub use filesystem::*;
-pub mod state;
+mod coder;
+pub use coder::*;
 
 #[allow(dead_code)]
 #[allow(unused_macros)]
@@ -77,8 +77,8 @@ mod tests {
     use arbtest::arbtest;
 
     use crate::{
-        decoding::Decoder,
-        encoding::Encoder,
+        coder::decoding::Decoder,
+        coder::encoding::Encoder,
         state::{Event, arbitrary::ArbitraryNar},
         utils::log::{TestingLogger, info},
     };
