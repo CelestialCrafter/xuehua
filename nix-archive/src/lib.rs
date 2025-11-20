@@ -20,10 +20,10 @@
 //!
 //! ## Examples
 //!
-//! Encode then decode a stream of NAR [`Event`](crate::state::Event)
+//! Encode then decode a stream of NAR [`Event`](crate::validation::Event)
 //!
 //! ```rust
-//! use nix_archive::{decoding::Decoder, encoding::Encoder, state::Event};
+//! use nix_archive::{decoding::Decoder, encoding::Encoder, Event};
 //!
 //! let content = "hello world!";
 //! let events = vec![
@@ -60,8 +60,10 @@
 //! # Ok::<_, Error>(())
 //! ```
 
-pub mod state;
 mod filesystem;
+pub mod validation;
+use std::{ffi::OsString, path::PathBuf};
+
 pub use filesystem::*;
 mod coder;
 pub use coder::*;
@@ -71,16 +73,55 @@ pub use coder::*;
 #[allow(unused_imports)]
 pub(crate) mod utils;
 
+/// An intermediate event type to describe a NAR file.
+///
+/// This enum loosely describes objects in the [specification](https://nix.dev/manual/nix/2.25/protocols/nix-archive),
+#[derive(Debug, Clone, PartialEq)]
+pub enum Event {
+    /// NAR header ("nix-archive-1")
+    Header,
+    /// Regular file object
+    ///
+    /// Events after this must be [`Event::RegularContentChunk`]'s until the aggregate chunk length matches `size`
+    Regular {
+        /// Whether the file is executable or not
+        executable: bool,
+        /// The size of the file
+        size: u64,
+    },
+    /// A chunk of data corresponding to a Regular object
+    RegularContentChunk(Vec<u8>),
+    /// A symlink file object
+    Symlink {
+        /// The target of the symlink
+        target: PathBuf,
+    },
+    /// The start of a directory object
+    ///
+    /// Only DirectoryEntry or DirectoryEnd events are allowed here
+    Directory,
+    /// An entry in the directory
+    ///
+    /// The next event must be an object
+    DirectoryEntry {
+        /// The basename of the entry
+        name: OsString,
+    },
+    /// The end of a directory object
+    DirectoryEnd,
+}
+
 #[cfg(test)]
 mod tests {
     use arbitrary::Arbitrary;
     use arbtest::arbtest;
 
     use crate::{
+        Event,
         coder::decoding::Decoder,
         coder::encoding::Encoder,
-        state::{Event, arbitrary::ArbitraryNar},
         utils::log::{TestingLogger, info},
+        validation::{arbitrary::ArbitraryNar},
     };
 
     // collapses multiple chunk events so comparing equality between

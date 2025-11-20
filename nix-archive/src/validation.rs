@@ -1,4 +1,4 @@
-//! Internal coder state
+//! Internal event stream validation
 //!
 //! This module is generally only important to the crate's internals,
 //! but if you do need stuff from this module,
@@ -7,62 +7,22 @@
 #[allow(dead_code)]
 pub(crate) mod arbitrary;
 
-use std::{ffi::OsString, path::PathBuf};
-
 use thiserror::Error;
 
-use crate::utils::log::debug;
+use crate::{Event, utils::log::debug};
 
-/// The error type for the internal coder state
+/// The error type for the internal event validator
 #[derive(Error, Debug)]
 pub enum Error {
-    /// The coder has finished, and should've not have received more events
-    #[error("coding has finished")]
+    /// The validator has finished, and should've not have received more events
+    #[error("validation has finished")]
     Finished,
     /// The processed event was invalid for the current parse state
     #[error("unexpected event {1:?} in state {0:?}")]
     Unexpected(StackFrame, Event),
 }
 
-/// An intermediate event type to describe a NAR file.
-///
-/// This enum loosely describes objects in the [specification](https://nix.dev/manual/nix/2.25/protocols/nix-archive),
-#[derive(Debug, Clone, PartialEq)]
-pub enum Event {
-    /// NAR header ("nix-archive-1")
-    Header,
-    /// Regular file object
-    ///
-    /// Events after this must be [`Event::RegularContentChunk`]'s until the aggregate chunk length matches `size`
-    Regular {
-        /// Whether the file is executable or not
-        executable: bool,
-        /// The size of the file
-        size: u64,
-    },
-    /// A chunk of data corresponding to a Regular object
-    RegularContentChunk(Vec<u8>),
-    /// A symlink file object
-    Symlink {
-        /// The target of the symlink
-        target: PathBuf,
-    },
-    /// The start of a directory object
-    ///
-    /// Only DirectoryEntry or DirectoryEnd events are allowed here
-    Directory,
-    /// An entry in the directory
-    ///
-    /// The next event must be an object
-    DirectoryEntry {
-        /// The basename of the entry
-        name: OsString,
-    },
-    /// The end of a directory object
-    DirectoryEnd,
-}
-
-/// A frame of the coder state's internal stack
+/// A frame of the validator's internal stack
 ///
 /// This struct is internal and not be used.It's only public so it can be used in [`enum@Error`].
 #[allow(missing_docs)]
@@ -76,11 +36,11 @@ pub enum StackFrame {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CoderState {
+pub(crate) struct EventValidator {
     stack: Vec<StackFrame>,
 }
 
-impl CoderState {
+impl EventValidator {
     #[inline]
     pub fn new() -> Self {
         Self {
@@ -121,7 +81,7 @@ impl CoderState {
     }
 
     pub fn advance(&mut self, event: &Event) -> Result<Vec<StackFrame>, Error> {
-        debug!("advancing coder state from {:?}", self.stack);
+        debug!("advancing validator from {:?}", self.stack);
 
         let mut deconstructed = vec![];
         let frame = *self.stack.last().ok_or(Error::Finished)?;
