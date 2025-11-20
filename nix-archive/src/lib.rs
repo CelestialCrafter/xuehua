@@ -1,5 +1,6 @@
 // TODO: maybe include testing blobs in src control
-// TODO: think of an ergonomic way to do zero-alloc coding
+// TODO: include tests against `nix nar` in fs packing & unpacking
+// TODO: ensure decoder and encoder have identical apis
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
@@ -30,13 +31,13 @@
 //!     Event::Header,
 //!     Event::Directory,
 //!     Event::DirectoryEntry {
-//!         name: std::ffi::OsString::from("my-file"),
+//!         name: "my-file".as_bytes().into(),
 //!     },
 //!     Event::Regular {
 //!         executable: true,
 //!         size: content.len() as u64,
 //!     },
-//!     Event::RegularContentChunk(content.as_bytes().to_vec()),
+//!     Event::RegularContentChunk(content.as_bytes().into()),
 //!     Event::DirectoryEnd,
 //! ];
 //!
@@ -50,10 +51,11 @@
 //!
 //! // first we encode our events into a buffer (or anything else that impl Write)
 //! let mut encoded = Vec::new();
-//! Encoder::new(&mut encoded).copy(events.iter())?;
+//! Encoder::new(&mut encoded).encode_all(events.iter())?;
 //!
 //! // and next we decode the buffer (or anything else that impl Read) back into a list of events!
-//! let decoded = Decoder::new(encoded.as_slice())
+//! let decoded = Decoder::new()
+//!     .decode_all(&mut encoded.into())
 //!     .collect::<Result<Vec<_>, _>>()?;
 //!
 //! assert_eq!(events, decoded, "decoded events did not match original");
@@ -62,8 +64,8 @@
 
 mod filesystem;
 pub mod validation;
-use std::{ffi::OsString, path::PathBuf};
 
+use bytes::Bytes;
 pub use filesystem::*;
 mod coder;
 pub use coder::*;
@@ -90,11 +92,11 @@ pub enum Event {
         size: u64,
     },
     /// A chunk of data corresponding to a Regular object
-    RegularContentChunk(Vec<u8>),
+    RegularContentChunk(Bytes),
     /// A symlink file object
     Symlink {
         /// The target of the symlink
-        target: PathBuf,
+        target: Bytes,
     },
     /// The start of a directory object
     ///
@@ -105,7 +107,7 @@ pub enum Event {
     /// The next event must be an object
     DirectoryEntry {
         /// The basename of the entry
-        name: OsString,
+        name: Bytes,
     },
     /// The end of a directory object
     DirectoryEnd,
@@ -115,27 +117,33 @@ pub enum Event {
 mod tests {
     use arbitrary::Arbitrary;
     use arbtest::arbtest;
+    use bytes::{Bytes, BytesMut};
 
     use crate::{
         Event,
-        coder::decoding::Decoder,
-        coder::encoding::Encoder,
+        coder::{decoding::Decoder, encoding::Encoder},
         utils::log::{TestingLogger, info},
-        validation::{arbitrary::ArbitraryNar},
+        validation::arbitrary::ArbitraryNar,
     };
 
     // collapses multiple chunk events so comparing equality between
-    // semantically (but not technically) equivalent event streams doesn't error
+    // semantically equivalent event streams doesn't error
     fn chunk_collapse(events: Vec<Event>) -> Vec<Event> {
         let length = events.len();
         events
             .into_iter()
-            .fold(Vec::with_capacity(length), |mut acc, event| {
-                if let Some(Event::RegularContentChunk(parent)) = acc.last_mut() {
-                    if let Event::RegularContentChunk(chunk) = event {
-                        parent.extend(chunk);
-                        return acc;
-                    }
+            .fold(Vec::with_capacity(length), |mut acc, mut event| {
+                if let Event::RegularContentChunk(ref mut chunk) = event {
+                    acc.pop_if(|parent| match parent {
+                        Event::RegularContentChunk(parent) => {
+                            let mut bytes = BytesMut::new();
+                            bytes.extend_from_slice(parent);
+                            bytes.extend_from_slice(&chunk);
+                            *chunk = bytes.freeze();
+                            true
+                        }
+                        _ => false,
+                    });
                 }
 
                 acc.push(event);
@@ -143,27 +151,36 @@ mod tests {
             })
     }
 
-    fn test_roundtrip_blob(contents: &[u8]) {
-        TestingLogger::init();
-
-        info!("blob contents: {:?}", contents);
-
-        let decoded = Decoder::new(contents)
+    fn decode_both(contents: &[u8]) -> Vec<Event> {
+        let reader_decoded = Decoder::new()
+            .decode_reader(contents)
             .collect::<Result<Vec<_>, _>>()
-            .expect("decoding should not fail");
-        let events = chunk_collapse(decoded);
-        info!("decoder output: {:#?}", decoded);
+            .expect("decoding from reader should not fail");
+
+        let bytes_decoded = Decoder::new()
+            .decode_all(&mut Bytes::copy_from_slice(contents))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("decoding from bytes should not fail");
+
+        assert_eq!(
+            bytes_decoded, reader_decoded,
+            "bytes decoded does not match reader decoded"
+        );
+
+        chunk_collapse(bytes_decoded)
+    }
+
+    fn test_roundtrip_blob(contents: &'static [u8]) {
+        TestingLogger::init();
 
         let mut encoded = Vec::new();
         Encoder::new(&mut encoded)
-            .copy(events.iter())
+            .encode_all(decode_both(contents).iter())
             .expect("encoding should not fail");
-        info!("encoder output: {:?}", encoded);
 
-        // not using assert_eq because the decoded events are logged above
-        assert!(
-            contents == encoded,
-            "original events did not match decoded events"
+        assert_eq!(
+            contents, encoded,
+            "original events does not match decoded events"
         );
     }
 
@@ -193,24 +210,17 @@ mod tests {
 
             let mut encoded = Vec::new();
             Encoder::new(&mut encoded)
-                .copy(events.iter())
+                .encode_all(events.iter())
                 .expect("encoding should not fail");
-            info!("encoder output: {:?}", encoded);
 
-            let decoded = Decoder::new(encoded.as_slice())
-                .collect::<Result<Vec<_>, _>>()
-                .expect("decoding should not fail");
-            let decoded = chunk_collapse(decoded);
-            info!("decoder output: {:#?}", decoded);
-
-            // not using assert_eq because the decoded events are logged above
             assert!(
-                events == decoded,
-                "original events did not match decoded events"
+                events == decode_both(&encoded),
+                "original events does not match decoded events"
             );
 
             Ok(())
         })
+        .seed(0x29d93dbf00000020)
         .run()
     }
 }

@@ -7,9 +7,10 @@
 #[allow(dead_code)]
 pub(crate) mod arbitrary;
 
+use bytes::Bytes;
 use thiserror::Error;
 
-use crate::{Event, utils::log::debug};
+use crate::{utils::log::debug, Event};
 
 /// The error type for the internal event validator
 #[derive(Error, Debug)]
@@ -105,7 +106,7 @@ impl EventValidator {
                     self.construct(regular);
                     // ensure at least 1 regular chunk is emitted
                     // to properly handle ending regular objects
-                    deconstructed.extend(self.advance(&Event::RegularContentChunk(vec![]))?);
+                    deconstructed.extend(self.advance(&Event::RegularContentChunk(Bytes::new()))?);
                 }
                 Event::Symlink { .. } => self.post_object(&mut deconstructed),
                 Event::Directory => self.construct(StackFrame::Directory),

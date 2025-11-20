@@ -12,32 +12,32 @@
 //!     Event::Header,
 //!     Event::Directory,
 //!     Event::DirectoryEntry {
-//!         name: std::ffi::OsString::from("my-file"),
+//!         name: "my-file".as_bytes().into(),
 //!     },
 //!     Event::Regular {
 //!         executable: true,
 //!         size: content.len() as u64,
 //!     },
-//!     Event::RegularContentChunk(content.as_bytes().to_vec()),
+//!     Event::RegularContentChunk(content.as_bytes().into()),
 //!     Event::DirectoryEnd,
 //! ];
 //!
-//! Encoder::new(std::io::stdout()).copy(events.iter())?;
+//! Encoder::new(std::io::stdout()).encode_all(events.iter())?;
 //!
 //! # Ok::<_, nix_archive::encoding::Error>(())
 //! ```
 
-use std::{io, str::Utf8Error};
+use std::io;
 
 use thiserror::Error;
 
 use crate::{
     Event,
-    validation::{EventValidator, Error as ValidationError, StackFrame},
     utils::{
         PADDING, calculate_padding,
         log::{debug, trace},
     },
+    validation::{Error as ValidationError, EventValidator, StackFrame},
 };
 
 /// Error type for the [Encoder]
@@ -49,9 +49,6 @@ pub enum Error {
     /// The internal state errored, usually because the underlying reader had its events in an incorrect order
     #[error(transparent)]
     ValidationError(#[from] ValidationError),
-    /// Usually due to paths being non-UTF-8
-    #[error(transparent)]
-    Utf8Error(#[from] Utf8Error),
 }
 
 /// Encodes NAR [Events](Event) into bytes
@@ -61,7 +58,7 @@ pub struct Encoder<W> {
     writer: W,
 }
 
-impl<'a, W: io::Write> Encoder<W> {
+impl<W: io::Write> Encoder<W> {
     /// Constructs a new [`Encoder`] from an [`Iterator`] of [`Events`](Event)
     #[inline]
     pub fn new(writer: W) -> Self {
@@ -71,9 +68,15 @@ impl<'a, W: io::Write> Encoder<W> {
         }
     }
 
-    /// "Copies" the events from an iterator into the encoder
-    pub fn copy<I: Iterator<Item = &'a Event>>(&mut self, mut iterator: I) -> Result<(), Error> {
-        iterator.try_for_each(|event| self.encode(event))
+    /// Encodes an iterator of events into the writer
+    #[inline]
+    pub fn encode_all<'a, I: IntoIterator<Item = &'a Event>>(
+        &mut self,
+        iterator: I,
+    ) -> Result<(), Error> {
+        iterator
+            .into_iter()
+            .try_for_each(|event| self.encode(event))
     }
 
     /// Encodes a single event into the writer
@@ -95,13 +98,13 @@ impl<'a, W: io::Write> Encoder<W> {
                 self.string("contents")?;
                 self.integer(*size)?;
             }
-            Event::RegularContentChunk(chunk) => self.writer.write_all(&chunk)?,
+            Event::RegularContentChunk(chunk) => self.writer.write_all(chunk)?,
             Event::Symlink { target } => {
                 self.string("(")?;
                 self.string("type")?;
                 self.string("symlink")?;
                 self.string("target")?;
-                self.string(str::from_utf8(target.as_os_str().as_encoded_bytes())?)?;
+                self.string(target)?;
             }
             Event::Directory => {
                 self.string("(")?;
@@ -112,7 +115,7 @@ impl<'a, W: io::Write> Encoder<W> {
                 self.string("entry")?;
                 self.string("(")?;
                 self.string("name")?;
-                self.string(str::from_utf8(name.as_encoded_bytes())?)?;
+                self.string(name)?;
                 self.string("node")?;
             }
             Event::DirectoryEnd => (),
