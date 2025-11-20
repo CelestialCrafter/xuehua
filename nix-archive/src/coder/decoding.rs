@@ -23,7 +23,8 @@ use std::{ffi::OsString, fmt::Debug, io, num::TryFromIntError, os::unix::ffi::Os
 use thiserror::Error;
 
 use crate::{
-    state::{CoderState, Error as CoderStateError, Event, StackFrame},
+    Event,
+    validation::{EventValidator, Error as ValidationError, StackFrame},
     utils::{
         PADDING, calculate_padding,
         log::{debug, trace},
@@ -50,9 +51,9 @@ pub enum Error {
     /// A number that was too big
     #[error(transparent)]
     ConversionError(#[from] TryFromIntError),
-    /// The internal coder state errored
+    /// The internal validator errored
     #[error(transparent)]
-    CoderError(#[from] CoderStateError),
+    ValidationError(#[from] ValidationError),
 }
 
 #[inline]
@@ -66,7 +67,7 @@ fn unexpected(expected: &str, found: &[u8]) -> Error {
 /// Decodes bytes into NAR [`Events`](Event)
 #[derive(Debug)]
 pub struct Decoder<R> {
-    state: CoderState,
+    state: EventValidator,
     lookahead: Option<Vec<u8>>,
     reader: R,
 }
@@ -85,7 +86,7 @@ impl<R: io::Read> Decoder<R> {
     #[inline]
     pub fn new(reader: R) -> Self {
         Self {
-            state: CoderState::new(),
+            state: EventValidator::new(),
             lookahead: None,
             reader,
         }

@@ -5,7 +5,7 @@
 //! Encoding NAR events to a NAR file on stdout
 //!
 //! ```rust
-//! use nix_archive::{encoding::Encoder, state::Event};
+//! use nix_archive::{encoding::Encoder, Event};
 //!
 //! let content = "hello world!";
 //! let events = vec![
@@ -32,7 +32,8 @@ use std::{io, str::Utf8Error};
 use thiserror::Error;
 
 use crate::{
-    state::{CoderState, Error as CoderStateError, Event, StackFrame},
+    Event,
+    validation::{EventValidator, Error as ValidationError, StackFrame},
     utils::{
         PADDING, calculate_padding,
         log::{debug, trace},
@@ -47,7 +48,7 @@ pub enum Error {
     IOError(#[from] io::Error),
     /// The internal state errored, usually because the underlying reader had its events in an incorrect order
     #[error(transparent)]
-    CoderError(#[from] CoderStateError),
+    ValidationError(#[from] ValidationError),
     /// Usually due to paths being non-UTF-8
     #[error(transparent)]
     Utf8Error(#[from] Utf8Error),
@@ -56,7 +57,7 @@ pub enum Error {
 /// Encodes NAR [Events](Event) into bytes
 #[derive(Debug)]
 pub struct Encoder<W> {
-    state: CoderState,
+    validator: EventValidator,
     writer: W,
 }
 
@@ -66,7 +67,7 @@ impl<'a, W: io::Write> Encoder<W> {
     pub fn new(writer: W) -> Self {
         Self {
             writer,
-            state: CoderState::new(),
+            validator: EventValidator::new(),
         }
     }
 
@@ -117,7 +118,7 @@ impl<'a, W: io::Write> Encoder<W> {
             Event::DirectoryEnd => (),
         }
 
-        for deconstructed in self.state.advance(&event)? {
+        for deconstructed in self.validator.advance(&event)? {
             match deconstructed {
                 StackFrame::Object | StackFrame::DirectoryEntry => self.string(")")?,
                 StackFrame::RegularData { expected, .. } => self.padding(expected)?,
