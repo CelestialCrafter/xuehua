@@ -4,12 +4,9 @@
 //! but if you do need stuff from this module,
 //! you probably want [`Event`] or [`enum@Error`]
 
-#[allow(dead_code)]
-pub(crate) mod arbitrary;
-
 use thiserror::Error;
 
-use crate::{Event, utils::log::debug};
+use crate::{Event, utils::debug};
 
 /// The error type for the internal event validator
 #[derive(Error, Debug)]
