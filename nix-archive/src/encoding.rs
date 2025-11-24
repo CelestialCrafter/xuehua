@@ -6,7 +6,7 @@
 //!
 //! ```rust
 //! use nix_archive::{encoding::Encoder, Event};
-//! use std::io::Write;
+//! use std::io::{Write, stdout};
 //!
 //! let content = "hello world!";
 //! let events = vec![
@@ -23,20 +23,12 @@
 //!     Event::DirectoryEnd,
 //! ];
 //!
-//! # #[derive(thiserror::Error, Debug)]
-//! # enum Error {
-//! #      #[error(transparent)]
-//! #      EncodeError(#[from] nix_archive::encoding::Error),
-//! #      #[error(transparent)]
-//! #      IOError(#[from] std::io::Error)
-//! # }
-//!
 //! let mut encoded = bytes::BytesMut::new();
 //! Encoder::new().encode_all(&mut encoded, events)?;
 //!
 //! std::io::stdout().write_all(&encoded)?;
 //!
-//! # Ok::<_, Error>(())
+//! # Ok::<_, anyhow::Error>(())
 //! ```
 
 use std::borrow::Borrow;
@@ -53,7 +45,7 @@ use crate::{
 /// Error type for the [Encoder]
 #[derive(Error, Debug)]
 pub enum Error {
-    /// The internal state errored
+    /// The internal event validator errored
     #[error(transparent)]
     ValidationError(#[from] ValidationError),
 }

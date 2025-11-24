@@ -1,8 +1,6 @@
 //! Internal event stream validation
 //!
-//! This module is generally only important to the crate's internals,
-//! but if you do need stuff from this module,
-//! you probably want [`Event`] or [`enum@Error`]
+//! This module is generally only important to the crate's internals.
 
 use std::cmp::Ordering;
 
@@ -18,7 +16,7 @@ pub enum Error {
     Finished,
     /// The processed event was invalid for the current parse state
     #[error("unexpected event {0:?} in state {1:?}")]
-    Unexpected(Event, StackFrame),
+    UnexpectedEvent(Event, StackFrame),
 }
 
 /// A frame of the validator's internal stack
@@ -84,7 +82,7 @@ impl EventValidator {
 
         let mut deconstructed = vec![];
         let frame = *self.stack.last().ok_or(Error::Finished)?;
-        let unexpected = || Err(Error::Unexpected(event.clone(), frame));
+        let unexpected = || Err(Error::UnexpectedEvent(event.clone(), frame));
 
         match (frame, event) {
             (StackFrame::Header, Event::Header) => {
