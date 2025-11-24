@@ -1,4 +1,4 @@
-// TODO: maybe include testing blobs in src control
+// TODO: include testing blobs in src control
 // TODO: include tests against `nix nar` in fs packing & unpacking
 
 #![deny(unsafe_code)]
@@ -55,18 +55,15 @@
 //! # Ok::<_, Error>(())
 //! ```
 
-mod filesystem;
+#[cfg(test)]
+pub(crate) mod arbitrary;
+pub mod decoding;
+pub mod encoding;
+pub mod unpacking;
+pub(crate) mod utils;
 pub mod validation;
 
 use bytes::Bytes;
-pub use filesystem::*;
-mod coder;
-pub use coder::*;
-
-#[allow(dead_code)]
-#[allow(unused_macros)]
-#[allow(unused_imports)]
-pub(crate) mod utils;
 
 /// An intermediate event type to describe a NAR file.
 ///
@@ -115,9 +112,10 @@ mod tests {
 
     use crate::{
         Event,
-        coder::{decoding::Decoder, encoding::Encoder},
-        utils::log::{TestingLogger, debug, info},
-        validation::arbitrary::ArbitraryNar,
+        arbitrary::ArbitraryNar,
+        decoding::Decoder,
+        encoding::Encoder,
+        utils::{TestingLogger, debug, info},
     };
 
     // collapses multiple chunk events so comparing equality between

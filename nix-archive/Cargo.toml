@@ -13,9 +13,9 @@ log = ["dep:log"]
 
 [dependencies]
 thiserror = "2.0.17"
-arbitrary = "1.4.2"
 bytes = "1.11.0"
 log = { workspace = true, optional = true }
 
 [dev-dependencies]
+arbitrary = "1.4.2"
 arbtest = "0.3.2"

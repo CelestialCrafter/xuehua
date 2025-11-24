@@ -33,10 +33,7 @@ use thiserror::Error;
 
 use crate::{
     Event,
-    utils::{
-        PADDING, calculate_padding,
-        log::{debug, trace},
-    },
+    utils::{PADDING, calculate_padding, debug, trace},
     validation::{Error as ValidationError, EventValidator, StackFrame},
 };
 
