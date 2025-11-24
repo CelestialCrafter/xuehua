@@ -8,14 +8,6 @@
 //! use nix_archive::decoding::Decoder;
 //! use std::io::{Read, stdin};
 //!
-//! # #[derive(thiserror::Error, Debug)]
-//! # enum Error {
-//! #     #[error(transparent)]
-//! #     IOError(#[from] std::io::Error),
-//! #     #[error(transparent)]
-//! #     DecodeError(#[from] nix_archive::decoding::Error),
-//! # }
-//!
 //! let mut buffer = Vec::new();
 //! stdin().read_to_end(&mut buffer)?;
 //!
@@ -23,7 +15,7 @@
 //!     eprintln!("{:?}", event?);
 //! }
 //!
-//! # Ok::<_, Error>(())
+//! # Ok::<_, anyhow::Error>(())
 //! ```
 
 use std::{fmt::Debug, num::TryFromIntError};
@@ -48,18 +40,18 @@ pub enum Error {
         /// The token that was read
         found: Bytes,
     },
-    /// A number that was too big
-    #[error(transparent)]
-    ConversionError(#[from] TryFromIntError),
-    /// The internal validator errored
-    #[error(transparent)]
-    ValidationError(#[from] ValidationError),
     /// The provided data was not enough to form a complete [`Event`]
     #[error("input does not contain enough data")]
     Incomplete {
-        /// The additional bytes needed to continue decoding, or None if unknown
-        needed: Option<usize>,
+        /// The amount of bytes needed to continue decoding
+        needed: usize
     },
+    /// A number was too big to be converted
+    #[error(transparent)]
+    ConversionError(#[from] TryFromIntError),
+    /// The internal event validator errored
+    #[error(transparent)]
+    ValidationError(#[from] ValidationError),
 }
 
 /// Decodes bytes into NAR [`Events`](Event)
@@ -197,7 +189,7 @@ fn split_to_checked(bytes: &mut Bytes, at: usize) -> Result<Bytes, Error> {
     let len = bytes.len();
     if at > len {
         Err(Error::Incomplete {
-            needed: Some(at - len),
+            needed: at - len,
         })
     } else {
         Ok(bytes.split_to(at))

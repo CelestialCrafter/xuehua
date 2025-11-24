@@ -1,5 +1,7 @@
 // TODO: include testing blobs in src control
 // TODO: include tests against `nix nar` in fs packing & unpacking
+// TODO: impl windows support behind a feature flag
+// TODO: make crate nostd, and add std behind a feature flag
 
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
@@ -14,7 +16,7 @@
 //!
 //! ## Examples
 //!
-//! Encode then decode a stream of NAR [`Event`](crate::validation::Event)
+//! Encode then decode a stream of NAR [`Events`](crate::Event)
 //!
 //! ```rust
 //! use nix_archive::{decoding::Decoder, encoding::Encoder, Event};
@@ -34,14 +36,6 @@
 //!     Event::DirectoryEnd,
 //! ];
 //!
-//! # #[derive(thiserror::Error, Debug)]
-//! # enum Error {
-//! #      #[error(transparent)]
-//! #      DecodeError(#[from] nix_archive::decoding::Error),
-//! #      #[error(transparent)]
-//! #      EncodeError(#[from] nix_archive::encoding::Error)
-//! # }
-//!
 //! // first we encode our events into a buffer
 //! let mut encoded = bytes::BytesMut::new();
 //! Encoder::new().encode_all(&mut encoded, &events)?;
@@ -52,8 +46,7 @@
 //!     .collect::<Result<Vec<_>, _>>()?;
 //!
 //! assert_eq!(events, decoded);
-//!
-//! # Ok::<_, Error>(())
+//! # Ok::<_, anyhow::Error>(())
 //! ```
 
 #[cfg(test)]

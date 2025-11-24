@@ -17,5 +17,6 @@ bytes = "1.11.0"
 log = { workspace = true, optional = true }
 
 [dev-dependencies]
+anyhow = "1.0.100"
 arbitrary = "1.4.2"
 arbtest = "0.3.2"
