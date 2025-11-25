@@ -6,17 +6,29 @@
 //!
 //! ```rust,no_run
 //! use nix_archive::decoding::Decoder;
+//! use std::io::{Read, stdin};
 //!
-//! for event in Decoder::new().decode_reader(std::io::stdin()) {
+//! # #[derive(thiserror::Error, Debug)]
+//! # enum Error {
+//! #     #[error(transparent)]
+//! #     IOError(#[from] std::io::Error),
+//! #     #[error(transparent)]
+//! #     DecodeError(#[from] nix_archive::decoding::Error),
+//! # }
+//!
+//! let mut buffer = Vec::new();
+//! stdin().read_to_end(&mut buffer)?;
+//!
+//! for event in Decoder::new().decode_all(&mut buffer.into()) {
 //!     eprintln!("{:?}", event?);
 //! }
 //!
-//! # Ok::<_, nix_archive::decoding::Error>(())
+//! # Ok::<_, Error>(())
 //! ```
 
-use std::{collections::VecDeque, fmt::Debug, io, num::TryFromIntError};
+use std::{fmt::Debug, num::TryFromIntError};
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use thiserror::Error;
 
 use crate::{
@@ -36,9 +48,6 @@ pub enum Error {
         /// The token that was read
         found: Bytes,
     },
-    /// Usually because underlying reader returned an error
-    #[error(transparent)]
-    IOError(#[from] io::Error),
     /// A number that was too big
     #[error(transparent)]
     ConversionError(#[from] TryFromIntError),
@@ -47,7 +56,10 @@ pub enum Error {
     ValidationError(#[from] ValidationError),
     /// The provided data was not enough to form a complete [`Event`]
     #[error("input does not contain enough data")]
-    Incomplete,
+    Incomplete {
+        /// The additional bytes needed to continue decoding, or None if unknown
+        needed: Option<usize>,
+    },
 }
 
 /// Decodes bytes into NAR [`Events`](Event)
@@ -65,193 +77,135 @@ impl Decoder {
         }
     }
 
-    /// Decode all events from a reader
+    /// Decodes an instance of [`Bytes`] into an [`Event`] stream
     ///
-    /// This method internally allocates a 4kb buffer for every chunk of events
-    pub fn decode_reader(
-        &mut self,
-        mut reader: impl io::Read,
-    ) -> impl Iterator<Item = Result<Event, Error>> {
-        // we can't use read_exact and ignore the error because the docs say:
-        // > If this function encounters an “end of file” before completely filling
-        // > the buffer, it returns an error of the kind ErrorKind::UnexpectedEof.
-        // > The contents of buf are unspecified in this case.
-        let mut fill_buffer = move |buffer: &mut BytesMut| {
-            let initial = buffer.len();
-            let mut position = initial;
-
-            // inefficient but this library denies unsafe
-            buffer.resize(buffer.len() + 4096, 0);
-
-            while position < buffer.len() {
-                match reader.read(&mut buffer[position..]) {
-                    Ok(0) => break,
-                    Ok(n) => position += n,
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => (),
-                    Err(e) => return Err(e),
-                }
-            }
-
-            buffer.truncate(position);
-            Ok(position - initial)
-        };
-
-        let mut byte_buffer = Bytes::new();
-        let mut event_queue = VecDeque::new();
-        let mut exhausted = false;
-
-        std::iter::from_fn(move || -> Option<Result<Event, Error>> {
-            let mut event = event_queue.pop_front();
-            while let None | Some(Err(Error::Incomplete)) = event {
-                if exhausted {
-                    trace!("reader exhausted");
-                    break;
-                }
-
-                // construct data starting from remaining bytes
-                let mut data = BytesMut::from(byte_buffer.as_ref());
-                trace!("event is {event:?}, attempting to refill starting with {data:?}");
-
-                match fill_buffer(&mut data) {
-                    Ok(0) => exhausted = true,
-                    Ok(_) => {
-                        byte_buffer = data.freeze();
-                        event_queue.extend(self.decode_all(&mut byte_buffer));
-
-                        event = event_queue.pop_front();
-                    }
-                    Err(err) => return Some(Err(err.into())),
-                }
-            }
-
-            event
-        })
-    }
-
-    /// Decode all events from an instance of [`Bytes`]
+    /// On every successful decode, `bytes` will be shifted by the
+    /// amount of data consumed. The return [`Events`](Event) borrow
+    /// from this data.
     ///
-    /// The remaining [Bytes] instance will contain the remaining data that the decoder did not consume
-    pub fn decode_all(&mut self, data: &mut Bytes) -> impl Iterator<Item = Result<Event, Error>> {
-        let mut errored = false;
-        std::iter::from_fn(move || {
-            if data.len() == 0 || self.validator.finished() || errored {
+    /// # Errors
+    ///
+    /// If this function encounters an error, both the internal state and
+    /// `bytes` are rolled back, and further operations can be executed safely.
+    ///
+    /// If this function does not have enough data to decode an event, an
+    /// [`Error::Incomplete`] is returned.
+    #[inline]
+    pub fn decode_all(&mut self, bytes: &mut Bytes) -> impl Iterator<Item = Result<Event, Error>> {
+        std::iter::from_fn(|| {
+            if self.validator.finished() {
                 return None;
             }
 
-            Some(self.decode(data).inspect_err(|_| errored = true))
+            let mut attempt = (self.validator.clone(), bytes.clone());
+            match decode(&mut attempt.0, &mut attempt.1) {
+                Ok(event) => {
+                    self.validator = attempt.0;
+                    *bytes = attempt.1;
+
+                    Some(Ok(event))
+                }
+                Err(err) => Some(Err(err)),
+            }
         })
     }
+}
 
-    /// Decodes an individual event from the underlying reader
-    ///
-    /// This is a lower level method used usually used by [`decode_all`] or [`decode_reader`]
-    /// Note that `data` will not change if [`decode`] errors
-    pub fn decode(&mut self, data: &mut Bytes) -> Result<Event, Error> {
-        let mut data_attempt = &mut data.clone();
-        let mut state_attempt = self.validator.clone();
-        let frame = state_attempt.peek()?;
-        debug!("decoding event with {frame:?} context frame");
+fn decode(validator: &mut EventValidator, data: &mut Bytes) -> Result<Event, Error> {
+    let frame = validator.peek()?;
+    debug!("decoding event with {frame:?} context frame");
 
-        let event = match frame {
-            StackFrame::Header => {
-                expect(data_attempt, "nix-archive-1")?;
-                Event::Header
-            }
-            StackFrame::Object => {
-                expect(data_attempt, "(")?;
-                expect(data_attempt, "type")?;
-                let ty = string(data_attempt)?;
-                match ty.as_ref() {
-                    b"regular" => {
-                        let executable = with_peeked_string(
-                            data_attempt,
-                            |str| str == b"executable",
-                            |data| {
-                                expect(data, "")?;
-                                Ok::<_, Error>(true)
-                            },
-                            |_| Ok(false),
-                        )??;
+    let event = match frame {
+        StackFrame::Header => {
+            expect(data, "nix-archive-1")?;
+            Event::Header
+        }
+        StackFrame::Object => {
+            expect(data, "(")?;
+            expect(data, "type")?;
 
-                        expect(data_attempt, "contents")?;
+            let ty = string(data)?;
+            match ty.as_ref() {
+                b"regular" => {
+                    let executable = with_peeked_string(
+                        data,
+                        |str| str == b"executable",
+                        |data| {
+                            expect(data, "")?;
+                            Ok::<_, Error>(true)
+                        },
+                        |_| Ok(false),
+                    )??;
 
-                        Event::Regular {
-                            executable,
-                            size: integer(data_attempt)?,
-                        }
-                    }
-                    b"symlink" => {
-                        expect(data_attempt, "target")?;
-                        Event::Symlink {
-                            target: string(data_attempt)?,
-                        }
-                    }
-                    b"directory" => Event::Directory,
-                    _ => {
-                        return Err(Error::UnexpectedToken {
-                            expected: r#""regular", "symlink", or "directory""#.to_string(),
-                            found: ty,
-                        });
+                    expect(data, "contents")?;
+
+                    Event::Regular {
+                        executable,
+                        size: integer(data)?,
                     }
                 }
-            }
-            StackFrame::Directory => with_peeked_string(
-                data_attempt,
-                |str| str == b"entry",
-                |data| {
-                    expect(data, "(")?;
-                    expect(data, "name")?;
-                    let name = string(data)?;
-                    expect(data, "node")?;
-
-                    Ok::<_, Error>(Event::DirectoryEntry { name })
-                },
-                |data| match data {
-                    Some(_) => Ok(Event::DirectoryEnd),
-                    None => Err(Error::Incomplete),
-                },
-            )??,
-            StackFrame::DirectoryEntry => panic!("peeked frame was directory entry"),
-            StackFrame::RegularData { expected, written } => {
-                // NOTE: ensure MAX_CHUNK_SIZE never goes above usize::MAX
-                const MAX_CHUNK_SIZE: u64 = 4 * 1024;
-                let size = (expected - written)
-                    .min(data_attempt.len() as u64)
-                    .min(MAX_CHUNK_SIZE) as usize;
-
-                Event::RegularContentChunk(data_attempt.split_to(size))
-            }
-        };
-
-        debug!("decoded event: {event:?}");
-
-        for deconstructed in state_attempt.advance(&event)? {
-            match deconstructed {
-                StackFrame::Object | StackFrame::DirectoryEntry => {
-                    expect(&mut data_attempt, ")")?;
+                b"symlink" => {
+                    expect(data, "target")?;
+                    Event::Symlink {
+                        target: string(data)?,
+                    }
                 }
-                StackFrame::RegularData { expected, .. } => padding(&mut data_attempt, expected)?,
-                _ => (),
+                b"directory" => Event::Directory,
+                _ => {
+                    return Err(Error::UnexpectedToken {
+                        expected: r#""regular", "symlink", or "directory""#.to_string(),
+                        found: ty,
+                    });
+                }
             }
         }
+        StackFrame::Directory => with_peeked_string(
+            data,
+            |str| str == b"entry",
+            |data| {
+                expect(data, "(")?;
+                expect(data, "name")?;
+                let name = string(data)?;
+                expect(data, "node")?;
 
-        *data = std::mem::replace(data_attempt, Bytes::new());
-        self.validator = state_attempt;
-        Ok(event)
+                Ok::<_, Error>(Event::DirectoryEntry { name })
+            },
+            |_| Ok(Event::DirectoryEnd),
+        )??,
+        StackFrame::DirectoryEntry => unreachable!("peeked frame was directory entry"),
+        StackFrame::RegularData { expected, written } => {
+            let size = (expected - written).min(data.len() as u64) as usize;
+            Event::RegularContentChunk(data.split_to(size))
+        }
+    };
+
+    debug!("decoded event: {event:?}");
+
+    for deconstructed in validator.advance(&event)? {
+        match deconstructed {
+            StackFrame::Object | StackFrame::DirectoryEntry => expect(data, ")")?,
+            StackFrame::RegularData { expected, .. } => padding(data, expected)?,
+            _ => (),
+        }
     }
+
+    Ok(event)
 }
 
 #[inline]
 fn split_to_checked(bytes: &mut Bytes, at: usize) -> Result<Bytes, Error> {
-    if at > bytes.len() {
-        Err(Error::Incomplete)
+    let len = bytes.len();
+    if at > len {
+        Err(Error::Incomplete {
+            needed: Some(at - len),
+        })
     } else {
         Ok(bytes.split_to(at))
     }
 }
 
 #[inline]
-fn expect(data: &mut Bytes, expect: &str) -> Result<Bytes, Error> {
+fn expect(data: &mut Bytes, expect: &str) -> Result<(), Error> {
     let found = string(data)?;
 
     trace!(
@@ -265,7 +219,7 @@ fn expect(data: &mut Bytes, expect: &str) -> Result<Bytes, Error> {
             found,
         })
     } else {
-        Ok(found)
+        Ok(())
     }
 }
 
@@ -274,8 +228,15 @@ fn padding(data: &mut Bytes, strlen: u64) -> Result<(), Error> {
     let padding = calculate_padding(strlen);
     trace!("discarding {padding} bytes of padding");
 
-    split_to_checked(data, padding)?;
-    Ok(())
+    let bytes = split_to_checked(data, padding)?;
+    if bytes.iter().any(|b| *b != 0) {
+        Err(Error::UnexpectedToken {
+            expected: format!("{padding} bytes of padding"),
+            found: bytes,
+        })
+    } else {
+        Ok(())
+    }
 }
 
 #[inline]
@@ -290,6 +251,7 @@ fn integer(data: &mut Bytes) -> Result<u64, Error> {
     Ok(length)
 }
 
+#[inline]
 fn string(data: &mut Bytes) -> Result<Bytes, Error> {
     let length = integer(data)?;
     trace!("extracting string of size {length}");
@@ -306,7 +268,7 @@ fn with_peeked_string<R>(
     data: &mut Bytes,
     cmp: impl Fn(&[u8]) -> bool,
     success: impl Fn(&mut Bytes) -> R,
-    failure: impl Fn(Option<&mut Bytes>) -> R,
+    failure: impl Fn(&mut Bytes) -> R,
 ) -> Result<R, Error> {
     debug!("peeking string");
 
@@ -320,10 +282,9 @@ fn with_peeked_string<R>(
                 Ok(success(data))
             } else {
                 trace!("comparison failed");
-                Ok(failure(Some(data)))
+                Ok(failure(data))
             }
         }
-        Err(Error::Incomplete) => Ok(failure(None)),
         Err(err) => Err(err),
     }
 }

@@ -6,6 +6,8 @@
 //!
 //! ```rust,no_run
 //! use nix_archive::{decoding::Decoder, unpacking::Unpacker};
+//! use std::io::{Read, stdin};
+//!
 //! # #[derive(thiserror::Error, Debug)]
 //! # enum Error {
 //! #     #[error(transparent)]
@@ -16,9 +18,14 @@
 //! #     UnpackError(#[from] nix_archive::unpacking::Error),
 //! # }
 //!
+//!
+//! let mut buffer = Vec::new();
+//! stdin().read_to_end(&mut buffer)?;
+//!
 //! let events = Decoder::new()
-//!     .decode_reader(std::io::stdin())
+//!     .decode_all(&mut buffer.into())
 //!     .collect::<Result<Vec<_>, _>>()?;
+//!
 //! let output = std::env::current_dir()?.join("unpacked");
 //! Unpacker::default().unpack(output, events)?;
 //!
