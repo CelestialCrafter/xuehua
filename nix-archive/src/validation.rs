@@ -4,6 +4,8 @@
 //! but if you do need stuff from this module,
 //! you probably want [`Event`] or [`enum@Error`]
 
+use std::cmp::Ordering;
+
 use thiserror::Error;
 
 use crate::{Event, utils::debug};
@@ -113,23 +115,28 @@ impl EventValidator {
                 self.deconstruct(&mut deconstructed, frame);
                 self.post_object(&mut deconstructed);
             }
-            (StackFrame::RegularData { expected, written }, Event::RegularContentChunk(chunk)) => {
-                let written = written + chunk.len() as u64;
+            (StackFrame::RegularData { expected, .. }, Event::RegularContentChunk(chunk)) => {
+                let frame = self
+                    .stack
+                    .last_mut()
+                    .expect("regulardata frame should exist");
 
-                let frame = self.stack.pop().expect("stack frame should exist");
-                if expected == written {
-                    debug!("deconstructing frame: {frame:?}");
-                    deconstructed.push(frame);
-                    self.post_object(&mut deconstructed);
-                } else if written > expected {
-                    return unexpected();
-                } else {
-                    self.construct(StackFrame::RegularData {
-                        expected,
-                        written: written,
-                    });
+                let StackFrame::RegularData { written, .. } = frame else {
+                    unreachable!("frame was not RegularData");
+                };
+
+                *written += chunk.len() as u64;
+                match (*written).cmp(&expected) {
+                    Ordering::Less => {}
+                    Ordering::Equal => {
+                        let frame = *frame;
+                        self.deconstruct(&mut deconstructed, frame);
+                        self.post_object(&mut deconstructed);
+                    }
+                    Ordering::Greater => return unexpected(),
                 }
             }
+
             _ => return unexpected(),
         }
 

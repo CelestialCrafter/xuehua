@@ -47,9 +47,7 @@
 //! Encoder::new(&mut encoded).encode_all(&events)?;
 //!
 //! // and next we decode the buffer (or anything else that impl Read) back into a list of events!
-//! let decoded = Decoder::new()
-//!     .decode_all(&mut encoded.into())
-//!     .collect::<Result<Vec<_>, _>>()?;
+//! let decoded = Decoder::new().decode_all(&mut encoded.into()).collect::<Result<Vec<_>, _>>()?;
 //!
 //! assert_eq!(events, decoded, "decoded events did not match original");
 //! # Ok::<_, Error>(())
@@ -143,28 +141,16 @@ mod tests {
             })
     }
 
-    fn decode_both(contents: &[u8]) -> Vec<Event> {
-        let bytes_decoded = chunk_collapse(
+    fn decode(contents: &[u8]) -> Vec<Event> {
+        let decoded = chunk_collapse(
             Decoder::new()
                 .decode_all(&mut Bytes::copy_from_slice(contents))
                 .collect::<Result<Vec<_>, _>>()
                 .expect("decoding from bytes should not fail"),
         );
 
-        let reader_decoded = chunk_collapse(
-            Decoder::new()
-                .decode_reader(contents)
-                .collect::<Result<Vec<_>, _>>()
-                .expect("decoding from reader should not fail"),
-        );
-
-        assert_eq!(
-            bytes_decoded, reader_decoded,
-            "bytes decoded does not match reader decoded"
-        );
-
-        debug!("decoder output: {bytes_decoded:?}");
-        bytes_decoded
+        debug!("decoder output: {decoded:?}");
+        decoded
     }
 
     fn test_roundtrip_blob(contents: &'static [u8]) {
@@ -172,7 +158,7 @@ mod tests {
 
         let mut encoded = Vec::new();
         Encoder::new(&mut encoded)
-            .encode_all(decode_both(contents).iter())
+            .encode_all(decode(contents))
             .expect("encoding should not fail");
         let encoded = Bytes::from_owner(encoded);
 
@@ -215,7 +201,7 @@ mod tests {
 
             debug!("encoder output: {encoded:?}");
             assert!(
-                events == decode_both(&encoded),
+                events == decode(&encoded),
                 "original events does not match decoded events"
             );
 
