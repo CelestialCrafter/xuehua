@@ -78,7 +78,7 @@ mod log {
 
 pub(crate) use log::*;
 
-pub const PADDING: usize = 8;
+const PADDING: usize = 8;
 
 #[inline]
 pub fn calculate_padding(strlen: u64) -> usize {
