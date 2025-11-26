@@ -42,14 +42,17 @@
 //! #      EncodeError(#[from] nix_archive::encoding::Error)
 //! # }
 //!
-//! // first we encode our events into a buffer (or anything else that impl Write)
-//! let mut encoded = Vec::new();
-//! Encoder::new(&mut encoded).encode_all(&events)?;
+//! // first we encode our events into a buffer
+//! let mut encoded = bytes::BytesMut::new();
+//! Encoder::new().encode_all(&mut encoded, &events)?;
 //!
-//! // and next we decode the buffer (or anything else that impl Read) back into a list of events!
-//! let decoded = Decoder::new().decode_all(&mut encoded.into()).collect::<Result<Vec<_>, _>>()?;
+//! // and next we decode the buffer back into a list of events!
+//! let decoded = Decoder::new()
+//!     .decode_all(&mut encoded.freeze())
+//!     .collect::<Result<Vec<_>, _>>()?;
 //!
-//! assert_eq!(events, decoded, "decoded events did not match original");
+//! assert_eq!(events, decoded);
+//!
 //! # Ok::<_, Error>(())
 //! ```
 
@@ -156,9 +159,9 @@ mod tests {
     fn test_roundtrip_blob(contents: &'static [u8]) {
         TestingLogger::init();
 
-        let mut encoded = Vec::new();
-        Encoder::new(&mut encoded)
-            .encode_all(decode(contents))
+        let mut encoded = BytesMut::new();
+        Encoder::new()
+            .encode_all(&mut encoded, decode(contents))
             .expect("encoding should not fail");
         let encoded = Bytes::from_owner(encoded);
 
@@ -193,9 +196,9 @@ mod tests {
             let events = chunk_collapse(nar.0);
             info!("event stream: {:#?}", events);
 
-            let mut encoded = Vec::new();
-            Encoder::new(&mut encoded)
-                .encode_all(events.iter())
+            let mut encoded = BytesMut::new();
+            Encoder::new()
+                .encode_all(&mut encoded, &events)
                 .expect("encoding should not fail");
             let encoded = Bytes::from_owner(encoded);
 

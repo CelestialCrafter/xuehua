@@ -6,6 +6,7 @@
 //!
 //! ```rust
 //! use nix_archive::{encoding::Encoder, Event};
+//! use std::io::Write;
 //!
 //! let content = "hello world!";
 //! let events = vec![
@@ -22,140 +23,159 @@
 //!     Event::DirectoryEnd,
 //! ];
 //!
-//! Encoder::new(std::io::stdout()).encode_all(events)?;
+//! # #[derive(thiserror::Error, Debug)]
+//! # enum Error {
+//! #      #[error(transparent)]
+//! #      EncodeError(#[from] nix_archive::encoding::Error),
+//! #      #[error(transparent)]
+//! #      IOError(#[from] std::io::Error)
+//! # }
 //!
-//! # Ok::<_, nix_archive::encoding::Error>(())
+//! let mut encoded = bytes::BytesMut::new();
+//! Encoder::new().encode_all(&mut encoded, events)?;
+//!
+//! std::io::stdout().write_all(&encoded)?;
+//!
+//! # Ok::<_, Error>(())
 //! ```
 
-use std::{borrow::Borrow, io};
+use std::borrow::Borrow;
 
+use bytes::{BufMut, BytesMut};
 use thiserror::Error;
 
 use crate::{
     Event,
-    utils::{PADDING, calculate_padding, debug, trace},
+    utils::{calculate_padding, trace},
     validation::{Error as ValidationError, EventValidator, StackFrame},
 };
 
 /// Error type for the [Encoder]
 #[derive(Error, Debug)]
 pub enum Error {
-    /// Usually due to an error in the underlying writer
-    #[error(transparent)]
-    IOError(#[from] io::Error),
-    /// The internal state errored, usually because the underlying reader had its events in an incorrect order
+    /// The internal state errored
     #[error(transparent)]
     ValidationError(#[from] ValidationError),
 }
 
 /// Encodes NAR [Events](Event) into bytes
 #[derive(Debug)]
-pub struct Encoder<W> {
+pub struct Encoder {
     validator: EventValidator,
-    writer: W,
 }
 
-impl<W: io::Write> Encoder<W> {
-    /// Constructs a new [`Encoder`] from an [`Iterator`] of [`Events`](Event)
+impl Encoder {
+    /// Constructs a new [`Encoder`]
     #[inline]
-    pub fn new(writer: W) -> Self {
+    pub fn new() -> Self {
         Self {
-            writer,
             validator: EventValidator::new(),
         }
     }
 
-    /// Encodes an iterator of events into the writer
+    /// Encodes an iterator of [`Events`](Event) into an instance of [`BytesMut`]
     #[inline]
     pub fn encode_all<I: IntoIterator<Item = impl Borrow<Event>>>(
         &mut self,
+        buffer: &mut BytesMut,
         iterator: I,
     ) -> Result<(), Error> {
         iterator
             .into_iter()
-            .try_for_each(|event| self.encode(event))
+            .try_for_each(|event| self.encode(buffer, event.borrow()))
     }
 
-    /// Encodes a single event into the writer
-    pub fn encode(&mut self, event: impl Borrow<Event>) -> Result<(), Error> {
-        let event = event.borrow();
-        debug!("encoding event: {event:?}");
-
-        match event {
-            Event::Header => self.string("nix-archive-1")?,
-            Event::Regular { executable, size } => {
-                self.string("(")?;
-                self.string("type")?;
-                self.string("regular")?;
-
-                if *executable {
-                    self.string("executable")?;
-                    self.string("")?;
-                }
-
-                self.string("contents")?;
-                self.integer(*size)?;
+    /// Encodes an [`Event`] into an instance of [`BytesMut`]
+    #[inline]
+    pub fn encode(&mut self, buffer: &mut BytesMut, event: &Event) -> Result<(), Error> {
+        let attempt_len = buffer.len();
+        let mut attempt_validator = self.validator.clone();
+        match encode(&mut attempt_validator, buffer, event) {
+            Ok(event) => {
+                self.validator = attempt_validator;
+                Ok(event)
             }
-            Event::RegularContentChunk(chunk) => self.writer.write_all(chunk)?,
-            Event::Symlink { target } => {
-                self.string("(")?;
-                self.string("type")?;
-                self.string("symlink")?;
-                self.string("target")?;
-                self.string(target)?;
-            }
-            Event::Directory => {
-                self.string("(")?;
-                self.string("type")?;
-                self.string("directory")?;
-            }
-            Event::DirectoryEntry { name } => {
-                self.string("entry")?;
-                self.string("(")?;
-                self.string("name")?;
-                self.string(name)?;
-                self.string("node")?;
-            }
-            Event::DirectoryEnd => (),
-        }
-
-        for deconstructed in self.validator.advance(&event)? {
-            match deconstructed {
-                StackFrame::Object | StackFrame::DirectoryEntry => self.string(")")?,
-                StackFrame::RegularData { expected, .. } => self.padding(expected)?,
-                _ => (),
+            Err(err) => {
+                buffer.truncate(attempt_len);
+                Err(err)
             }
         }
+    }
+}
 
-        Ok(())
+#[inline]
+fn encode(
+    validator: &mut EventValidator,
+    buffer: &mut BytesMut,
+    event: &Event,
+) -> Result<(), Error> {
+    match event {
+        Event::Header => string(buffer, "nix-archive-1"),
+        Event::Regular { executable, size } => {
+            string(buffer, "(");
+            string(buffer, "type");
+            string(buffer, "regular");
+
+            if *executable {
+                string(buffer, "executable");
+                string(buffer, "");
+            }
+
+            string(buffer, "contents");
+            buffer.put_u64_le(*size);
+        }
+        Event::RegularContentChunk(chunk) => buffer.put_slice(&chunk),
+        Event::Symlink { target } => {
+            string(buffer, "(");
+            string(buffer, "type");
+            string(buffer, "symlink");
+            string(buffer, "target");
+            string(buffer, target);
+        }
+        Event::Directory => {
+            string(buffer, "(");
+            string(buffer, "type");
+            string(buffer, "directory");
+        }
+        Event::DirectoryEntry { name } => {
+            string(buffer, "entry");
+            string(buffer, "(");
+            string(buffer, "name");
+            string(buffer, name);
+            string(buffer, "node");
+        }
+        Event::DirectoryEnd => (),
     }
 
-    #[inline]
-    fn padding(&mut self, strlen: u64) -> Result<(), io::Error> {
-        let padding = calculate_padding(strlen);
-        trace!("writing {padding} bytes of padding");
-
-        let buffer = [0; PADDING];
-        self.writer.write_all(&buffer[..padding])
+    for deconstructed in validator.advance(&event)? {
+        match deconstructed {
+            StackFrame::Object | StackFrame::DirectoryEntry => string(buffer, ")"),
+            StackFrame::RegularData { expected, .. } => padding(buffer, expected),
+            _ => (),
+        }
     }
 
-    #[inline]
-    fn integer(&mut self, value: u64) -> Result<(), io::Error> {
-        self.writer.write_all(&value.to_le_bytes())
-    }
+    Ok(())
+}
 
-    #[inline]
-    fn string(&mut self, value: impl AsRef<[u8]>) -> Result<(), io::Error> {
-        let data = value.as_ref();
-        let len = data.len() as u64;
+#[inline]
+fn padding(buffer: &mut BytesMut, strlen: u64) {
+    let padding = calculate_padding(strlen);
+    trace!("writing {padding} bytes of padding");
+    buffer.put_bytes(0, padding);
+}
 
-        trace!(
-            "writing string {:?} of size {len}",
-            String::from_utf8_lossy(data)
-        );
+#[inline]
+fn string(buffer: &mut BytesMut, value: impl AsRef<[u8]>) {
+    let data = value.as_ref();
+    let len = data.len() as u64;
 
-        self.integer(len)?;
-        self.writer.write_all(data)?;
-        self.padding(len)
-    }
+    trace!(
+        "writing string {:?} of size {len}",
+        String::from_utf8_lossy(data)
+    );
+
+    buffer.put_u64_le(len);
+    buffer.put_slice(data.as_ref());
+    padding(buffer, len);
 }
