@@ -2,7 +2,8 @@
 //!
 //! This module is generally only important to the crate's internals.
 
-use std::cmp::Ordering;
+use core::cmp::Ordering;
+use alloc::{vec, vec::Vec};
 
 use thiserror::Error;
 

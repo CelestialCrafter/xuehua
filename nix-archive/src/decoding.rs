@@ -18,7 +18,8 @@
 //! # Ok::<_, anyhow::Error>(())
 //! ```
 
-use std::{fmt::Debug, num::TryFromIntError};
+use core::{fmt::Debug, num::TryFromIntError};
+use alloc::{format, string::{String, ToString}};
 
 use bytes::Bytes;
 use thiserror::Error;
@@ -84,7 +85,7 @@ impl Decoder {
     /// [`Error::Incomplete`] is returned.
     #[inline]
     pub fn decode_all(&mut self, bytes: &mut Bytes) -> impl Iterator<Item = Result<Event, Error>> {
-        std::iter::from_fn(|| {
+        core::iter::from_fn(|| {
             if self.validator.finished() {
                 return None;
             }
@@ -264,7 +265,6 @@ fn with_peeked_string<R>(
 ) -> Result<R, Error> {
     debug!("peeking string");
 
-    // clone is gross but wtv
     let mut attempt = data.clone();
     match string(&mut attempt) {
         Ok(str) => {

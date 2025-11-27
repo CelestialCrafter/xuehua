@@ -1,4 +1,5 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
+use alloc::vec::Vec;
 
 use arbitrary::Arbitrary;
 use bytes::Bytes;

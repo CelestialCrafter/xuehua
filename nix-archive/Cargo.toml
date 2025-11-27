@@ -5,15 +5,17 @@ edition = "2024"
 description = "Minimal encoder and decoder for the Nix Archive Format"
 repository = "https://github.com/CelestialCrafter/xuehua"
 license = "MPL-2.0"
-keywords = ["nix", "nar", "archive", "encoding", "decoding"]
-categories = ["encoding", "parser-implementations"]
+keywords = ["nix", "nar", "no_std", "encoding"]
+categories = ["no-std", "encoding", "parser-implementations"]
 
 [features]
-log = ["dep:log"]
+default = ["std"]
+std = ["bytes/std", "thiserror/std"]
+log = ["dep:log", "std"]
 
 [dependencies]
-thiserror = "2.0.17"
-bytes = "1.11.0"
+thiserror = { version = "2.0.17", default-features = false }
+bytes = { version = "1.11.0", default-features = false }
 log = { workspace = true, optional = true }
 
 [dev-dependencies]

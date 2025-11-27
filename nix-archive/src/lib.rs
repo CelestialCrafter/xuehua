@@ -1,10 +1,11 @@
 // TODO: include testing blobs in src control
 // TODO: include tests against `nix nar` in fs packing & unpacking
 // TODO: impl windows support behind a feature flag
-// TODO: make crate nostd, and add std behind a feature flag
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
+
 #![doc = include_str!("../README.md")]
 //! ## Caveats
 //!
@@ -49,10 +50,13 @@
 //! # Ok::<_, anyhow::Error>(())
 //! ```
 
+extern crate alloc;
+
 #[cfg(test)]
 pub(crate) mod arbitrary;
 pub mod decoding;
 pub mod encoding;
+#[cfg(feature = "std")]
 pub mod unpacking;
 pub(crate) mod utils;
 pub mod validation;
@@ -100,6 +104,8 @@ pub enum Event {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use arbitrary::Arbitrary;
     use arbtest::arbtest;
     use bytes::{Bytes, BytesMut};
@@ -123,7 +129,7 @@ mod tests {
                     acc.pop_if(|parent| match parent {
                         Event::RegularContentChunk(parent) => {
                             let mut bytes = BytesMut::new();
-                            bytes.extend_from_slice(parent);
+                            bytes.extend_from_slice(&parent);
                             bytes.extend_from_slice(&chunk);
                             *chunk = bytes.freeze();
                             true

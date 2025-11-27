@@ -31,7 +31,7 @@
 //! # Ok::<_, anyhow::Error>(())
 //! ```
 
-use std::borrow::Borrow;
+use core::borrow::Borrow;
 
 use bytes::{BufMut, BytesMut};
 use thiserror::Error;
@@ -164,7 +164,7 @@ fn string(buffer: &mut BytesMut, value: impl AsRef<[u8]>) {
 
     trace!(
         "writing string {:?} of size {len}",
-        String::from_utf8_lossy(data)
+        alloc::string::String::from_utf8_lossy(data)
     );
 
     buffer.put_u64_le(len);
