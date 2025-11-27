@@ -2,9 +2,10 @@
 //!
 //! This module is generally only important to the crate's internals.
 
-use core::cmp::Ordering;
 use alloc::{vec, vec::Vec};
+use core::cmp::Ordering;
 
+use bytes::Bytes;
 use thiserror::Error;
 
 use crate::{Event, utils::debug};
@@ -15,6 +16,9 @@ pub enum Error {
     /// The validator has finished, and should've not have received more events
     #[error("validation has finished")]
     Finished,
+    /// A directory entry was given in non-alphabetical order
+    #[error("directory entry {0:?} is not in alphabetical order")]
+    UnsortedEntry(Bytes),
     /// The processed event was invalid for the current parse state
     #[error("unexpected event {0:?} in state {1:?}")]
     UnexpectedEvent(Event, StackFrame),
@@ -24,11 +28,11 @@ pub enum Error {
 ///
 /// This struct is internal and not be used.It's only public so it can be used in [`enum@Error`].
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StackFrame {
     Header,
     Object,
-    Directory,
+    Directory { last: Option<Bytes> },
     DirectoryEntry,
     RegularData { expected: u64, written: u64 },
 }
@@ -52,15 +56,14 @@ impl EventValidator {
     }
 
     #[inline]
-    pub fn peek(&self) -> Result<StackFrame, Error> {
-        self.stack.last().ok_or(Error::Finished).copied()
+    pub fn peek(&self) -> Result<&StackFrame, Error> {
+        self.stack.last().ok_or(Error::Finished)
     }
 
     #[inline]
-    fn deconstruct(&mut self, actions: &mut Vec<StackFrame>, expected: StackFrame) {
+    fn deconstruct(&mut self, actions: &mut Vec<StackFrame>) {
         let frame = self.stack.pop().expect("stack should not be empty");
         debug!("deconstructing frame: {frame:?}");
-        assert_eq!(frame, expected, "popped frame did not equal expected frame");
         actions.push(frame);
     }
 
@@ -72,9 +75,9 @@ impl EventValidator {
 
     #[inline]
     fn post_object(&mut self, actions: &mut Vec<StackFrame>) {
-        self.deconstruct(actions, StackFrame::Object);
+        self.deconstruct(actions);
         if let Some(StackFrame::DirectoryEntry) = self.stack.last() {
-            self.deconstruct(actions, StackFrame::DirectoryEntry);
+            self.deconstruct(actions);
         };
     }
 
@@ -82,12 +85,11 @@ impl EventValidator {
         debug!("advancing validator from {:?}", self.stack);
 
         let mut deconstructed = vec![];
-        let frame = *self.stack.last().ok_or(Error::Finished)?;
-        let unexpected = || Err(Error::UnexpectedEvent(event.clone(), frame));
+        let frame = self.stack.last().ok_or(Error::Finished)?.clone();
 
         match (frame, event) {
             (StackFrame::Header, Event::Header) => {
-                self.deconstruct(&mut deconstructed, frame);
+                self.deconstruct(&mut deconstructed);
                 self.construct(StackFrame::Object);
             }
             (
@@ -103,40 +105,48 @@ impl EventValidator {
                     self.construct(regular);
                 }
                 Event::Symlink { .. } => self.post_object(&mut deconstructed),
-                Event::Directory => self.construct(StackFrame::Directory),
+                Event::Directory => self.construct(StackFrame::Directory { last: None }),
                 _ => unreachable!(),
             },
-            (StackFrame::Directory, Event::DirectoryEntry { .. }) => {
+            (StackFrame::Directory { last }, Event::DirectoryEntry { name }) => {
+                if let Some(last) = last {
+                    if last >= name {
+                        return Err(Error::UnsortedEntry(name.clone()));
+                    }
+                }
+
+                match self.stack.last_mut().unwrap() {
+                    StackFrame::Directory { last } => *last = Some(name.clone()),
+                    _ => unreachable!(),
+                }
+
                 self.construct(StackFrame::DirectoryEntry);
                 self.construct(StackFrame::Object);
             }
-            (StackFrame::Directory, Event::DirectoryEnd) => {
-                self.deconstruct(&mut deconstructed, frame);
+            (StackFrame::Directory { .. }, Event::DirectoryEnd) => {
+                self.deconstruct(&mut deconstructed);
                 self.post_object(&mut deconstructed);
             }
             (StackFrame::RegularData { expected, .. }, Event::RegularContentChunk(chunk)) => {
-                let frame = self
-                    .stack
-                    .last_mut()
-                    .expect("regulardata frame should exist");
-
-                let StackFrame::RegularData { written, .. } = frame else {
-                    unreachable!("frame was not RegularData");
+                let frame = self.stack.last_mut().unwrap();
+                let written = match frame {
+                    StackFrame::RegularData { written, .. } => {
+                        *written += chunk.len() as u64;
+                        written
+                    }
+                    _ => unreachable!(),
                 };
 
-                *written += chunk.len() as u64;
                 match (*written).cmp(&expected) {
-                    Ordering::Less => {}
+                    Ordering::Less => (),
                     Ordering::Equal => {
-                        let frame = *frame;
-                        self.deconstruct(&mut deconstructed, frame);
+                        self.deconstruct(&mut deconstructed);
                         self.post_object(&mut deconstructed);
                     }
-                    Ordering::Greater => return unexpected(),
+                    Ordering::Greater => return Err(Error::UnexpectedEvent(event.clone(), frame.clone())),
                 }
             }
-
-            _ => return unexpected(),
+            (frame, _) => return Err(Error::UnexpectedEvent(event.clone(), frame.clone())),
         }
 
         Ok(deconstructed)
