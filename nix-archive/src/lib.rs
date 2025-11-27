@@ -39,11 +39,11 @@
 //!
 //! // first we encode our events into a buffer
 //! let mut encoded = bytes::BytesMut::new();
-//! Encoder::new().encode_all(&mut encoded, &events)?;
+//! Encoder::new().encode(&mut encoded, &events)?;
 //!
 //! // and next we decode the buffer back into a list of events!
 //! let decoded = Decoder::new()
-//!     .decode_all(&mut encoded.freeze())
+//!     .decode(&mut encoded.freeze())
 //!     .collect::<Result<Vec<_>, _>>()?;
 //!
 //! assert_eq!(events, decoded);
@@ -146,7 +146,7 @@ mod tests {
     fn decode(contents: &[u8]) -> Vec<Event> {
         let decoded = chunk_collapse(
             Decoder::new()
-                .decode_all(&mut Bytes::copy_from_slice(contents))
+                .decode(&mut Bytes::copy_from_slice(contents))
                 .collect::<Result<Vec<_>, _>>()
                 .expect("decoding from bytes should not fail"),
         );
@@ -160,7 +160,7 @@ mod tests {
 
         let mut encoded = BytesMut::new();
         Encoder::new()
-            .encode_all(&mut encoded, decode(contents))
+            .encode(&mut encoded, decode(contents))
             .expect("encoding should not fail");
         let encoded = Bytes::from_owner(encoded);
 
@@ -197,7 +197,7 @@ mod tests {
 
             let mut encoded = BytesMut::new();
             Encoder::new()
-                .encode_all(&mut encoded, &events)
+                .encode(&mut encoded, &events)
                 .expect("encoding should not fail");
             let encoded = Bytes::from_owner(encoded);
 

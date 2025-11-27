@@ -12,7 +12,7 @@
 //! stdin().read_to_end(&mut buffer)?;
 //!
 //! let events = Decoder::new()
-//!     .decode_all(&mut buffer.into())
+//!     .decode(&mut buffer.into())
 //!     .collect::<Result<Vec<_>, _>>()?;
 //!
 //! let output = std::env::current_dir()?.join("unpacked");
