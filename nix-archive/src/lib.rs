@@ -1,19 +1,10 @@
 // TODO: include testing blobs in src control
-// TODO: include tests against `nix nar` in fs packing & unpacking
-// TODO: impl windows support behind a feature flag
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 #![doc = include_str!("../README.md")]
-//! ## Caveats
-//!
-//! - Streaming only, no full encoding or decoding will ever exist in this crate
-//! - Unix only\
-//!     Doing things like checking if files are executable or handling symlinks
-//!     are more difficult on windows, and would most likely be handled better
-//!     via external dependencies, which I don't want to add.
 //!
 //! ## Examples
 //!
@@ -56,8 +47,6 @@ extern crate alloc;
 pub(crate) mod arbitrary;
 pub mod decoding;
 pub mod encoding;
-#[cfg(feature = "std")]
-pub mod unpacking;
 pub(crate) mod utils;
 pub mod validation;
 
