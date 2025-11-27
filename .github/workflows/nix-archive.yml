@@ -1,4 +1,4 @@
-name: Cargo Test
+name: Test nix-archive
 
 on:
   push:
@@ -22,10 +22,8 @@ jobs:
           - stable
           - beta
     steps:
-      - uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: liblua5.4-dev
-          version: 1.0
       - uses: actions/checkout@v4
-      - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
-      - run: cargo test --verbose
+      - run: rustup update ${{ matrix.toolchain }}
+      - run: rustup default ${{ matrix.toolchain }}
+      - run: cargo install cargo-hack
+      - run: cargo hack --each-feature --verbose --package nix-archive test
