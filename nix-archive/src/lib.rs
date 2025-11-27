@@ -3,7 +3,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
-
 #![doc = include_str!("../README.md")]
 //!
 //! ## Examples
@@ -43,8 +42,6 @@
 
 extern crate alloc;
 
-#[cfg(test)]
-pub(crate) mod arbitrary;
 pub mod decoding;
 pub mod encoding;
 pub(crate) mod utils;
@@ -89,115 +86,4 @@ pub enum Event {
     },
     /// The end of a directory object
     DirectoryEnd,
-}
-
-#[cfg(test)]
-mod tests {
-    use alloc::vec::Vec;
-
-    use arbitrary::Arbitrary;
-    use arbtest::arbtest;
-    use bytes::{Bytes, BytesMut};
-
-    use crate::{
-        Event,
-        arbitrary::ArbitraryNar,
-        decoding::Decoder,
-        encoding::Encoder,
-        utils::{TestingLogger, debug, info},
-    };
-
-    // collapses multiple chunk events so comparing equality between
-    // semantically equivalent event streams doesn't error
-    fn chunk_collapse(events: Vec<Event>) -> Vec<Event> {
-        let length = events.len();
-        events
-            .into_iter()
-            .fold(Vec::with_capacity(length), |mut acc, mut event| {
-                if let Event::RegularContentChunk(ref mut chunk) = event {
-                    acc.pop_if(|parent| match parent {
-                        Event::RegularContentChunk(parent) => {
-                            let mut bytes = BytesMut::new();
-                            bytes.extend_from_slice(&parent);
-                            bytes.extend_from_slice(&chunk);
-                            *chunk = bytes.freeze();
-                            true
-                        }
-                        _ => false,
-                    });
-                }
-
-                acc.push(event);
-                acc
-            })
-    }
-
-    fn decode(contents: &[u8]) -> Vec<Event> {
-        let decoded = chunk_collapse(
-            Decoder::new()
-                .decode(&mut Bytes::copy_from_slice(contents))
-                .collect::<Result<Vec<_>, _>>()
-                .expect("decoding from bytes should not fail"),
-        );
-
-        debug!("decoder output: {decoded:?}");
-        decoded
-    }
-
-    fn test_roundtrip_blob(contents: &'static [u8]) {
-        TestingLogger::init();
-
-        let mut encoded = BytesMut::new();
-        Encoder::new()
-            .encode(&mut encoded, decode(contents))
-            .expect("encoding should not fail");
-        let encoded = Bytes::from_owner(encoded);
-
-        debug!("encoder output: {encoded:?}");
-        assert_eq!(
-            contents, encoded,
-            "original events does not match decoded events"
-        );
-    }
-
-    #[test]
-    fn test_roundtrip_blob_rust_compiler() {
-        test_roundtrip_blob(include_bytes!("../blobs/rust-compiler.nar"));
-    }
-
-    #[test]
-    fn test_roundtrip_blob_rust_core() {
-        test_roundtrip_blob(include_bytes!("../blobs/rust-core.nar"));
-    }
-
-    #[test]
-    fn test_roundtrip_blob_rust_std() {
-        test_roundtrip_blob(include_bytes!("../blobs/rust-std.nar"));
-    }
-
-    #[test]
-    fn arbtest_roundtrip() {
-        TestingLogger::init();
-
-        arbtest(|u| {
-            let nar = ArbitraryNar::arbitrary(u)?;
-            let events = chunk_collapse(nar.0);
-            info!("event stream: {:#?}", events);
-
-            let mut encoded = BytesMut::new();
-            Encoder::new()
-                .encode(&mut encoded, &events)
-                .expect("encoding should not fail");
-            let encoded = Bytes::from_owner(encoded);
-
-            debug!("encoder output: {encoded:?}");
-            assert!(
-                events == decode(&encoded),
-                "original events does not match decoded events"
-            );
-
-            Ok(())
-        })
-        .run()
-    }
 }

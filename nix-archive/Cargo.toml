@@ -8,6 +8,10 @@ license = "MPL-2.0"
 keywords = ["nix", "nar", "no_std", "encoding"]
 categories = ["no-std", "encoding", "parser-implementations"]
 
+[[test]]
+name = "main"
+harness = false
+
 [features]
 default = ["std"]
 std = ["bytes/std", "thiserror/std"]
@@ -22,3 +26,6 @@ log = { workspace = true, optional = true }
 anyhow = "1.0.100"
 arbitrary = "1.4.2"
 arbtest = "0.3.2"
+fern = { version = "0.7.1", features = ["colored"] }
+include_dir = "0.7.4"
+libtest-mimic = "0.8.1"
