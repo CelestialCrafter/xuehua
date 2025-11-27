@@ -152,7 +152,7 @@ fn decode(validator: &mut EventValidator, data: &mut Bytes) -> Result<Event, Err
                 }
             }
         }
-        StackFrame::Directory => with_peeked_string(
+        StackFrame::Directory { .. } => with_peeked_string(
             data,
             |str| str == b"entry",
             |data| {

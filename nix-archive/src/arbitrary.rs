@@ -1,5 +1,5 @@
-use core::ops::ControlFlow;
 use alloc::vec::Vec;
+use core::ops::ControlFlow;
 
 use arbitrary::Arbitrary;
 use bytes::Bytes;
@@ -11,8 +11,6 @@ pub struct ArbitraryObject(pub Vec<Event>);
 
 impl Arbitrary<'_> for ArbitraryObject {
     fn arbitrary(u: &mut arbitrary::Unstructured) -> arbitrary::Result<Self> {
-        let make_bytes =
-            |u: &mut arbitrary::Unstructured| u.arbitrary().map(bytes::Bytes::copy_from_slice);
         let mut events = Vec::new();
 
         match u.choose_index(3)? {
@@ -36,15 +34,18 @@ impl Arbitrary<'_> for ArbitraryObject {
                 }
             }
             1 => events.push(Event::Symlink {
-                target: make_bytes(u)?,
+                target: u.arbitrary().map(bytes::Bytes::copy_from_slice)?,
             }),
             2 => {
                 events.push(Event::Directory);
 
                 const MAX_FILES: u32 = 8;
+                let mut prefix: usize = 0;
                 u.arbitrary_loop(None, Some(MAX_FILES), |u| {
+                    prefix += 1;
+
                     events.push(Event::DirectoryEntry {
-                        name: make_bytes(u)?,
+                        name: [prefix.to_le_bytes(), u.arbitrary()?].concat().into(),
                     });
                     events.extend(Self::arbitrary(u)?.0);
 
