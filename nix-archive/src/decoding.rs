@@ -11,15 +11,19 @@
 //! let mut buffer = Vec::new();
 //! stdin().read_to_end(&mut buffer)?;
 //!
-//! for event in Decoder::new().decode_all(&mut buffer.into()) {
+//! for event in Decoder::new().decode(&mut buffer.into()) {
 //!     eprintln!("{:?}", event?);
 //! }
 //!
 //! # Ok::<_, anyhow::Error>(())
 //! ```
 
+use alloc::{
+    format,
+    string::{String, ToString},
+    borrow::ToOwned
+};
 use core::{fmt::Debug, num::TryFromIntError};
-use alloc::{format, string::{String, ToString}};
 
 use bytes::Bytes;
 use thiserror::Error;
@@ -45,7 +49,7 @@ pub enum Error {
     #[error("input does not contain enough data")]
     Incomplete {
         /// The amount of bytes needed to continue decoding
-        needed: usize
+        needed: usize,
     },
     /// A number was too big to be converted
     #[error(transparent)]
@@ -84,21 +88,26 @@ impl Decoder {
     /// If this function does not have enough data to decode an event, an
     /// [`Error::Incomplete`] is returned.
     #[inline]
-    pub fn decode_all(&mut self, bytes: &mut Bytes) -> impl Iterator<Item = Result<Event, Error>> {
-        core::iter::from_fn(|| {
+    pub fn decode(&mut self, bytes: &mut Bytes) -> impl Iterator<Item = Result<Event, Error>> {
+        let mut attempt_validator = EventValidator::new();
+
+        core::iter::from_fn(move || {
             if self.validator.finished() {
                 return None;
             }
 
-            let mut attempt = (self.validator.clone(), bytes.clone());
-            match decode(&mut attempt.0, &mut attempt.1) {
-                Ok(event) => {
-                    self.validator = attempt.0;
-                    *bytes = attempt.1;
+            self.validator.clone_into(&mut attempt_validator);
+            let mut attempt_bytes = bytes.clone();
 
+            match decode(&mut self.validator, &mut attempt_bytes) {
+                Ok(event) => {
+                    *bytes = attempt_bytes;
                     Some(Ok(event))
                 }
-                Err(err) => Some(Err(err)),
+                Err(err) => {
+                    attempt_validator.clone_into(&mut self.validator);
+                    Some(Err(err))
+                }
             }
         })
     }
@@ -189,9 +198,7 @@ fn decode(validator: &mut EventValidator, data: &mut Bytes) -> Result<Event, Err
 fn split_to_checked(bytes: &mut Bytes, at: usize) -> Result<Bytes, Error> {
     let len = bytes.len();
     if at > len {
-        Err(Error::Incomplete {
-            needed: at - len,
-        })
+        Err(Error::Incomplete { needed: at - len })
     } else {
         Ok(bytes.split_to(at))
     }

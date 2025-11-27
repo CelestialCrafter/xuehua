@@ -24,7 +24,7 @@
 //! ];
 //!
 //! let mut encoded = bytes::BytesMut::new();
-//! Encoder::new().encode_all(&mut encoded, events)?;
+//! Encoder::new().encode(&mut encoded, events)?;
 //!
 //! std::io::stdout().write_all(&encoded)?;
 //!
@@ -32,6 +32,7 @@
 //! ```
 
 use core::borrow::Borrow;
+use alloc::borrow::ToOwned;
 
 use bytes::{BufMut, BytesMut};
 use thiserror::Error;
@@ -67,31 +68,31 @@ impl Encoder {
 
     /// Encodes an iterator of [`Events`](Event) into an instance of [`BytesMut`]
     #[inline]
-    pub fn encode_all<I: IntoIterator<Item = impl Borrow<Event>>>(
+    pub fn encode<I: IntoIterator<Item = impl Borrow<Event>>>(
         &mut self,
         buffer: &mut BytesMut,
         iterator: I,
     ) -> Result<(), Error> {
+        let mut attempt_validator = EventValidator::new();
+
         iterator
             .into_iter()
-            .try_for_each(|event| self.encode(buffer, event.borrow()))
-    }
+            .try_for_each(|event| {
+                let event = event.borrow();
+                let attempt_len = buffer.len();
+                self.validator.clone_into(&mut attempt_validator);
 
-    /// Encodes an [`Event`] into an instance of [`BytesMut`]
-    #[inline]
-    pub fn encode(&mut self, buffer: &mut BytesMut, event: &Event) -> Result<(), Error> {
-        let attempt_len = buffer.len();
-        let mut attempt_validator = self.validator.clone();
-        match encode(&mut attempt_validator, buffer, event) {
-            Ok(event) => {
-                self.validator = attempt_validator;
-                Ok(event)
-            }
-            Err(err) => {
-                buffer.truncate(attempt_len);
-                Err(err)
-            }
-        }
+                match encode(&mut self.validator, buffer, event) {
+                    Ok(event) => {
+                        Ok(event)
+                    }
+                    Err(err) => {
+                        attempt_validator.clone_into(&mut self.validator);
+                        buffer.truncate(attempt_len);
+                        Err(err)
+                    }
+                }
+            })
     }
 }
 
