@@ -14,10 +14,10 @@ mlua.workspace = true
 log.workspace = true
 serde.workspace = true
 jiff.workspace = true
+thiserror.workspace = true
+blake3 = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync"] }
-thiserror = "2.0.16"
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
-blake3 = "1.8.2"
 walkdir = "2.5.0"
 serde_json = "1.0.145"
 rusqlite = { version = "0.37.0", features = ["jiff"], optional = true }
