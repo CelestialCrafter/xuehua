@@ -1,11 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["cli", "engine"]
+members = [ "archive","cli", "engine"]
 
 [workspace.dependencies]
 log = { version = "0.4.27", features = ["std"] }
 serde = { version = "1.0.219", features = ["derive"] }
 mlua = { version = "0.11.4", features = ["lua54", "serde", "macros", "async", "send"] }
 jiff = { version = "0.2.15", default-features = false, features = ["alloc", "std", "perf-inline"] }
+thiserror = { version = "2.0.17", default-features = false }
+blake3 = { version = "1.8.2", default-features = false }
 tokio = "1.48.0"
 petgraph = "0.8.3"
