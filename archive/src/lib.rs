@@ -13,8 +13,9 @@ pub mod unpacking;
 extern crate alloc;
 
 use alloc::collections::BTreeSet;
-use blake3::Hasher;
+use core::fmt::Debug;
 
+use blake3::Hasher;
 use bytes::Bytes;
 
 use crate::dictionary::Dictionary;
@@ -24,9 +25,15 @@ pub(crate) fn hash_plen<'a>(hasher: &'a mut Hasher, bytes: &Bytes) -> &'a mut Ha
     hasher.update(&bytes)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PathBytes {
     pub inner: Bytes,
+}
+
+impl Debug for PathBytes {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.inner.fmt(f)
+    }
 }
 
 #[cfg(all(feature = "std", unix))]
