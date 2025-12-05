@@ -20,9 +20,12 @@ use core::fmt::Debug;
 use blake3::{Hash, Hasher};
 use bytes::Bytes;
 
-pub(crate) fn hash_plen<'a>(hasher: &'a mut Hasher, bytes: &Bytes) -> &'a mut Hasher {
-    hasher.update(&(bytes.len() as u64).to_be_bytes());
-    hasher.update(&bytes)
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) enum State {
+    #[default]
+    Magic,
+    Index,
+    Operations(usize),
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -33,6 +36,12 @@ pub struct PathBytes {
 impl Debug for PathBytes {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.inner.fmt(f)
+    }
+}
+
+impl From<Bytes> for PathBytes {
+    fn from(value: Bytes) -> Self {
+        Self { inner: value }
     }
 }
 
@@ -64,8 +73,8 @@ impl AsRef<Bytes> for Contents {
 #[derive(Debug, Clone)]
 pub enum Object {
     File {
-        contents: Contents,
         prefix: Option<Hash>,
+        contents: Contents,
     },
     Symlink {
         target: PathBytes,
@@ -137,8 +146,106 @@ impl Operation {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     Index(BTreeSet<PathBytes>),
     Operation(Operation),
+}
+
+pub(crate) fn hash_plen<'a>(hasher: &'a mut Hasher, bytes: &Bytes) -> &'a mut Hasher {
+    hasher.update(&(bytes.len() as u64).to_be_bytes());
+    hasher.update(&bytes)
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use blake3::Hash;
+    use bytes::{Bytes, BytesMut};
+
+    use crate::{
+        Contents, Event, Object, Operation, PathBytes, compression::Compressor, decoding::Decoder,
+        encoding::Encoder, prefixes::PrefixLoader,
+    };
+
+    struct TestLoader;
+
+    impl PrefixLoader for TestLoader {
+        fn load(&mut self, _id: Hash) -> Result<Bytes, crate::prefixes::Error> {
+            Ok(Bytes::from_owner(b"hello world!".repeat(100)))
+        }
+    }
+
+    #[test]
+    fn test_encoding() {
+        let events = [
+            Event::Index(BTreeSet::from([
+                PathBytes {
+                    inner: Bytes::from_owner(b"/a".repeat(20)),
+                },
+                PathBytes {
+                    inner: Bytes::from_owner(b"/b".repeat(20)),
+                },
+                PathBytes {
+                    inner: Bytes::from_owner(b"/c".repeat(20)),
+                },
+                PathBytes {
+                    inner: Bytes::from_owner(b"/d".repeat(20)),
+                },
+            ])),
+            Event::Operation(Operation::Create {
+                permissions: 0o755,
+                object: Object::File {
+                    contents: Contents::Uncompressed(
+                        TestLoader
+                            .load(Hash::from_bytes(Default::default()))
+                            .unwrap(),
+                    ),
+                    prefix: Some(Hash::from_bytes([1; 32])),
+                },
+            }),
+            Event::Operation(Operation::Create {
+                permissions: 0o755,
+                object: Object::Symlink {
+                    target: PathBytes {
+                        inner: Bytes::from_owner(b"/e".repeat(20)),
+                    },
+                },
+            }),
+            Event::Operation(Operation::Create {
+                permissions: 0o644,
+                object: Object::Directory,
+            }),
+            Event::Operation(Operation::Delete),
+        ];
+
+        let compressed: Vec<_> = Compressor::new()
+            .with_loader(TestLoader)
+            .compress(events)
+            .map(|event| event.expect("should be able to compress event"))
+            .collect();
+
+        let mut encoded = BytesMut::new();
+        let mut encoder = Encoder::new(&mut encoded).expect("should be able to initialize encoder");
+        encoder
+            .encode(&compressed)
+            .expect("should be able to encode events");
+        encoder.finish().expect("should be able to finish encoder");
+
+        std::fs::write("test", &encoded).unwrap();
+        eprintln!("{encoded:?}");
+
+        let mut decoder = Decoder::new(&mut encoded);
+        let decoded: Vec<_> = decoder
+            .decode()
+            .map(|event| {
+                dbg!(&event);
+                event
+            })
+            .map(|event| event.expect("should be able to decode event"))
+            .collect();
+
+        assert_eq!(compressed, decoded);
+    }
 }
