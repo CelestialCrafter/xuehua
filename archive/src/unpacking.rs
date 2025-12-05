@@ -103,6 +103,7 @@ impl<'a> Unpacker<'a> {
                     reason: "too many events".into(),
                 })?;
                 let path = path
+                    .as_ref()
                     .strip_prefix("/")
                     .map_err(|_| Error::RelativePath(path.clone()));
                 let path = self.root.join(path?);

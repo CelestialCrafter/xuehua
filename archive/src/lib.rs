@@ -40,19 +40,18 @@ impl From<Bytes> for PathBytes {
 }
 
 #[cfg(all(feature = "std", unix))]
-impl std::ops::Deref for PathBytes {
-    type Target = std::path::Path;
-
-    fn deref(&self) -> &Self::Target {
+impl std::convert::AsRef<std::path::Path> for PathBytes {
+    fn as_ref(&self) -> &std::path::Path {
         let str: &std::ffi::OsStr = std::os::unix::ffi::OsStrExt::from_bytes(&self.inner);
         std::path::Path::new(str)
     }
 }
 
 #[cfg(all(feature = "std", unix))]
-impl std::convert::AsRef<std::path::Path> for PathBytes {
-    fn as_ref(&self) -> &std::path::Path {
-        &*self
+impl From<std::path::PathBuf> for PathBytes {
+    fn from(value: std::path::PathBuf) -> Self {
+        let bytes = std::os::unix::ffi::OsStringExt::into_vec(value.into_os_string());
+        Bytes::from_owner(bytes).into()
     }
 }
 
