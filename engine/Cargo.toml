@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = []
 bubblewrap-executor = ["tokio/process"]
 http-executor = ["dep:ureq", "dep:tokio-util", "tokio/fs"]
 local-store = ["dep:rusqlite"]
