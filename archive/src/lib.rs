@@ -13,11 +13,9 @@ pub mod unpacking;
 extern crate alloc;
 
 use alloc::collections::BTreeSet;
-use blake3::Hasher;
-use zstd_safe::{CCtx, CDict};
 use core::ops::Deref;
-use thiserror::Error;
 
+use blake3::Hasher;
 use bytes::Bytes;
 
 use crate::dictionary::Dictionary;
