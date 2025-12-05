@@ -5,7 +5,7 @@ use blake3::Hasher;
 use bytes::BufMut;
 use thiserror::Error;
 
-use crate::{Contents, Event, Object, Operation, hash_plen};
+use crate::{Contents, Event, Object, Operation, State, hash_plen};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -16,15 +16,6 @@ pub enum Error {
     #[error("file contents should be compressed")]
     Uncompressed,
 }
-
-#[derive(Debug, Default)]
-enum State {
-    #[default]
-    Magic,
-    Index,
-    Operations(usize),
-}
-
 
 pub struct Encoder<'a, B> {
     state: State,
