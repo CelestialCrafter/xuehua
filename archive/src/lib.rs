@@ -13,8 +13,8 @@ pub mod unpacking;
 extern crate alloc;
 
 use alloc::collections::BTreeSet;
-use blake3::Hasher;
 
+use blake3::Hasher;
 use bytes::Bytes;
 
 use crate::dictionary::Dictionary;

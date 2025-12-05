@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-std = ["blake3/std", "bytes/std", "thiserror/std", "zstd-safe/std"]
+std = ["blake3/std", "bytes/std", "thiserror/std"]
 mmap = ["dep:memmap2"]
 
 [dependencies]
@@ -12,4 +12,4 @@ blake3.workspace = true
 thiserror.workspace = true
 bytes = { version = "1.11.0", default-features = false }
 memmap2 = { version = "0.9.9", optional = true }
-zstd-safe = "7.2.4"
+zstd-safe = { version = "7.2.4", features = ["std"] }
