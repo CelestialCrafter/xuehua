@@ -63,7 +63,7 @@ impl<'a> Unpacker<'a> {
     }
 
     #[inline]
-    pub fn pack(
+    pub fn unpack(
         &mut self,
         iterator: impl IntoIterator<Item = impl Borrow<Event>>,
     ) -> Result<(), Error> {
