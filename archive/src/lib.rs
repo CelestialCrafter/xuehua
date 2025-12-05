@@ -7,9 +7,9 @@ pub mod encoding;
 
 pub mod compression;
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", unix))]
 pub mod packing;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", unix))]
 pub mod unpacking;
 
 extern crate alloc;
@@ -52,6 +52,13 @@ impl std::ops::Deref for PathBytes {
     fn deref(&self) -> &Self::Target {
         let str: &std::ffi::OsStr = std::os::unix::ffi::OsStrExt::from_bytes(&self.inner);
         std::path::Path::new(str)
+    }
+}
+
+#[cfg(all(feature = "std", unix))]
+impl std::convert::AsRef<std::path::Path> for PathBytes {
+    fn as_ref(&self) -> &std::path::Path {
+        &*self
     }
 }
 
