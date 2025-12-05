@@ -8,6 +8,7 @@ name = "main"
 harness = false
 
 [features]
+default = ["std"]
 std = ["blake3/std", "thiserror/std"]
 log = ["dep:log"]
 
