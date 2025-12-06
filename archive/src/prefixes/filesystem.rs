@@ -3,7 +3,7 @@ use std::path::Path;
 use blake3::Hash;
 use bytes::Bytes;
 
-use crate::dictionary::{Error, DictionaryLoader};
+use super::{Error, PrefixLoader};
 
 #[derive(Clone, Copy, Default)]
 pub enum Behavior {
@@ -24,7 +24,7 @@ impl<'a> FilesystemLoader<'a> {
     }
 }
 
-impl DictionaryLoader for FilesystemLoader<'_> {
+impl PrefixLoader for FilesystemLoader<'_> {
     fn load(&mut self, id: Hash) -> Result<Bytes, Error> {
         todo!()
     }
