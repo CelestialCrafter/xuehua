@@ -1,0 +1,141 @@
+use core::cell::OnceCell;
+use alloc::vec::Vec;
+
+use bytes::Bytes;
+use thiserror::Error;
+use zstd_safe::CCtx;
+
+use crate::{
+    Contents, Event, Object, Operation,
+    prefixes::{self, PrefixLoader, unimplemented::UnimplementedLoader},
+};
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("{message} (error code {code})")]
+    ZstdError { code: usize, message: &'static str },
+    #[error(transparent)]
+    LoaderError(prefixes::Error),
+}
+
+const UNKNOWN_ZSTD_ERROR: Error = Error::ZstdError {
+    code: 0,
+    message: "unknown error",
+};
+
+#[inline]
+fn zstd_error(code: usize) -> Error {
+    Error::ZstdError {
+        code,
+        message: zstd_safe::get_error_name(code),
+    }
+}
+
+pub struct Compressor<L> {
+    level: u16,
+    loader: L,
+}
+
+impl Compressor<UnimplementedLoader> {
+    pub fn new() -> Self {
+        Self {
+            level: 4,
+            loader: UnimplementedLoader,
+        }
+    }
+}
+
+impl<L: PrefixLoader> Compressor<L> {
+    pub fn with_loader<T>(self, loader: T) -> Compressor<T> {
+        Compressor {
+            level: self.level,
+            loader,
+        }
+    }
+
+    pub fn with_level(mut self, level: u16) -> Self {
+        self.level = level;
+        self
+    }
+
+    pub fn compress(
+        &mut self,
+        events: impl IntoIterator<Item = Event>,
+    ) -> impl Iterator<Item = Result<Event, Error>> {
+        let level = self.level;
+        let make_cctx = move || {
+            let mut cctx = CCtx::try_create().ok_or(UNKNOWN_ZSTD_ERROR)?;
+            cctx.set_parameter(zstd_safe::CParameter::CompressionLevel(level as i32))
+                .map_err(zstd_error)?;
+            Ok(cctx)
+        };
+
+        let mut global_cctx: OnceCell<CCtx<'_>> = OnceCell::new();
+        let iter = events.into_iter().map(move |event| {
+            let (permissions, prefix, mut contents) = match event {
+                Event::Operation(Operation::Create {
+                    object:
+                        Object::File {
+                            contents: Contents::Uncompressed(contents),
+                            prefix,
+                        },
+                    permissions,
+                }) => (permissions, prefix, contents),
+                _ => return Ok(event),
+            };
+
+            let mut compressed = Vec::with_capacity(zstd_safe::compress_bound(contents.len()));
+            match prefix {
+                Some(prefix) => {
+                    let mut prefix = self.loader.load(prefix).map_err(Error::LoaderError)?;
+
+                    // HACK: if contents and prefix point to the same underlying bytes,
+                    // HACK: the prefix **will not** be used. i'm assuming this is due to some weird C stuff
+                    // HACK: within zstd itsself the only workaround i've been able to find is copying the
+                    // HACK: prefix/contents into a different buffer
+                    if prefix.as_ptr() == contents.as_ptr() {
+                        // try to minimize the impact
+                        if prefix.len() > contents.len() {
+                            contents = Bytes::copy_from_slice(&contents);
+                        } else {
+                            prefix = Bytes::copy_from_slice(&prefix);
+                        }
+                    }
+
+                    let mut cctx = make_cctx()?;
+                    cctx.set_parameter(zstd_safe::CParameter::EnableLongDistanceMatching(true))
+                        .and_then(|_| cctx.set_pledged_src_size(Some(contents.len() as u64)))
+                        .and_then(|_| cctx.ref_prefix(&prefix))
+                        .map_err(zstd_error)?;
+
+                    cctx.compress2(&mut compressed, &contents)
+                }
+                None => {
+                    // yuck....
+                    let cctx = match global_cctx.get_mut() {
+                        Some(cctx) => cctx,
+                        None => {
+                            let _ = global_cctx.set(make_cctx()?);
+                            global_cctx.get_mut().unwrap()
+                        }
+                    };
+
+                    cctx.set_pledged_src_size(Some(contents.len() as u64))
+                        .map_err(zstd_error)?;
+                    cctx.compress2(&mut compressed, &contents)
+                }
+            }
+            .map_err(zstd_error)?;
+
+            Ok(Event::Operation(Operation::Create {
+                permissions,
+                object: Object::File {
+                    contents: Contents::Compressed(Bytes::from_owner(compressed)),
+                    prefix,
+                },
+            }))
+        });
+
+        iter
+    }
+}

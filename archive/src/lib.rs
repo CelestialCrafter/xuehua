@@ -1,9 +1,11 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-pub mod dictionary;
+pub mod prefixes;
 
 pub mod decoding;
 pub mod encoding;
+
+pub mod compression;
 
 #[cfg(feature = "std")]
 pub mod packing;
@@ -15,10 +17,8 @@ extern crate alloc;
 use alloc::collections::BTreeSet;
 use core::fmt::Debug;
 
-use blake3::Hasher;
+use blake3::{Hash, Hasher};
 use bytes::Bytes;
-
-use crate::dictionary::Dictionary;
 
 pub(crate) fn hash_plen<'a>(hasher: &'a mut Hasher, bytes: &Bytes) -> &'a mut Hasher {
     hasher.update(&(bytes.len() as u64).to_be_bytes());
@@ -65,7 +65,7 @@ impl AsRef<Bytes> for Contents {
 pub enum Object {
     File {
         contents: Contents,
-        dictionary: Dictionary,
+        prefix: Option<Hash>,
     },
     Symlink {
         target: PathBytes,
@@ -78,7 +78,7 @@ impl Object {
         match self {
             Object::File {
                 contents,
-                dictionary: _,
+                prefix: _,
             } => {
                 hasher.update(&[0]);
                 hash_plen(hasher, contents.as_ref())
@@ -98,11 +98,11 @@ impl PartialEq for Object {
             (
                 Self::File {
                     contents: left,
-                    dictionary: _,
+                    prefix: _,
                 },
                 Self::File {
                     contents: right,
-                    dictionary: _,
+                    prefix: _,
                 },
             ) => left == right,
             (Self::Symlink { target: left }, Self::Symlink { target: right }) => left == right,
