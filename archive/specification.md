@@ -34,7 +34,12 @@ operation
 		// File
 		// When computing the digest of a file, the following should be hashed:
 		// u8(0), lenp(contents)
-		u8(0), zstd-dict(contents), lenp(zstd-stream(contents))
+		u8(0), (
+			// No prefix
+			u8(0)
+			// Prefix
+			| u8(1), digest(zstd-prefix(contents))
+		), lenp(zstd-stream(contents))
 		// Symlink
 		// `target` is a pathname
 	  | u8(1), lenp(target)
@@ -50,15 +55,7 @@ digest(b) = BLAKE3 hash of b with an output length of 32;
 timestamp(t) = i64(t.seconds), u32(t.nanoseconds);
 
 zstd-stream(b) = Zstandard stream of b;
-zstd-dict(b)
-	// No dictionary
-	= u8(0)
-	// Dictionary
-	| u8(1), lenp(zstd-dict-inner(b))
-	// External dictionary
-	| u8(2), digest(zstd-dict-inner(b))
-	;
-zstd-dict-inner(b) = Zstandard dictionary used to compress `b`;
+zstd-prefix(b) = Zstandard dictionary used to compress `b`;
 
 u8(n)  = little-endian unsigned 8 bit integer;
 u16(n) = little-endian unsigned 16 bit integer;

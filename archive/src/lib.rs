@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-pub mod dictionary;
+pub mod prefixes;
 
 pub mod decoding;
 pub mod encoding;
@@ -17,8 +17,6 @@ use core::ops::Deref;
 
 use blake3::Hasher;
 use bytes::Bytes;
-
-use crate::dictionary::Dictionary;
 
 pub(crate) fn hash_plen<'a>(hasher: &'a mut Hasher, bytes: &Bytes) -> &'a mut Hasher {
     hasher.update(&(bytes.len() as u64).to_be_bytes());
@@ -59,7 +57,7 @@ impl AsRef<Bytes> for Contents {
 pub enum Object {
     File {
         contents: Contents,
-        dictionary: Dictionary,
+        prefix: Option<Bytes>,
     },
     Symlink {
         target: PathBytes,
@@ -72,7 +70,7 @@ impl Object {
         match self {
             Object::File {
                 contents,
-                dictionary: _,
+                prefix: _,
             } => {
                 hasher.update(&[0]);
                 hash_plen(hasher, contents.as_ref())
@@ -92,11 +90,11 @@ impl PartialEq for Object {
             (
                 Self::File {
                     contents: left,
-                    dictionary: _,
+                    prefix: _,
                 },
                 Self::File {
                     contents: right,
-                    dictionary: _,
+                    prefix: _,
                 },
             ) => left == right,
             (Self::Symlink { target: left }, Self::Symlink { target: right }) => left == right,

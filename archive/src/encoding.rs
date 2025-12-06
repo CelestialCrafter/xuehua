@@ -6,9 +6,8 @@ use thiserror::Error;
 use zstd_safe::{CCtx, CDict};
 
 use crate::{
-    Contents, Event, Object, Operation,
-    dictionary::{Dictionary, DictionaryLoader, Error as LoaderError},
-    hash_plen,
+    Contents, Event, Object, Operation, hash_plen,
+    prefixes::{Error as LoaderError, Prefix, PrefixLoader},
 };
 
 #[derive(Error, Debug)]
@@ -55,7 +54,7 @@ pub struct Encoder<'a, B, L> {
     loader: &'a mut L,
 }
 
-impl<'a, B: BufMut, L: DictionaryLoader> Encoder<'a, B, L> {
+impl<'a, B: BufMut, L: PrefixLoader> Encoder<'a, B, L> {
     pub fn new(buffer: &'a mut B, loader: &'a mut L) -> Result<Self, Error> {
         let mut cctx = CCtx::try_create().ok_or_else(zstd_error_unknown)?;
         cctx.set_parameter(zstd_safe::CParameter::EnableLongDistanceMatching(true))
@@ -170,16 +169,20 @@ impl<'a, B: BufMut, L: DictionaryLoader> Encoder<'a, B, L> {
         self.buffer.put_u32_le(permissions);
 
         match object {
-            Object::File {
-                contents,
-                dictionary,
-            } => {
+            Object::File { contents, prefix } => {
                 self.buffer.put_u8(0);
-                self.put_dictionary(&dictionary);
+                match prefix {
+                    None => self.buffer.put_u8(0),
+                    Some(bytes) => {
+                        self.buffer.put_u8(1);
+                        self.put_plen(bytes);
+                    }
+                }
+
                 match contents {
                     Contents::Compressed(bytes) => self.put_plen(bytes),
                     Contents::Uncompressed(bytes) => {
-                        let compressed = self.compress_contents(dictionary, bytes)?;
+                        let compressed = self.compress_contents(prefix, bytes)?;
                         self.put_plen(&compressed)
                     }
                 }
@@ -194,36 +197,18 @@ impl<'a, B: BufMut, L: DictionaryLoader> Encoder<'a, B, L> {
         Ok(())
     }
 
-    fn put_dictionary(&mut self, dictionary: &Dictionary) {
-        match dictionary {
-            Dictionary::None => self.buffer.put_u8(0),
-            Dictionary::Internal(data) => {
-                self.buffer.put_u8(1);
-                self.put_plen(&data);
-            }
-            Dictionary::External(hash) => {
-                self.buffer.put_u8(2);
-                self.buffer.put_slice(hash.as_bytes());
-            }
-        }
-    }
-
-    fn compress_contents(
-        &mut self,
-        dictionary: &Dictionary,
-        contents: &Bytes,
-    ) -> Result<Bytes, Error> {
+    fn compress_contents(&mut self, dictionary: &Prefix, contents: &Bytes) -> Result<Bytes, Error> {
         self.cctx
             .set_pledged_src_size(Some(contents.len() as u64))
             .map_err(zstd_error)?;
 
         let mut compressed = Vec::with_capacity(CCtx::out_size());
         match dictionary {
-            Dictionary::None => (),
-            Dictionary::Internal(bytes) => {
+            Prefix::None => (),
+            Prefix::Internal(bytes) => {
                 self.decompress_with_dict(&bytes, contents, &mut compressed)?
             }
-            Dictionary::External(id) => {
+            Prefix::External(id) => {
                 let bytes = self.loader.load(*id).map_err(Error::LoaderError)?;
                 self.decompress_with_dict(&bytes, contents, &mut compressed)?;
             }
@@ -260,8 +245,8 @@ mod tests {
 
     use crate::{
         Contents, Event, Object, Operation, PathBytes,
-        dictionary::{Dictionary, unimplemented::UnimplementedLoader},
         encoding::Encoder,
+        prefixes::{Prefix, unimplemented::UnimplementedLoader},
     };
 
     #[test]
@@ -294,7 +279,7 @@ mod tests {
                         contents: Contents::Uncompressed(Bytes::from_static(
                             b"this is my file, zstd compressed! <3",
                         )),
-                        dictionary: Dictionary::Internal(Bytes::from_static(b"this is my file, ")),
+                        prefix: Prefix::Internal(Bytes::from_static(b"this is my file, ")),
                     },
                 }),
                 Event::Operation(Operation::Create {
