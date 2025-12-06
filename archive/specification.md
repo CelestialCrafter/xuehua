@@ -30,11 +30,11 @@ index = lenp({ lenp(location) }), digest({ lenp(location) });
 operation
 	// Create
 	// permissions = stat's st_mode permission bits
-	= u8(0), u32(permissions.rwx), (
+	= u8(0), u32(permissions), (
 		// File
 		// When computing the digest of a file, the following should be hashed:
 		// u8(0), lenp(contents)
-		u8(0), zstd-dict(contents), lenp(zstd-stream(contents))
+		u8(0), (u8(0) | u8(1), digest(zstd-prefix)), lenp(zstd(contents))
 		// Symlink
 		// `target` is a pathname
 	  | u8(1), lenp(target)
@@ -48,16 +48,8 @@ operation
 lenp(x) = u64(|x|), x;
 digest(b) = BLAKE3 hash of b with an output length of 32;
 
-zstd-stream(b) = Zstandard stream of b;
-zstd-dict(b)
-	// No dictionary
-	= u8(0)
-	// Dictionary
-	| u8(1), lenp(zstd-dict-inner(b))
-	// External dictionary
-	| u8(2), digest(zstd-dict-inner(b))
-	;
-zstd-dict-inner(b) = Zstandard dictionary used to compress `b`;
+zstd-prefix = Zstandard prefix to compress/decompress with;
+zstd-frame(b) = Zstandard frame of b;
 
 u8(n)  = little-endian unsigned 8 bit integer;
 u16(n) = little-endian unsigned 16 bit integer;
@@ -71,11 +63,7 @@ u64(n) = little-endian unsigned 64 bit integer;
 - **Sorting:** `object-map` entries MUST be sorted by the bytes of their
 	`location` in ascending order. Duplicate `location` entries MUST NOT appear.
 - **Deletion**: If applicable, deletion objects MUST recursively remove children.
-- **Dictionary Training:** When training a dictionary, it MAY be trained on a file object's `contents`.
-	See [Zstandard as a patching engine](https://github.com/facebook/zstd/wiki/Zstandard-as-a-patching-engine) for more information.
-- **External Dictionaries:** For external dictionaries, decoders MUST inject the
-	dictionary identified by the digest. Implementations SHOULD provide a method to
-	dynamically locate dictionaries.
+- **Prefixes:** For prefixes, decoders MUST inject the prefix identified by the digest. Implementations SHOULD provide a method to dynamically locate prefixes.
 - **Complete Digest:** When computing the semantic digest of an archive, implementations SHOULD hash an ordered composite of:
 	- File content digests
 	- Symlink target digests
