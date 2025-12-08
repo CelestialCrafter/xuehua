@@ -5,10 +5,10 @@ use arbitrary::Arbitrary;
 use blake3::Hash;
 use bytes::{Bytes, BytesMut};
 use libtest_mimic::{Failed, Measurement};
-use xh_archive::decoding::Decoder;
-use xh_archive::encoding::Encoder;
-use xh_archive::prefixes::PrefixLoader;
-use xh_archive::{Contents, Event, Object, Operation, PathBytes};
+use xh_archive::{
+    Contents, Event, Object, Operation, PathBytes, decoding::Decoder, encoding::Encoder,
+    prefixes::PrefixLoader,
+};
 
 #[derive(Clone, Copy)]
 pub struct BenchmarkOptions {

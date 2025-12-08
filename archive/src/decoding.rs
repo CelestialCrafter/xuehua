@@ -5,7 +5,10 @@ use core::{num::TryFromIntError, str::Utf8Error};
 use bytes::{Buf, Bytes, TryGetError};
 use thiserror::Error;
 
-use crate::{Contents, Event, Object, Operation, State, hash_plen};
+use crate::{
+    Contents, Event, Object, Operation,
+    utils::{self, State, debug},
+};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -57,7 +60,9 @@ impl<'a, B: Buf> Decoder<'a, B> {
     }
 
     fn process(&mut self) -> Result<Event, Error> {
-        match self.state {
+        debug!("decoding in state: {:?}", self.state);
+
+        let event = match self.state {
             State::Magic => {
                 self.expect("xuehua-archive")?;
 
@@ -67,7 +72,7 @@ impl<'a, B: Buf> Decoder<'a, B> {
                 }
 
                 self.state = State::Index;
-                self.process()
+                self.process()?
             }
             State::Index => {
                 let amount = self.buffer.try_get_u64_le()?;
@@ -78,13 +83,13 @@ impl<'a, B: Buf> Decoder<'a, B> {
                     let len = self.buffer.try_get_u64_le()?.try_into()?;
                     let bytes = self.try_copy_to_bytes(len)?;
 
-                    hash_plen(&mut hasher, &bytes);
+                    utils::hash_plen(&mut hasher, &bytes);
                     index.insert(bytes.into());
                 }
 
                 self.expect_hash(hasher.finalize())?;
                 self.state = State::Operations(index.len());
-                Ok(Event::Index(index))
+                Event::Index(index)
             }
             State::Operations(..) => {
                 let delete = self.get_bool()?;
@@ -106,13 +111,19 @@ impl<'a, B: Buf> Decoder<'a, B> {
                     _ => unreachable!(),
                 }
 
-                Ok(Event::Operation(operation))
+                Event::Operation(operation)
             }
-        }
+        };
+
+        debug!("decoded event: {event:?}");
+
+        Ok(event)
     }
 
     fn get_object(&mut self) -> Result<Object, Error> {
         let obj_type = self.buffer.try_get_u8()?;
+        debug!("decoding object type {obj_type}");
+
         Ok(match obj_type {
             0 => Object::File {
                 prefix: {

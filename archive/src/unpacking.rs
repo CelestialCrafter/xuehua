@@ -8,7 +8,7 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{Contents, Event, Object, Operation, PathBytes};
+use crate::{Contents, Event, Object, Operation, PathBytes, utils::debug};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -73,7 +73,7 @@ impl<'a> Unpacker<'a> {
     }
 
     fn process(&mut self, event: &Event) -> Result<(), Error> {
-        eprintln!("processing {event:?}");
+        debug!("unpacking {event:?}");
 
         match self.index {
             None => match event {
@@ -106,6 +106,7 @@ impl<'a> Unpacker<'a> {
                     .strip_prefix("/")
                     .map_err(|_| Error::RelativePath(path.clone()));
                 let path = self.root.join(path?);
+                debug!("unpacking to {}", path.display());
 
                 match operation {
                     Operation::Create {

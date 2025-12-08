@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub mod prefixes;
+pub(crate) mod utils;
 
 pub mod decoding;
 pub mod encoding;
@@ -19,14 +20,6 @@ use core::fmt::Debug;
 
 use blake3::{Hash, Hasher};
 use bytes::Bytes;
-
-#[derive(Debug, Default, Clone, Copy)]
-pub(crate) enum State {
-    #[default]
-    Magic,
-    Index,
-    Operations(usize),
-}
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PathBytes {
@@ -97,11 +90,11 @@ impl Object {
                 prefix: _,
             } => {
                 hasher.update(&[0]);
-                hash_plen(hasher, contents.as_ref())
+                utils::hash_plen(hasher, contents.as_ref())
             }
             Object::Symlink { target } => {
                 hasher.update(&[1]);
-                hash_plen(hasher, &target.inner)
+                utils::hash_plen(hasher, &target.inner)
             }
             Object::Directory => hasher.update(&[2]),
         }
@@ -157,9 +150,4 @@ impl Operation {
 pub enum Event {
     Index(BTreeSet<PathBytes>),
     Operation(Operation),
-}
-
-pub(crate) fn hash_plen<'a>(hasher: &'a mut Hasher, bytes: &Bytes) -> &'a mut Hasher {
-    hasher.update(&(bytes.len() as u64).to_be_bytes());
-    hasher.update(&bytes)
 }

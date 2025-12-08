@@ -1,5 +1,5 @@
-use core::cell::OnceCell;
 use alloc::vec::Vec;
+use core::cell::OnceCell;
 
 use bytes::Bytes;
 use thiserror::Error;
@@ -7,7 +7,8 @@ use zstd_safe::CCtx;
 
 use crate::{
     Contents, Event, Object, Operation,
-    prefixes::{self, PrefixLoader, unimplemented::UnimplementedLoader},
+    prefixes::{Error as LoaderError, PrefixLoader, unimplemented::UnimplementedLoader},
+    utils::{debug, trace},
 };
 
 #[derive(Error, Debug)]
@@ -15,7 +16,7 @@ pub enum Error {
     #[error("{message} (error code {code})")]
     ZstdError { code: usize, message: &'static str },
     #[error(transparent)]
-    LoaderError(prefixes::Error),
+    LoaderError(LoaderError),
 }
 
 const UNKNOWN_ZSTD_ERROR: Error = Error::ZstdError {
@@ -84,7 +85,12 @@ impl<L: PrefixLoader> Compressor<L> {
                 _ => return Ok(event),
             };
 
-            let mut compressed = Vec::with_capacity(zstd_safe::compress_bound(contents.len()));
+            debug!("compressing with prefix: {prefix:?}");
+
+            let capacity = zstd_safe::compress_bound(contents.len());
+            debug!("allocating buffer of size {capacity}");
+
+            let mut compressed = Vec::with_capacity(capacity);
             match prefix {
                 Some(prefix) => {
                     let mut prefix = self.loader.load(prefix).map_err(Error::LoaderError)?;
@@ -94,6 +100,8 @@ impl<L: PrefixLoader> Compressor<L> {
                     // HACK: within zstd itsself the only workaround i've been able to find is copying the
                     // HACK: prefix/contents into a different buffer
                     if prefix.as_ptr() == contents.as_ptr() {
+                        trace!("using bytes copy hack");
+
                         // try to minimize the impact
                         if prefix.len() > contents.len() {
                             contents = Bytes::copy_from_slice(&contents);
@@ -126,6 +134,12 @@ impl<L: PrefixLoader> Compressor<L> {
                 }
             }
             .map_err(zstd_error)?;
+
+            debug!("saved {:.2}% of {} bytes", {
+                let original = contents.len() as f64;
+                let diff = original - (compressed.len() as f64);
+                (diff / original) * 100.0
+            }, contents.len());
 
             Ok(Event::Operation(Operation::Create {
                 permissions,
