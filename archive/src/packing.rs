@@ -8,12 +8,17 @@ use std::{
 use bytes::{BufMut, BytesMut};
 use thiserror::Error;
 
-use crate::{Contents, Event, Object, Operation, PathBytes, utils::debug};
+use crate::{
+    Contents, Event, Object, Operation, PathBytes,
+    utils::{PathEscapeError, debug, resolve_path},
+};
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("unsupported file type at {0:?}")]
     UnsupportedType(PathBytes),
+    #[error(transparent)]
+    PathEscape(#[from] PathEscapeError),
     #[error(transparent)]
     IOError(#[from] std::io::Error),
 }
@@ -137,12 +142,12 @@ impl Packer {
                 },
             })
         } else if metadata.is_symlink() {
+            let target = fs::read_link(path)?.into();
+            resolve_path(&self.root, &target)?;
+
             Event::Operation(Operation::Create {
                 permissions,
-                object: Object::Symlink {
-                    // TODO: ensure target does not escape root
-                    target: fs::read_link(path)?.into(),
-                },
+                object: Object::Symlink { target },
             })
         } else {
             return Err(Error::UnsupportedType(path.clone()));

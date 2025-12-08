@@ -34,6 +34,41 @@ pub enum State {
     Operations(usize),
 }
 
+#[cfg(feature = "std")]
+#[derive(thiserror::Error, Debug, Clone)]
+#[error("path {0:?} attempted to escape root")]
+pub struct PathEscapeError(crate::PathBytes);
+
+#[cfg(feature = "std")]
+pub fn resolve_path<'b>(
+    root: impl AsRef<std::path::Path>,
+    path: &crate::PathBytes,
+) -> Result<std::path::PathBuf, PathEscapeError> {
+    use std::path::Component;
+
+    let resolved = path
+        .as_ref()
+        .components()
+        .fold(root.as_ref().to_path_buf(), |mut acc, x| {
+            match x {
+                Component::Prefix(..) => (),
+                Component::RootDir => (),
+                Component::CurDir => (),
+                Component::ParentDir => {
+                    acc.pop();
+                }
+                Component::Normal(segment) => acc.push(segment),
+            };
+
+            acc
+        });
+
+    resolved
+        .starts_with(root)
+        .then_some(resolved)
+        .ok_or_else(|| PathEscapeError(path.clone()))
+}
+
 pub fn hash_plen<'a>(hasher: &'a mut Hasher, bytes: &Bytes) -> &'a mut Hasher {
     hasher.update(&(bytes.len() as u64).to_be_bytes());
     hasher.update(&bytes)

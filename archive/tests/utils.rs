@@ -7,14 +7,9 @@ use blake3::Hash;
 use bytes::{Bytes, BytesMut};
 use libtest_mimic::{Failed, Measurement};
 use xh_archive::{
-    Contents, Event, Object, Operation, PathBytes,
-    compression::Compressor,
-    decoding::Decoder,
-    decompression::Decompressor,
-    encoding::Encoder,
-    packing::Packer,
-    prefixes::PrefixLoader,
-    unpacking::{Options, Unpacker},
+    Contents, Event, Object, Operation, PathBytes, compression::Compressor, decoding::Decoder,
+    decompression::Decompressor, encoding::Encoder, packing::Packer, prefixes::PrefixLoader,
+    unpacking::Unpacker,
 };
 
 #[derive(Clone, Copy)]
@@ -161,10 +156,6 @@ pub fn pack(root: &Path) -> Vec<Event> {
 
 pub fn unpack(root: &Path, events: &Vec<Event>) {
     Unpacker::new(root)
-        .with_options(Options {
-            follow_symlinks: true,
-            disable_sandbox: true,
-        })
         .unpack(events)
         .expect("should be able to unpack files")
 }
