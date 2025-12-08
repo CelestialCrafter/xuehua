@@ -1,4 +1,4 @@
-use alloc::string::{String, ToString};
+use alloc::borrow::Cow;
 use core::borrow::Borrow;
 
 use blake3::Hasher;
@@ -10,7 +10,10 @@ use crate::{Contents, Event, Object, Operation, State, hash_plen};
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("unexpected event: \"{event:?}\" ({reason})")]
-    Unexpected { event: Event, reason: String },
+    Unexpected {
+        event: Event,
+        reason: Cow<'static, str>,
+    },
     #[error("not enough events were processed")]
     Incomplete,
     #[error("file contents should be compressed")]
@@ -80,7 +83,7 @@ impl<'a, B: BufMut> Encoder<'a, B> {
                 let Event::Index(index) = event else {
                     return Err(Error::Unexpected {
                         event: event.clone(),
-                        reason: "need index event".to_string(),
+                        reason: "need index event".into(),
                     });
                 };
 
@@ -99,14 +102,14 @@ impl<'a, B: BufMut> Encoder<'a, B> {
                 let Event::Operation(operation) = event else {
                     return Err(Error::Unexpected {
                         event: event.clone(),
-                        reason: "need operation event".to_string(),
+                        reason: "need operation event".into(),
                     });
                 };
 
                 if amount == 0 {
                     return Err(Error::Unexpected {
                         event: event.clone(),
-                        reason: "excess event".to_string(),
+                        reason: "excess event".into(),
                     });
                 }
 
