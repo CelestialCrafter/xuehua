@@ -3,11 +3,24 @@ name = "xh-archive"
 version = "0.1.0"
 edition = "2024"
 
+[[test]]
+name = "main"
+harness = false
+
 [features]
 std = ["blake3/std", "thiserror/std"]
+log = ["dep:log"]
 
 [dependencies]
+log = { workspace = true, optional = true }
 blake3.workspace = true
 thiserror.workspace = true
 bytes = "1.11.0"
 zstd-safe = { version = "7.2.4", features = ["std"] }
+
+[dev-dependencies]
+arbitrary = "1.4.2"
+arbtest = "0.3.2"
+fern = { version = "0.7.1", features = ["colored"] }
+include_dir = "0.7.4"
+libtest-mimic = "0.8.1"
