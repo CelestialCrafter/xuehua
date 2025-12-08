@@ -5,7 +5,10 @@ use blake3::Hasher;
 use bytes::BufMut;
 use thiserror::Error;
 
-use crate::{Contents, Event, Object, Operation, State, hash_plen};
+use crate::{
+    Contents, Event, Object, Operation,
+    utils::{State, debug, hash_plen},
+};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -57,6 +60,8 @@ impl<'a, B: BufMut> Encoder<'a, B> {
 
     #[inline]
     pub fn finish(self) -> Result<(), Error> {
+        debug!("finishing encoder");
+
         match self.state {
             State::Magic => Err(Error::Incomplete),
             State::Index => Err(Error::Incomplete),
@@ -71,8 +76,12 @@ impl<'a, B: BufMut> Encoder<'a, B> {
     }
 
     fn process(&mut self, event: &Event) -> Result<(), Error> {
+        debug!("encoding event {event:?} in state {:?}", self.state);
+
         match self.state {
             State::Magic => {
+                debug!("encoding magic");
+
                 self.buffer.put_slice(b"xuehua-archive");
                 self.buffer.put_u16_le(1);
 
@@ -93,7 +102,9 @@ impl<'a, B: BufMut> Encoder<'a, B> {
                     self.put_plen(&path.inner);
                     hash_plen(&mut hasher, &path.inner);
                 });
-                self.buffer.put_slice(hasher.finalize().as_bytes());
+                let hash = hasher.finalize();
+                debug!("index hashed to {hash}");
+                self.buffer.put_slice(hash.as_bytes());
 
                 self.state = State::Operations(index.len());
                 Ok(())
@@ -124,7 +135,9 @@ impl<'a, B: BufMut> Encoder<'a, B> {
 
                 let mut hasher = Hasher::new();
                 operation.hash(&mut hasher);
-                self.buffer.put_slice(hasher.finalize().as_bytes());
+                let hash = hasher.finalize();
+                debug!("operation hashed to {hash}");
+                self.buffer.put_slice(hash.as_bytes());
 
                 match self.state {
                     State::Operations(ref mut amount) => *amount -= 1,
