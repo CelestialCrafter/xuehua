@@ -1,9 +1,4 @@
-use alloc::{
-    collections::btree_set::BTreeSet,
-    format,
-    string::{String, ToString},
-    vec,
-};
+use alloc::{borrow::Cow, collections::btree_set::BTreeSet, format, vec};
 use blake3::{Hash, Hasher};
 use core::{num::TryFromIntError, str::Utf8Error};
 
@@ -15,7 +10,10 @@ use crate::{Contents, Event, Object, Operation, State, hash_plen};
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("unexpected token: {token:?} ({reason})")]
-    UnexpectedToken { token: Bytes, reason: String },
+    UnexpectedToken {
+        token: Bytes,
+        reason: Cow<'static, str>,
+    },
     #[error("not enough data was in buffer")]
     Incomplete(#[from] TryGetError),
     #[error("unsupported version: {0}")]
@@ -139,7 +137,7 @@ impl<'a, B: Buf> Decoder<'a, B> {
             _ => {
                 return Err(Error::UnexpectedToken {
                     token: Bytes::from_owner(vec![obj_type]),
-                    reason: "expected 0, 1, or 2".to_string(),
+                    reason: "expected 0, 1, or 2".into(),
                 });
             }
         })
@@ -164,7 +162,7 @@ impl<'a, B: Buf> Decoder<'a, B> {
             1 => Ok(true),
             _ => Err(Error::UnexpectedToken {
                 token: Bytes::from_owner(vec![value]),
-                reason: "0 or 1".to_string(),
+                reason: "0 or 1".into(),
             }),
         }
     }
@@ -194,7 +192,7 @@ impl<'a, B: Buf> Decoder<'a, B> {
         } else {
             Err(Error::UnexpectedToken {
                 token: actual,
-                reason: format!("expected {expect:?}"),
+                reason: format!("expected {expect:?}").into(),
             })
         }
     }
