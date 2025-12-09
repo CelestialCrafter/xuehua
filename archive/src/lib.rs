@@ -7,6 +7,7 @@ pub mod decoding;
 pub mod encoding;
 
 pub mod compression;
+pub mod decompression;
 
 #[cfg(all(feature = "std", unix))]
 pub mod packing;
