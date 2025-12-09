@@ -119,7 +119,7 @@ impl Arbitrary<'_> for ArbitraryArchive {
                                 prefix: u
                                     .arbitrary::<bool>()?
                                     .then_some(Hash::from_bytes([0; blake3::OUT_LEN])),
-                                contents: Contents::Uncompressed(
+                                contents: Contents::Decompressed(
                                     u.arbitrary().map(Bytes::copy_from_slice)?,
                                 ),
                             },

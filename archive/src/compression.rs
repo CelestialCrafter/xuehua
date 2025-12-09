@@ -8,28 +8,18 @@ use zstd_safe::CCtx;
 use crate::{
     Contents, Event, Object, Operation,
     prefixes::{Error as LoaderError, PrefixLoader, unimplemented::UnimplementedLoader},
-    utils::{debug, trace},
+    utils::{
+        debug, trace,
+        zstd::{Error as ZstdError, UNKNOWN_ERROR as UNKNOWN_ZSTD_ERROR},
+    },
 };
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("{message} (error code {code})")]
-    ZstdError { code: usize, message: &'static str },
+    #[error(transparent)]
+    ZstdError(#[from] ZstdError),
     #[error(transparent)]
     LoaderError(LoaderError),
-}
-
-const UNKNOWN_ZSTD_ERROR: Error = Error::ZstdError {
-    code: 0,
-    message: "unknown error",
-};
-
-#[inline]
-fn zstd_error(code: usize) -> Error {
-    Error::ZstdError {
-        code,
-        message: zstd_safe::get_error_name(code),
-    }
 }
 
 pub struct Compressor<L> {
@@ -65,10 +55,14 @@ impl<L: PrefixLoader> Compressor<L> {
     ) -> impl Iterator<Item = Result<Event, Error>> {
         let level = self.level;
         let make_cctx = move || {
-            let mut cctx = CCtx::try_create().ok_or(UNKNOWN_ZSTD_ERROR)?;
-            cctx.set_parameter(zstd_safe::CParameter::CompressionLevel(level as i32))
-                .map_err(zstd_error)?;
-            Ok(cctx)
+            debug!("making new compression context");
+
+            CCtx::try_create()
+                .ok_or(UNKNOWN_ZSTD_ERROR)
+                .and_then(|mut cctx| {
+                    cctx.set_parameter(zstd_safe::CParameter::CompressionLevel(level as i32))?;
+                    Ok(cctx)
+                })
         };
 
         let mut global_cctx: OnceCell<CCtx<'_>> = OnceCell::new();
@@ -77,7 +71,7 @@ impl<L: PrefixLoader> Compressor<L> {
                 Event::Operation(Operation::Create {
                     object:
                         Object::File {
-                            contents: Contents::Uncompressed(contents),
+                            contents: Contents::Decompressed(contents),
                             prefix,
                         },
                     permissions,
@@ -114,9 +108,7 @@ impl<L: PrefixLoader> Compressor<L> {
                     cctx.set_parameter(zstd_safe::CParameter::EnableLongDistanceMatching(true))
                         .and_then(|_| cctx.set_pledged_src_size(Some(contents.len() as u64)))
                         .and_then(|_| cctx.ref_prefix(&prefix))
-                        .map_err(zstd_error)?;
-
-                    cctx.compress2(&mut compressed, &contents)
+                        .and_then(|_| cctx.compress2(&mut compressed, &contents))
                 }
                 None => {
                     // yuck....
@@ -129,17 +121,20 @@ impl<L: PrefixLoader> Compressor<L> {
                     };
 
                     cctx.set_pledged_src_size(Some(contents.len() as u64))
-                        .map_err(zstd_error)?;
-                    cctx.compress2(&mut compressed, &contents)
+                        .and_then(|_| cctx.compress2(&mut compressed, &contents))
                 }
             }
-            .map_err(zstd_error)?;
+            .map_err(ZstdError::from)?;
 
-            debug!("saved {:.2}% of {} bytes", {
-                let original = contents.len() as f64;
-                let diff = original - (compressed.len() as f64);
-                (diff / original) * 100.0
-            }, contents.len());
+            debug!(
+                "saved {:.2}% of {} bytes",
+                {
+                    let original = contents.len() as f64;
+                    let diff = original - (compressed.len() as f64);
+                    (diff / original) * 100.0
+                },
+                contents.len()
+            );
 
             Ok(Event::Operation(Operation::Create {
                 permissions,

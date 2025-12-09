@@ -20,7 +20,7 @@ pub enum Error {
     #[error("not enough events were processed")]
     Incomplete,
     #[error("file contents should be compressed")]
-    Uncompressed,
+    Decompressed,
 }
 
 pub struct Encoder<'a, B> {
@@ -166,7 +166,7 @@ impl<'a, B: BufMut> Encoder<'a, B> {
 
                 match contents {
                     Contents::Compressed(bytes) => self.put_plen(bytes),
-                    Contents::Uncompressed(_) => return Err(Error::Uncompressed),
+                    Contents::Decompressed(_) => return Err(Error::Decompressed),
                 }
             }
             Object::Symlink { target } => {
