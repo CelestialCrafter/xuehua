@@ -1,15 +1,40 @@
 use blake3::Hasher;
 use bytes::Bytes;
 
+pub mod zstd {
+    use thiserror::Error;
+
+    #[derive(Error, Debug)]
+    #[error("{message} (error code {code})")]
+    pub struct Error {
+        code: usize,
+        message: &'static str,
+    }
+
+    impl From<usize> for Error {
+        fn from(value: usize) -> Self {
+            Error {
+                code: value,
+                message: zstd_safe::get_error_name(value),
+            }
+        }
+    }
+
+    pub const UNKNOWN_ERROR: Error = Error {
+        code: 0,
+        message: "unknown error",
+    };
+}
+
 #[derive(Debug, Default, Clone, Copy)]
-pub(crate) enum State {
+pub enum State {
     #[default]
     Magic,
     Index,
     Operations(usize),
 }
 
-pub(crate) fn hash_plen<'a>(hasher: &'a mut Hasher, bytes: &Bytes) -> &'a mut Hasher {
+pub fn hash_plen<'a>(hasher: &'a mut Hasher, bytes: &Bytes) -> &'a mut Hasher {
     hasher.update(&(bytes.len() as u64).to_be_bytes());
     hasher.update(&bytes)
 }

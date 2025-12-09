@@ -7,6 +7,7 @@ pub mod decoding;
 pub mod encoding;
 
 pub mod compression;
+pub mod decompression;
 
 #[cfg(all(feature = "std", unix))]
 pub mod packing;
@@ -58,14 +59,14 @@ impl std::convert::AsRef<std::path::Path> for PathBytes {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Contents {
     Compressed(Bytes),
-    Uncompressed(Bytes),
+    Decompressed(Bytes),
 }
 
 impl AsRef<Bytes> for Contents {
     fn as_ref(&self) -> &Bytes {
         match self {
             Contents::Compressed(bytes) => bytes,
-            Contents::Uncompressed(bytes) => bytes,
+            Contents::Decompressed(bytes) => bytes,
         }
     }
 }

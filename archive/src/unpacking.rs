@@ -119,7 +119,7 @@ impl<'a> Unpacker<'a> {
                                 prefix: _,
                             } => match contents {
                                 Contents::Compressed(_) => return Err(Error::Compressed),
-                                Contents::Uncompressed(contents) => std::fs::write(&path, contents),
+                                Contents::Decompressed(contents) => std::fs::write(&path, contents),
                             },
                             // TODO: sandbox path
                             Object::Symlink { target } => {
