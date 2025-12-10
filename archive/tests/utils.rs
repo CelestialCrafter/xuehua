@@ -5,6 +5,8 @@ use arbitrary::Arbitrary;
 use blake3::Hash;
 use bytes::{Bytes, BytesMut};
 use libtest_mimic::{Failed, Measurement};
+use xh_archive::compression::Compressor;
+use xh_archive::decompression::Decompressor;
 use xh_archive::{
     Contents, Event, Object, Operation, PathBytes, decoding::Decoder, encoding::Encoder,
     prefixes::PrefixLoader,
@@ -69,6 +71,7 @@ pub fn benchmark(
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ArbitraryLoader {
     chunks: [Bytes; 12],
     i: usize,
@@ -89,7 +92,7 @@ impl PrefixLoader for ArbitraryLoader {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ArbitraryArchive {
     pub events: Vec<Event>,
 }
@@ -142,6 +145,22 @@ impl Arbitrary<'_> for ArbitraryArchive {
 
         Ok(Self { events })
     }
+}
+
+pub fn compress(events: Vec<Event>, loader: impl PrefixLoader) -> Vec<Event> {
+    Compressor::new()
+        .with_loader(loader)
+        .compress(events)
+        .map(|event| event.expect("should be able to compress event"))
+        .collect()
+}
+
+pub fn decompress(events: Vec<Event>, loader: impl PrefixLoader) -> Vec<Event> {
+    Decompressor::new()
+        .with_loader(loader)
+        .decompress(events)
+        .map(|event| event.expect("should be able to decompress event"))
+        .collect()
 }
 
 pub fn decode(mut contents: &[u8]) -> Vec<Event> {
