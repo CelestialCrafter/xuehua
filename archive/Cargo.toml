@@ -5,6 +5,7 @@ edition = "2024"
 
 [[test]]
 name = "main"
+required-features = ["std"]
 harness = false
 
 [features]
@@ -20,8 +21,9 @@ bytes = "1.11.0"
 zstd-safe = { version = "7.2.4", features = ["std"] }
 
 [dev-dependencies]
+tempfile.workspace = true
 arbitrary = "1.4.2"
 arbtest = "0.3.2"
-fern = { version = "0.7.1", features = ["colored"] }
+fern.workspace = true
 include_dir = "0.7.4"
 libtest-mimic = "0.8.1"
