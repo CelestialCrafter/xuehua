@@ -1462,6 +1462,7 @@ dependencies = [
  "libtest-mimic",
  "log",
  "memmap2",
+ "tempfile",
  "thiserror",
  "zstd-safe",
 ]

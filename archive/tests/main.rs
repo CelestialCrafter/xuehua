@@ -1,4 +1,4 @@
-use std::ffi::OsStr;
+use std::{ffi::OsStr, path::PathBuf};
 
 use arbitrary::Arbitrary;
 use arbtest::arbtest;
@@ -8,10 +8,22 @@ use xh_archive::prefixes::unimplemented::UnimplementedLoader;
 
 use crate::utils::{
     ArbitraryArchive, ArbitraryLoader, BenchmarkOptions, benchmark, compress, decode, decompress,
-    encode, setup,
+    encode, pack, setup, unpack,
 };
 
 mod utils;
+
+#[inline]
+fn pack_unpack_roundtrip(contents: &[u8]) {
+    let events = decompress(decode(contents), UnimplementedLoader);
+
+    let temp =
+        tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("should be able to make temp dir");
+    let path = temp.path();
+
+    unpack(path, &events);
+    assert_eq!(events, pack(path.to_path_buf()));
+}
 
 #[inline]
 fn comp_decomp_roundtrip(contents: &[u8]) {
@@ -87,13 +99,21 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
                 )
                 .with_kind("enc-dec"),
                 Trial::bench(
-                    name,
+                    name.clone(),
                     benchmark(
                         || Ok(comp_decomp_roundtrip(contents)),
                         BenchmarkOptions::default(),
                     ),
                 )
                 .with_kind("comp-decomp"),
+                Trial::bench(
+                    name,
+                    benchmark(
+                        || Ok(pack_unpack_roundtrip(contents)),
+                        BenchmarkOptions::default(),
+                    ),
+                )
+                .with_kind("pack-unpack"),
             ]
         })
         .flatten()
@@ -101,6 +121,17 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
 
 fn main() {
     setup();
+
+    std::fs::write(
+        "rust-core.xhar",
+        encode(&compress(
+            pack(PathBuf::from(
+                "/home/celestial/Documents/projects/xuehua/engine",
+            )),
+            UnimplementedLoader,
+        )),
+    )
+    .unwrap();
 
     let trials = blob_trials().chain(arbitrary_trials()).collect();
     libtest_mimic::run(&Arguments::from_args(), trials).exit()

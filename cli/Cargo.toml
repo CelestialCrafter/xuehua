@@ -8,7 +8,7 @@ name = "xh"
 path = "src/main.rs"
 
 [dependencies]
-fern = { version = "0.7.1", features = ["colored"] }
+fern.workspace = true
 eyre = { version = "0.6.12", default-features = false, features = ["track-caller"] }
 xh-engine = { path = "../engine", features = ["bubblewrap-executor", "http-executor", "local-store"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
@@ -17,5 +17,5 @@ petgraph.workspace = true
 mlua.workspace = true
 bpaf = { version = "0.9.20", features = ["bright-color"] }
 jiff.workspace = true
-tempfile = "3.23.0"
+tempfile.workspace = true
 dirs = "6.0.0"
