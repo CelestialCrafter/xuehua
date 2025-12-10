@@ -1,34 +1,42 @@
-use std::{ffi::OsStr, iter::once};
+use std::ffi::OsStr;
 
 use arbitrary::Arbitrary;
 use arbtest::arbtest;
 use include_dir::include_dir;
-use libtest_mimic::{Arguments, Failed, Trial};
-use xh_archive::compression::Compressor;
+use libtest_mimic::{Arguments, Trial};
+use xh_archive::prefixes::unimplemented::UnimplementedLoader;
 
 use crate::utils::{
-    ArbitraryArchive, ArbitraryLoader, BenchmarkOptions, benchmark, decode, encode, setup,
+    ArbitraryArchive, ArbitraryLoader, BenchmarkOptions, benchmark, compress, decode, decompress,
+    encode, setup,
 };
 
 mod utils;
 
 #[inline]
-fn coding_roundtrip(contents: &[u8]) -> Result<(), Failed> {
+fn comp_decomp_roundtrip(contents: &[u8]) {
+    let events = decode(contents);
+    assert_eq!(
+        events,
+        compress(
+            decompress(events.clone(), UnimplementedLoader),
+            UnimplementedLoader
+        )
+    )
+}
+
+#[inline]
+fn enc_dec_roundtrip(contents: &[u8]) {
     assert_eq!(contents, encode(&decode(contents)));
-    Ok(())
 }
 
 #[inline]
 fn arbitrary_trials() -> impl Iterator<Item = Trial> {
-    once(
+    [
         Trial::test("arbitrary", || {
             arbtest(|u| {
                 let events = ArbitraryArchive::arbitrary(u)?.events;
-                let events = Compressor::new()
-                    .with_loader(ArbitraryLoader::arbitrary(u)?)
-                    .compress(events)
-                    .map(|event| event.expect("should be able to compress event"))
-                    .collect();
+                let events = compress(events, ArbitraryLoader::arbitrary(u)?);
 
                 assert_eq!(events, decode(&encode(&events)));
 
@@ -38,8 +46,26 @@ fn arbitrary_trials() -> impl Iterator<Item = Trial> {
 
             Ok(())
         })
-        .with_kind("coding"),
-    )
+        .with_kind("enc-dec"),
+        Trial::test("arbitrary", || {
+            arbtest(|u| {
+                let events = ArbitraryArchive::arbitrary(u)?.events;
+                let loader = ArbitraryLoader::arbitrary(u)?;
+
+                assert_eq!(
+                    events,
+                    decompress(compress(events.clone(), loader.clone()), loader.clone())
+                );
+
+                Ok(())
+            })
+            .run();
+
+            Ok(())
+        })
+        .with_kind("comp-decomp"),
+    ]
+    .into_iter()
 }
 
 #[inline]
@@ -51,12 +77,26 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
             let contents = std::hint::black_box(file.contents());
             let name = file.path().file_stem().unwrap().to_string_lossy();
 
-            Trial::bench(
-                name,
-                benchmark(|| coding_roundtrip(contents), BenchmarkOptions::default()),
-            )
-            .with_kind("coding")
+            [
+                Trial::bench(
+                    name.clone(),
+                    benchmark(
+                        || Ok(enc_dec_roundtrip(contents)),
+                        BenchmarkOptions::default(),
+                    ),
+                )
+                .with_kind("enc-dec"),
+                Trial::bench(
+                    name,
+                    benchmark(
+                        || Ok(comp_decomp_roundtrip(contents)),
+                        BenchmarkOptions::default(),
+                    ),
+                )
+                .with_kind("comp-decomp"),
+            ]
         })
+        .flatten()
 }
 
 fn main() {
