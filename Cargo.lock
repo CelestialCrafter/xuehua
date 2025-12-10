@@ -1435,6 +1435,7 @@ dependencies = [
  "include_dir",
  "libtest-mimic",
  "log",
+ "tempfile",
  "thiserror",
  "zstd-safe",
 ]

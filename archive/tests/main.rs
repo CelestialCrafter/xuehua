@@ -8,10 +8,22 @@ use xh_archive::prefixes::unimplemented::UnimplementedLoader;
 
 use crate::utils::{
     ArbitraryArchive, ArbitraryLoader, BenchmarkOptions, benchmark, compress, decode, decompress,
-    encode, setup,
+    encode, pack, setup, unpack,
 };
 
 mod utils;
+
+#[inline]
+fn pack_unpack_roundtrip(contents: &[u8]) {
+    let events = decompress(decode(contents), UnimplementedLoader);
+
+    let temp =
+        tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("should be able to make temp dir");
+    let path = temp.path().join("root");
+
+    unpack(&path, &events);
+    assert_eq!(events, pack(&path));
+}
 
 #[inline]
 fn comp_decomp_roundtrip(contents: &[u8]) {
@@ -87,13 +99,21 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
                 )
                 .with_kind("enc-dec"),
                 Trial::bench(
-                    name,
+                    name.clone(),
                     benchmark(
                         || Ok(comp_decomp_roundtrip(contents)),
                         BenchmarkOptions::default(),
                     ),
                 )
                 .with_kind("comp-decomp"),
+                Trial::bench(
+                    name,
+                    benchmark(
+                        || Ok(pack_unpack_roundtrip(contents)),
+                        BenchmarkOptions::default(),
+                    ),
+                )
+                .with_kind("pack-unpack"),
             ]
         })
         .flatten()

@@ -1,15 +1,20 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use arbitrary::Arbitrary;
 use blake3::Hash;
 use bytes::{Bytes, BytesMut};
 use libtest_mimic::{Failed, Measurement};
-use xh_archive::compression::Compressor;
-use xh_archive::decompression::Decompressor;
 use xh_archive::{
-    Contents, Event, Object, Operation, PathBytes, decoding::Decoder, encoding::Encoder,
+    Contents, Event, Object, Operation, PathBytes,
+    compression::Compressor,
+    decoding::Decoder,
+    decompression::Decompressor,
+    encoding::Encoder,
+    packing::Packer,
     prefixes::PrefixLoader,
+    unpacking::{Options, Unpacker},
 };
 
 #[derive(Clone, Copy)]
@@ -145,6 +150,23 @@ impl Arbitrary<'_> for ArbitraryArchive {
 
         Ok(Self { events })
     }
+}
+
+pub fn pack(root: &Path) -> Vec<Event> {
+    Packer::new(root.to_path_buf())
+        .pack()
+        .map(|event| event.expect("should be able to pack file"))
+        .collect()
+}
+
+pub fn unpack(root: &Path, events: &Vec<Event>) {
+    Unpacker::new(root)
+        .with_options(Options {
+            follow_symlinks: true,
+            disable_sandbox: true,
+        })
+        .unpack(events)
+        .expect("should be able to unpack files")
 }
 
 pub fn compress(events: Vec<Event>, loader: impl PrefixLoader) -> Vec<Event> {
