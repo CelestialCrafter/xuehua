@@ -18,7 +18,7 @@ extern crate alloc;
 
 use alloc::collections::BTreeSet;
 
-use blake3::{Hash, Hasher};
+use blake3::Hash;
 use bytes::Bytes;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -55,93 +55,22 @@ pub enum Contents {
     Uncompressed(Bytes),
 }
 
-impl AsRef<Bytes> for Contents {
-    fn as_ref(&self) -> &Bytes {
-        match self {
-            Contents::Compressed(bytes) => bytes,
-            Contents::Uncompressed(bytes) => bytes,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Object {
-    File {
-        prefix: Option<Hash>,
-        contents: Contents,
-    },
-    Symlink {
-        target: PathBytes,
-    },
+    File { prefix: Option<Hash> },
+    Symlink { target: PathBytes },
     Directory,
 }
 
-impl Object {
-    pub fn hash<'a>(&self, hasher: &'a mut Hasher) -> &'a mut Hasher {
-        match self {
-            Object::File {
-                contents,
-                prefix: _,
-            } => {
-                hasher.update(&[0]);
-                utils::hash_plen(hasher, contents.as_ref())
-            }
-            Object::Symlink { target } => {
-                hasher.update(&[1]);
-                utils::hash_plen(hasher, &target.inner)
-            }
-            Object::Directory => hasher.update(&[2]),
-        }
-    }
-}
-
-impl PartialEq for Object {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::File {
-                    contents: left,
-                    prefix: _,
-                },
-                Self::File {
-                    contents: right,
-                    prefix: _,
-                },
-            ) => left == right,
-            (Self::Symlink { target: left }, Self::Symlink { target: right }) => left == right,
-            (Self::Directory, Self::Directory) => true,
-            _ => false,
-        }
-    }
-}
-
-impl Eq for Object {}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Operation {
     Create { permissions: u32, object: Object },
     Delete,
 }
 
-impl Operation {
-    #[inline]
-    pub fn hash<'a>(&self, hasher: &'a mut Hasher) -> &'a mut Hasher {
-        match self {
-            Operation::Create {
-                permissions,
-                object,
-            } => {
-                hasher.update(&[0]);
-                hasher.update(&permissions.to_le_bytes());
-                object.hash(hasher)
-            }
-            Operation::Delete => hasher.update(&[1]),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Event {
     Index(BTreeSet<PathBytes>),
     Operation(Operation),
+    Contents(Contents),
 }

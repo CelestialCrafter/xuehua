@@ -3,7 +3,7 @@ use core::cell::OnceCell;
 
 use bytes::Bytes;
 use thiserror::Error;
-use zstd_safe::CCtx;
+use zstd_safe::{CCtx, OutBuffer};
 
 use crate::{
     Contents, Event, Object, Operation,
@@ -66,25 +66,26 @@ impl<L: PrefixLoader> Compressor<L> {
         };
 
         let mut global_cctx: OnceCell<CCtx<'_>> = OnceCell::new();
-        let iter = events.into_iter().map(move |event| {
-            let (permissions, prefix, mut contents) = match event {
-                Event::Operation(Operation::Create {
-                    object:
-                        Object::File {
-                            contents: Contents::Uncompressed(contents),
-                            prefix,
-                        },
-                    permissions,
-                }) => (permissions, prefix, contents),
-                _ => return Ok(event),
+        let iter = events.into_iter().scan(None, move |state, event| {
+            let input = match event {
+                event @ Event::Operation(Operation::Create { object: Object::File { prefix: Some(ref prefix) }, .. }) => {
+                    let cctx = make_cctx()?;
+                    cctx.set_parameter(zstd_safe::CParameter::EnableLongDistanceMatching(true))
+                        .and_then(|_| cctx.ref_prefix(&prefix))
+
+                    *state = Some((prefix, cctx));
+                return Ok()
+                }
+                Event::Contents(Contents::Uncompressed(input)) => input,
+                _ => {
+                    *cctx = global_cctx;
+                    return Ok(event);
+                }
             };
 
+            let mut output = Vec::with_capacity(CCtx::out_size());
+
             debug!("compressing with prefix: {prefix:?}");
-
-            let capacity = zstd_safe::compress_bound(contents.len());
-            debug!("allocating buffer of size {capacity}");
-
-            let mut compressed = Vec::with_capacity(capacity);
             match prefix {
                 Some(prefix) => {
                     let mut prefix = self.loader.load(prefix).map_err(Error::LoaderError)?;
@@ -93,22 +94,9 @@ impl<L: PrefixLoader> Compressor<L> {
                     // HACK: the prefix **will not** be used. i'm assuming this is due to some weird C stuff
                     // HACK: within zstd itsself the only workaround i've been able to find is copying the
                     // HACK: prefix/contents into a different buffer
-                    if prefix.as_ptr() == contents.as_ptr() {
-                        trace!("using bytes copy hack");
-
-                        // try to minimize the impact
-                        if prefix.len() > contents.len() {
-                            contents = Bytes::copy_from_slice(&contents);
-                        } else {
-                            prefix = Bytes::copy_from_slice(&prefix);
-                        }
-                    }
-
-                    let mut cctx = make_cctx()?;
-                    cctx.set_parameter(zstd_safe::CParameter::EnableLongDistanceMatching(true))
-                        .and_then(|_| cctx.set_pledged_src_size(Some(contents.len() as u64)))
-                        .and_then(|_| cctx.ref_prefix(&prefix))
-                        .and_then(|_| cctx.compress2(&mut compressed, &contents))
+                        .and_then(|_| {
+                            cctx.compress_stream(&mut OutBuffer::around(&mut output), &mut input)
+                        })
                 }
                 None => {
                     // yuck....
@@ -120,8 +108,7 @@ impl<L: PrefixLoader> Compressor<L> {
                         }
                     };
 
-                    cctx.set_pledged_src_size(Some(contents.len() as u64))
-                        .and_then(|_| cctx.compress2(&mut compressed, &contents))
+                    cctx.compress_stream(&mut OutBuffer::around(&mut output), &mut input)
                 }
             }
             .map_err(ZstdError::from)?;
@@ -129,20 +116,16 @@ impl<L: PrefixLoader> Compressor<L> {
             debug!(
                 "saved {:.2}% of {} bytes",
                 {
-                    let original = contents.len() as f64;
-                    let diff = original - (compressed.len() as f64);
+                    let original = input.len() as f64;
+                    let diff = original - (output.len() as f64);
                     (diff / original) * 100.0
                 },
-                contents.len()
+                input.len()
             );
 
-            Ok(Event::Operation(Operation::Create {
-                permissions,
-                object: Object::File {
-                    contents: Contents::Compressed(Bytes::from_owner(compressed)),
-                    prefix,
-                },
-            }))
+            Ok(Event::Contents(Contents::Compressed(Bytes::from_owner(
+                output,
+            ))))
         });
 
         iter
