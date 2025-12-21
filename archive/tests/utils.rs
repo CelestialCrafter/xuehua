@@ -3,12 +3,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use arbitrary::Arbitrary;
-use blake3::Hash;
 use bytes::{Bytes, BytesMut};
 use libtest_mimic::{Failed, Measurement};
 use xh_archive::{
-    Contents, Event, Object, Operation, PathBytes, compression::Compressor, decoding::Decoder,
-    decompression::Decompressor, encoding::Encoder, packing::Packer, prefixes::PrefixLoader,
+    Event, Object, Operation, PathBytes, decoding::Decoder, encoding::Encoder, packing::Packer,
     unpacking::Unpacker,
 };
 
@@ -72,27 +70,6 @@ pub fn benchmark(
 }
 
 #[derive(Debug, Clone)]
-pub struct ArbitraryLoader {
-    chunks: [Bytes; 12],
-    i: usize,
-}
-
-impl Arbitrary<'_> for ArbitraryLoader {
-    fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
-        let chunks = <[&[u8]; 12]>::arbitrary(u)?.map(Bytes::copy_from_slice);
-        Ok(Self { chunks, i: 0 })
-    }
-}
-
-impl PrefixLoader for ArbitraryLoader {
-    fn load(&mut self, _id: Hash) -> Result<Bytes, xh_archive::prefixes::Error> {
-        let chunk = self.chunks[self.i % self.chunks.len()].clone();
-        self.i += 1;
-        Ok(chunk)
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct ArbitraryArchive {
     pub events: Vec<Event>,
 }
@@ -119,12 +96,7 @@ impl Arbitrary<'_> for ArbitraryArchive {
                     object: {
                         match u.choose_index(2)? {
                             0 => Object::File {
-                                prefix: u
-                                    .arbitrary::<bool>()?
-                                    .then_some(Hash::from_bytes([0; blake3::OUT_LEN])),
-                                contents: Contents::Decompressed(
-                                    u.arbitrary().map(Bytes::copy_from_slice)?,
-                                ),
+                                contents: u.arbitrary().map(Bytes::copy_from_slice)?,
                             },
                             1 => Object::Symlink {
                                 target: PathBytes {
@@ -160,32 +132,11 @@ pub fn unpack(root: &Path, events: &Vec<Event>) {
         .expect("should be able to unpack files")
 }
 
-pub fn compress(events: Vec<Event>, loader: impl PrefixLoader) -> Vec<Event> {
-    Compressor::new()
-        .with_loader(loader)
-        .compress(events)
-        .map(|event| event.expect("should be able to compress event"))
-        .collect()
-}
-
-pub fn decompress(events: Vec<Event>, loader: impl PrefixLoader) -> Vec<Event> {
-    Decompressor::new()
-        .with_loader(loader)
-        .decompress(events)
-        .map(|event| event.expect("should be able to decompress event"))
-        .collect()
-}
-
 pub fn decode(mut contents: &[u8]) -> Vec<Event> {
-    let decoded = Decoder::new(&mut contents)
+    Decoder::new(&mut contents)
         .decode()
         .collect::<Result<Vec<_>, _>>()
-        .expect("decoding should not fail");
-
-    #[cfg(feature = "log")]
-    log::debug!("decoder output: {decoded:?}");
-
-    decoded
+        .expect("decoding should not fail")
 }
 
 pub fn encode(events: &Vec<Event>) -> Vec<u8> {
@@ -193,9 +144,6 @@ pub fn encode(events: &Vec<Event>) -> Vec<u8> {
     Encoder::new(&mut encoded)
         .encode(events)
         .expect("encoding should not fail");
-
-    #[cfg(feature = "log")]
-    log::debug!("encoder output: {encoded:?}");
 
     encoded.to_vec()
 }

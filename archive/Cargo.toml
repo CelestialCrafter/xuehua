@@ -23,7 +23,6 @@ log = { workspace = true, optional = true }
 blake3.workspace = true
 thiserror.workspace = true
 bytes = "1.11.0"
-zstd-safe = { version = "7.2.4", features = ["std"] }
 
 [dev-dependencies]
 tempfile.workspace = true
