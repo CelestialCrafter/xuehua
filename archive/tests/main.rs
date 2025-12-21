@@ -4,7 +4,10 @@ use arbitrary::Arbitrary;
 use arbtest::arbtest;
 use include_dir::include_dir;
 use libtest_mimic::{Arguments, Trial};
-use xh_archive::prefixes::unimplemented::UnimplementedLoader;
+use xh_archive::{
+    Event,
+    prefixes::{PrefixLoader, unimplemented::UnimplementedLoader},
+};
 
 use crate::utils::{
     ArbitraryArchive, ArbitraryLoader, BenchmarkOptions, benchmark, compress, decode, decompress,
@@ -14,8 +17,8 @@ use crate::utils::{
 mod utils;
 
 #[inline]
-fn pack_unpack_roundtrip(contents: &[u8]) {
-    let events = decompress(decode(contents), UnimplementedLoader);
+fn pack_unpack_roundtrip(events: Vec<Event>) {
+    let events = decompress(events, UnimplementedLoader);
 
     let temp =
         tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("should be able to make temp dir");
@@ -26,97 +29,93 @@ fn pack_unpack_roundtrip(contents: &[u8]) {
 }
 
 #[inline]
-fn comp_decomp_roundtrip(contents: &[u8]) {
-    let events = decode(contents);
+fn comp_decomp_roundtrip(events: Vec<Event>, loader: impl PrefixLoader + Clone) {
     assert_eq!(
         events,
-        compress(
-            decompress(events.clone(), UnimplementedLoader),
-            UnimplementedLoader
-        )
+        compress(decompress(events.clone(), loader.clone()), loader)
     )
 }
 
 #[inline]
-fn enc_dec_roundtrip(contents: &[u8]) {
-    assert_eq!(contents, encode(&decode(contents)));
+fn enc_dec_roundtrip(events: Vec<Event>) {
+    assert_eq!(events, decode(&encode(&events)));
 }
 
 #[inline]
 fn arbitrary_trials() -> impl Iterator<Item = Trial> {
+    fn trial<F>(name: &str, runner: F) -> Trial
+    where
+        F: Fn(&mut arbitrary::Unstructured<'_>) -> Result<(), arbitrary::Error>,
+        F: Send,
+        F: 'static,
+    {
+        Trial::test(name, || {
+            arbtest(runner).run();
+            Ok(())
+        })
+    }
+
+    fn events(
+        u: &mut arbitrary::Unstructured<'_>,
+    ) -> Result<(Vec<Event>, ArbitraryLoader), arbitrary::Error> {
+        let loader = ArbitraryLoader::arbitrary(u)?;
+        let events = compress(ArbitraryArchive::arbitrary(u)?.events, loader.clone());
+
+        Ok((events, loader))
+    }
+
     [
-        Trial::test("arbitrary", || {
-            arbtest(|u| {
-                let events = ArbitraryArchive::arbitrary(u)?.events;
-                let events = compress(events, ArbitraryLoader::arbitrary(u)?);
-
-                assert_eq!(events, decode(&encode(&events)));
-
-                Ok(())
-            })
-            .run();
-
+        trial("comp-decomp-arbitrary", |u| {
+            let (events, loader) = events(u)?;
+            comp_decomp_roundtrip(events, loader);
             Ok(())
-        })
-        .with_kind("enc-dec"),
-        Trial::test("arbitrary", || {
-            arbtest(|u| {
-                let events = ArbitraryArchive::arbitrary(u)?.events;
-                let loader = ArbitraryLoader::arbitrary(u)?;
-
-                assert_eq!(
-                    events,
-                    decompress(compress(events.clone(), loader.clone()), loader.clone())
-                );
-
-                Ok(())
-            })
-            .run();
-
+        }),
+        trial("enc-dec-arbitrary", |u| {
+            let (events, _) = events(u)?;
+            enc_dec_roundtrip(events);
             Ok(())
-        })
-        .with_kind("comp-decomp"),
+        }),
     ]
     .into_iter()
+    .map(|trial| trial.with_kind("arbitrary"))
 }
 
 #[inline]
 fn blob_trials() -> impl Iterator<Item = Trial> {
+    let trials = |name, contents| {
+        let events = Box::leak(Box::new(decode(contents)));
+        let options = BenchmarkOptions::default();
+
+        [
+            Trial::bench(
+                format!("enc-dec-{name}"),
+                benchmark(|| Ok(enc_dec_roundtrip(events.to_vec())), options),
+            ),
+            Trial::bench(
+                format!("comp-decomp-{name}"),
+                benchmark(
+                    || Ok(comp_decomp_roundtrip(events.to_vec(), UnimplementedLoader)),
+                    options,
+                ),
+            ),
+            Trial::bench(
+                format!("pack-unpack-{name}"),
+                benchmark(|| Ok(pack_unpack_roundtrip(events.to_vec())), options),
+            ),
+        ]
+    };
+
     include_dir!("$CARGO_MANIFEST_DIR/tests/blobs")
         .files()
         .filter(|file| file.path().extension() == Some(OsStr::new("xhar")))
         .map(move |file| {
-            let contents = std::hint::black_box(file.contents());
-            let name = file.path().file_stem().unwrap().to_string_lossy();
-
-            [
-                Trial::bench(
-                    name.clone(),
-                    benchmark(
-                        || Ok(enc_dec_roundtrip(contents)),
-                        BenchmarkOptions::default(),
-                    ),
-                )
-                .with_kind("enc-dec"),
-                Trial::bench(
-                    name.clone(),
-                    benchmark(
-                        || Ok(comp_decomp_roundtrip(contents)),
-                        BenchmarkOptions::default(),
-                    ),
-                )
-                .with_kind("comp-decomp"),
-                Trial::bench(
-                    name,
-                    benchmark(
-                        || Ok(pack_unpack_roundtrip(contents)),
-                        BenchmarkOptions::default(),
-                    ),
-                )
-                .with_kind("pack-unpack"),
-            ]
+            trials(
+                file.path().file_stem().unwrap().to_string_lossy(),
+                file.contents(),
+            )
         })
         .flatten()
+        .map(|trial| trial.with_kind("blob"))
 }
 
 fn main() {

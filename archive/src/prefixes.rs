@@ -2,6 +2,7 @@
 pub mod filesystem;
 
 pub mod unimplemented {
+    #[derive(Debug, Clone, Copy)]
     pub struct UnimplementedLoader;
 
     impl super::PrefixLoader for UnimplementedLoader {
