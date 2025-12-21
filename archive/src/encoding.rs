@@ -1,13 +1,13 @@
 use alloc::borrow::Cow;
 use core::borrow::Borrow;
 
-use blake3::Hasher;
 use bytes::BufMut;
 use thiserror::Error;
 
 use crate::{
-    Contents, Event, Object, Operation,
-    utils::{State, debug, hash_plen},
+    Event, Object, Operation,
+    hashing::Hasher,
+    utils::{State, debug},
 };
 
 #[derive(Error, Debug)]
@@ -17,10 +17,6 @@ pub enum Error {
         event: Event,
         reason: Cow<'static, str>,
     },
-    #[error("not enough events were processed")]
-    Incomplete,
-    #[error("file contents should be compressed")]
-    Decompressed,
 }
 
 pub struct Encoder<'a, B> {
@@ -96,15 +92,9 @@ impl<'a, B: BufMut> Encoder<'a, B> {
                     });
                 };
 
-                let mut hasher = Hasher::new();
                 self.buffer.put_u64_le(index.len() as u64);
-                index.iter().for_each(|path| {
-                    self.put_plen(&path.inner);
-                    hash_plen(&mut hasher, &path.inner);
-                });
-                let hash = hasher.finalize();
-                debug!("index hashed to {hash}");
-                self.buffer.put_slice(hash.as_bytes());
+                index.iter().for_each(|path| self.put_plen(&path.inner));
+                self.put_hash(event);
 
                 self.state = State::Operations(index.len());
                 Ok(())
@@ -132,12 +122,7 @@ impl<'a, B: BufMut> Encoder<'a, B> {
                     } => self.put_create_op(*permissions, object)?,
                     Operation::Delete { .. } => self.buffer.put_u8(1),
                 };
-
-                let mut hasher = Hasher::new();
-                operation.hash(&mut hasher);
-                let hash = hasher.finalize();
-                debug!("operation hashed to {hash}");
-                self.buffer.put_slice(hash.as_bytes());
+                self.put_hash(event);
 
                 match self.state {
                     State::Operations(ref mut amount) => *amount -= 1,
@@ -149,25 +134,18 @@ impl<'a, B: BufMut> Encoder<'a, B> {
         }
     }
 
+    fn put_hash(&mut self, event: &Event) {
+        self.buffer.put_slice(Hasher::hash(event).as_bytes());
+    }
+
     fn put_create_op(&mut self, permissions: u32, object: &Object) -> Result<(), Error> {
         self.buffer.put_u8(0);
         self.buffer.put_u32_le(permissions);
 
         match object {
-            Object::File { contents, prefix } => {
+            Object::File { contents } => {
                 self.buffer.put_u8(0);
-                match prefix {
-                    None => self.buffer.put_u8(0),
-                    Some(hash) => {
-                        self.buffer.put_u8(1);
-                        self.buffer.put_slice(hash.as_bytes());
-                    }
-                }
-
-                match contents {
-                    Contents::Compressed(bytes) => self.put_plen(bytes),
-                    Contents::Decompressed(_) => return Err(Error::Decompressed),
-                }
+                self.put_plen(contents);
             }
             Object::Symlink { target } => {
                 self.buffer.put_u8(1);

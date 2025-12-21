@@ -7,9 +7,6 @@ NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED",  "MAY", and "OPTIONAL"
 in this document are to be interpreted as described in
 [IETF RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119).
 
-The key word "Zstandard" in this document is to be interpreted as described in
-[IETF RFC 8878](https://datatracker.ietf.org/doc/html/rfc8878).
-
 The key word "pathname" and "stat" in this document is to be interpreted as
 an absolute pathname as described in Section 4.16 and sys/stat.h of
 [IEEE Std 1003.1-2024](https://pubs.opengroup.org/onlinepubs/9799919799/) respectively.
@@ -32,9 +29,7 @@ operation
 	// permissions = stat's st_mode permission bits
 	= u8(0), u32(permissions), (
 		// File
-		// When computing the digest of a file, the following should be hashed:
-		// u8(0), lenp(contents)
-		u8(0), (u8(0) | u8(1), digest(zstd-prefix)), lenp(zstd(contents))
+		u8(0), lenp(contents)
 		// Symlink
 		// `target` is a pathname
 	  | u8(1), lenp(target)
@@ -48,9 +43,6 @@ operation
 lenp(x) = u64(|x|), x;
 digest(b) = BLAKE3 hash of b with an output length of 32;
 
-zstd-prefix = Zstandard prefix to compress/decompress with;
-zstd-frame(b) = Zstandard frame of b;
-
 u8(n)  = little-endian unsigned 8 bit integer;
 u16(n) = little-endian unsigned 16 bit integer;
 u32(n) = little-endian unsigned 32 bit integer;
@@ -61,10 +53,6 @@ u64(n) = little-endian unsigned 64 bit integer;
 
 - **Directory Order:** Parent directory objects MUST be emitted before their children objects.
 - **Sorting:** `object-map` entries MUST be sorted by the bytes of their
-	`location` in ascending order. Duplicate `location` entries MUST NOT appear.
+	`location` in ascending order. Duplicate `location`'s' MUST NOT appear.
 - **Deletion**: If applicable, deletion objects MUST recursively remove children.
-- **Prefixes:** For prefixes, decoders MUST inject the prefix identified by the digest. Implementations SHOULD provide a method to dynamically locate prefixes.
-- **Complete Digest:** When computing the semantic digest of an archive, implementations SHOULD hash an ordered composite of:
-	- File content digests
-	- Symlink target digests
-	- Location digest
+- **Complete Digest:** When computing the digest of a complete archive, implementations MUST hash an aggregate of all existing digests.

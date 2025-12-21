@@ -1,21 +1,22 @@
-use alloc::{borrow::Cow, collections::btree_set::BTreeSet, format, vec};
-use blake3::{Hash, Hasher};
+use alloc::{borrow::Cow, vec};
 use core::{num::TryFromIntError, str::Utf8Error};
 
+use blake3::Hash;
 use bytes::{Buf, Bytes, TryGetError};
 use thiserror::Error;
 
 use crate::{
-    Contents, Event, Object, Operation,
-    utils::{self, State, debug},
+    Event, Object, Operation,
+    hashing::Hasher,
+    utils::{State, debug},
 };
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("unexpected token: {token:?} ({reason})")]
+    #[error("unexpected token: {token:?} (expected {expected})")]
     UnexpectedToken {
         token: Bytes,
-        reason: Cow<'static, str>,
+        expected: Cow<'static, str>,
     },
     #[error("not enough data was in buffer")]
     Incomplete(#[from] TryGetError),
@@ -64,7 +65,14 @@ impl<'a, B: Buf> Decoder<'a, B> {
 
         let event = match self.state {
             State::Magic => {
-                self.expect("xuehua-archive")?;
+                const MAGIC: &str = "xuehua-archive";
+                let token = self.try_copy_to_bytes(MAGIC.len())?;
+                if token != MAGIC {
+                    return Err(Error::UnexpectedToken {
+                        token,
+                        expected: MAGIC.into(),
+                    });
+                }
 
                 let version = self.buffer.try_get_u16_le()?;
                 if version != 1 {
@@ -72,51 +80,50 @@ impl<'a, B: Buf> Decoder<'a, B> {
                 }
 
                 self.state = State::Index;
-                self.process()?
+                return self.process();
             }
             State::Index => {
-                let amount = self.buffer.try_get_u64_le()?;
-                let mut index = BTreeSet::new();
+                let amount = self.buffer.try_get_u64_le()?.try_into()?;
+                let event = Event::Index(
+                    (0..amount)
+                        .map(|_| {
+                            let len = self.buffer.try_get_u64_le()?.try_into()?;
+                            let path = self.try_copy_to_bytes(len)?;
+                            Ok(path.into())
+                        })
+                        .collect::<Result<_, Error>>()?,
+                );
 
-                let mut hasher = Hasher::new();
-                for _ in 0..amount {
-                    let len = self.buffer.try_get_u64_le()?.try_into()?;
-                    let bytes = self.try_copy_to_bytes(len)?;
-
-                    utils::hash_plen(&mut hasher, &bytes);
-                    index.insert(bytes.into());
-                }
-
-                self.expect_hash(hasher.finalize())?;
-                self.state = State::Operations(index.len());
-                Event::Index(index)
+                self.state = State::Operations(amount);
+                event
             }
             State::Operations(..) => {
-                let delete = self.get_bool()?;
-                let operation = if delete {
-                    Operation::Delete
-                } else {
-                    Operation::Create {
+                let op_type = self.buffer.try_get_u8()?;
+                let event = Event::Operation(match op_type {
+                    0 => Operation::Create {
                         permissions: self.buffer.try_get_u32_le()?,
                         object: self.get_object()?,
+                    },
+                    1 => Operation::Delete,
+                    _ => {
+                        return Err(Error::UnexpectedToken {
+                            token: Bytes::from_owner(vec![op_type]),
+                            expected: "0 or 1".into(),
+                        });
                     }
-                };
-
-                let hasher = &mut Hasher::new();
-                operation.hash(hasher);
-                self.expect_hash(hasher.finalize())?;
+                });
 
                 match self.state {
                     State::Operations(ref mut amount) => *amount -= 1,
                     _ => unreachable!(),
                 }
 
-                Event::Operation(operation)
+                event
             }
         };
 
         debug!("decoded event: {event:?}");
-
+        self.verify_event(&event)?;
         Ok(event)
     }
 
@@ -126,17 +133,10 @@ impl<'a, B: Buf> Decoder<'a, B> {
 
         Ok(match obj_type {
             0 => Object::File {
-                prefix: {
-                    if self.get_bool()? {
-                        Some(self.get_hash()?)
-                    } else {
-                        None
-                    }
-                },
-                contents: Contents::Compressed({
+                contents: {
                     let len = self.buffer.try_get_u64_le()?.try_into()?;
                     self.try_copy_to_bytes(len)?
-                }),
+                },
             },
             1 => Object::Symlink {
                 target: {
@@ -148,7 +148,7 @@ impl<'a, B: Buf> Decoder<'a, B> {
             _ => {
                 return Err(Error::UnexpectedToken {
                     token: Bytes::from_owner(vec![obj_type]),
-                    reason: "expected 0, 1, or 2".into(),
+                    expected: "0, 1, or 2".into(),
                 });
             }
         })
@@ -166,45 +166,20 @@ impl<'a, B: Buf> Decoder<'a, B> {
         }
     }
 
-    fn get_bool(&mut self) -> Result<bool, Error> {
-        let value = self.buffer.try_get_u8()?;
-        match value {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(Error::UnexpectedToken {
-                token: Bytes::from_owner(vec![value]),
-                reason: "0 or 1".into(),
-            }),
-        }
-    }
-
     fn get_hash(&mut self) -> Result<Hash, Error> {
         Ok(Hash::from_slice(&self.try_copy_to_bytes(blake3::OUT_LEN)?)
             .expect("bytes should be OUT_LEN long"))
     }
 
-    fn expect_hash(&mut self, expect: Hash) -> Result<Hash, Error> {
+    fn verify_event(&mut self, event: &Event) -> Result<(), Error> {
+        let expect = Hasher::hash(event);
         let actual = self.get_hash()?;
-        if actual == expect {
-            Ok(actual)
-        } else {
-            Err(Error::DigestMismatch {
+
+        (actual == expect)
+            .then_some(())
+            .ok_or(Error::DigestMismatch {
                 expected: expect,
                 found: actual,
             })
-        }
-    }
-
-    fn expect(&mut self, expect: impl Into<Bytes>) -> Result<Bytes, Error> {
-        let expect = expect.into();
-        let actual = self.try_copy_to_bytes(expect.len())?;
-        if actual == expect {
-            Ok(actual)
-        } else {
-            Err(Error::UnexpectedToken {
-                token: actual,
-                reason: format!("expected {expect:?}").into(),
-            })
-        }
     }
 }

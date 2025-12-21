@@ -9,7 +9,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    Contents, Event, Object, Operation, PathBytes,
+    Event, Object, Operation, PathBytes,
     utils::{PathEscapeError, debug, resolve_path},
 };
 
@@ -20,8 +20,6 @@ pub enum Error {
         event: Event,
         reason: Cow<'static, str>,
     },
-    #[error("file contents should be uncompressed")]
-    Compressed,
     #[error(transparent)]
     PathEscape(#[from] PathEscapeError),
     #[error(transparent)]
@@ -65,11 +63,7 @@ impl<'a> Unpacker<'a> {
                 match object {
                     Object::File {
                         contents,
-                        prefix: _,
-                    } => match contents {
-                        Contents::Compressed(_) => return Err(Error::Compressed),
-                        Contents::Decompressed(contents) => fs::write(&dest, contents)?,
-                    },
+                    } => fs::write(&dest, contents)?,
                     Object::Symlink { target } => symlink(resolve_path(self.root, target)?, &dest)?,
                     Object::Directory => fs::create_dir(&dest)?,
                 };

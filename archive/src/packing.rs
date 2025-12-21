@@ -9,7 +9,7 @@ use bytes::{BufMut, BytesMut};
 use thiserror::Error;
 
 use crate::{
-    Contents, Event, Object, Operation, PathBytes,
+    Event, Object, Operation, PathBytes,
     utils::{PathEscapeError, debug, resolve_path},
 };
 
@@ -137,8 +137,7 @@ impl Packer {
             Event::Operation(Operation::Create {
                 permissions,
                 object: Object::File {
-                    prefix: None,
-                    contents: Contents::Decompressed(fs::read(path)?.into()),
+                    contents: fs::read(path)?.into(),
                 },
             })
         } else if metadata.is_symlink() {
