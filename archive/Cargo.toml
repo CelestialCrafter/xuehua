@@ -2,9 +2,14 @@
 name = "xh-archive"
 version = "0.1.0"
 edition = "2024"
+autotests = false
+
+[lib]
+test = false
 
 [[test]]
-name = "main"
+name = "tests"
+path = "tests/main.rs"
 required-features = ["std"]
 harness = false
 
