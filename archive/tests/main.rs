@@ -6,19 +6,28 @@ use include_dir::include_dir;
 use libtest_mimic::{Arguments, Trial};
 use xh_archive::Event;
 
-use crate::utils::{ArbitraryArchive, BenchmarkOptions, benchmark, decode, encode, setup};
+use crate::utils::{
+    ArbitraryArchive, BenchmarkOptions, benchmark, decode, encode, make_temp, setup,
+};
 
 mod utils;
 
 #[cfg(feature = "std")]
 #[inline]
 fn pack_unpack_roundtrip(events: Vec<Event>) {
-    let temp =
-        tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("should be able to make temp dir");
-    let path = temp.path().join("root");
+    let (path, _temp) = make_temp();
 
     utils::unpack(&path, &events);
     assert_eq!(events, utils::pack(&path));
+}
+
+#[cfg(all(feature = "std", feature = "mmap"))]
+#[inline]
+fn mmap_pack_unpack_roundtrip(events: Vec<Event>) {
+    let (path, _temp) = make_temp();
+
+    utils::unpack(&path, &events);
+    assert_eq!(events, utils::pack_mmap(&path));
 }
 
 #[inline]
@@ -63,6 +72,11 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
             Trial::bench(
                 format!("pack-unpack-{name}"),
                 benchmark(|| Ok(pack_unpack_roundtrip(events.to_vec())), options),
+            ),
+            #[cfg(all(feature = "std", feature = "mmap"))]
+            Trial::bench(
+                format!("mmap-pack-unpack-{name}"),
+                benchmark(|| Ok(mmap_pack_unpack_roundtrip(events.to_vec())), options),
             ),
         ]
     };
