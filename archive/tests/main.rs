@@ -6,20 +6,19 @@ use include_dir::include_dir;
 use libtest_mimic::{Arguments, Trial};
 use xh_archive::Event;
 
-use crate::utils::{
-    ArbitraryArchive, BenchmarkOptions, benchmark, decode, encode, pack, setup, unpack,
-};
+use crate::utils::{ArbitraryArchive, BenchmarkOptions, benchmark, decode, encode, setup};
 
 mod utils;
 
+#[cfg(feature = "std")]
 #[inline]
 fn pack_unpack_roundtrip(events: Vec<Event>) {
     let temp =
         tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("should be able to make temp dir");
     let path = temp.path().join("root");
 
-    unpack(&path, &events);
-    assert_eq!(events, pack(&path));
+    utils::unpack(&path, &events);
+    assert_eq!(events, utils::pack(&path));
 }
 
 #[inline]
@@ -60,6 +59,7 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
                 format!("enc-dec-{name}"),
                 benchmark(|| Ok(enc_dec_roundtrip(events.to_vec())), options),
             ),
+            #[cfg(feature = "std")]
             Trial::bench(
                 format!("pack-unpack-{name}"),
                 benchmark(|| Ok(pack_unpack_roundtrip(events.to_vec())), options),

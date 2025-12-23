@@ -1,14 +1,10 @@
 use std::collections::BTreeSet;
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use arbitrary::Arbitrary;
 use bytes::{Bytes, BytesMut};
 use libtest_mimic::{Failed, Measurement};
-use xh_archive::{
-    Event, Object, Operation, PathBytes, decoding::Decoder, encoding::Encoder, packing::Packer,
-    unpacking::Unpacker,
-};
+use xh_archive::{Event, Object, Operation, PathBytes, decoding::Decoder, encoding::Encoder};
 
 #[derive(Clone, Copy)]
 pub struct BenchmarkOptions {
@@ -119,15 +115,17 @@ impl Arbitrary<'_> for ArbitraryArchive {
     }
 }
 
-pub fn pack(root: &Path) -> Vec<Event> {
-    Packer::new(root.to_path_buf())
+#[cfg(feature = "std")]
+pub fn pack(root: &std::path::Path) -> Vec<Event> {
+    xh_archive::packing::Packer::new(root.to_path_buf())
         .pack()
         .map(|event| event.expect("should be able to pack file"))
         .collect()
 }
 
-pub fn unpack(root: &Path, events: &Vec<Event>) {
-    Unpacker::new(root)
+#[cfg(feature = "std")]
+pub fn unpack(root: &std::path::Path, events: &Vec<Event>) {
+    xh_archive::unpacking::Unpacker::new(root)
         .unpack(events)
         .expect("should be able to unpack files")
 }
