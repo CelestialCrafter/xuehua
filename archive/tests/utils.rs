@@ -133,17 +133,23 @@ pub fn unpack(root: &Path, events: &Vec<Event>) {
 }
 
 pub fn decode(mut contents: &[u8]) -> Vec<Event> {
-    Decoder::new(&mut contents)
+    let mut decoder = Decoder::new(&mut contents);
+
+    let decoded = decoder
         .decode()
         .collect::<Result<Vec<_>, _>>()
-        .expect("decoding should not fail")
+        .expect("decoding should not fail");
+    assert!(decoder.finished(), "decoding should be finished");
+
+    decoded
 }
 
 pub fn encode(events: &Vec<Event>) -> Vec<u8> {
     let mut encoded = BytesMut::new();
-    Encoder::new(&mut encoded)
-        .encode(events)
-        .expect("encoding should not fail");
+    let mut encoder = Encoder::new(&mut encoded);
+
+    encoder.encode(events).expect("encoding should not fail");
+    assert!(encoder.finished(), "encoding should be finished");
 
     encoded.to_vec()
 }

@@ -55,20 +55,8 @@ impl<'a, B: BufMut> Encoder<'a, B> {
     }
 
     #[inline]
-    pub fn finish(self) -> Result<(), Error> {
-        debug!("finishing encoder");
-
-        match self.state {
-            State::Magic => Err(Error::Incomplete),
-            State::Index => Err(Error::Incomplete),
-            State::Operations(amount) => {
-                if amount > 1 {
-                    Err(Error::Incomplete)
-                } else {
-                    Ok(())
-                }
-            }
-        }
+    pub fn finished(&self) -> bool {
+        self.state.finished()
     }
 
     fn process(&mut self, event: &Event) -> Result<(), Error> {
