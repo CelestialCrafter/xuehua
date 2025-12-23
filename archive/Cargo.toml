@@ -13,8 +13,9 @@ path = "tests/main.rs"
 harness = false
 
 [features]
-default = ["std"]
+default = ["std", "mmap"]
 std = ["blake3/std", "thiserror/std"]
+mmap = ["dep:memmap2"]
 log = ["dep:log"]
 
 [dependencies]
@@ -22,6 +23,7 @@ log = { workspace = true, optional = true }
 blake3.workspace = true
 thiserror.workspace = true
 bytes = "1.11.0"
+memmap2 = { version = "0.9.9", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
 };
 
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use thiserror::Error;
 
 use crate::{
@@ -23,7 +23,7 @@ pub enum Error {
     IOError(#[from] std::io::Error),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Options {
     pub follow_symlinks: bool,
 }
@@ -42,6 +42,8 @@ pub struct Packer {
     options: Options,
 }
 
+type ReadFileFn = fn(&PathBytes) -> Result<Bytes, Error>;
+
 impl Packer {
     pub fn new(root: PathBuf) -> Self {
         Self {
@@ -57,13 +59,22 @@ impl Packer {
     }
 
     pub fn pack(&mut self) -> impl Iterator<Item = Result<Event, Error>> {
-        std::iter::from_fn(|| {
+        self.process_all(read_file_default)
+    }
+
+    #[cfg(feature = "mmap")]
+    pub unsafe fn pack_mmap(&mut self) -> impl Iterator<Item = Result<Event, Error>> {
+        self.process_all(read_file_mmap)
+    }
+
+    fn process_all(&mut self, read_file: ReadFileFn) -> impl Iterator<Item = Result<Event, Error>> {
+        std::iter::from_fn(move || {
             Some(match self.index {
                 Some(ref mut index) => {
                     let path = index.pop_first()?;
-                    self.process(&path)
+                    self.process(&path, read_file)
                 }
-                None => self.build_index().map(|(internal, external)| {
+                None => build_index(&self.root).map(|(internal, external)| {
                     self.index = Some(internal);
                     Event::Index(external)
                 }),
@@ -71,54 +82,7 @@ impl Packer {
         })
     }
 
-    fn build_index(&self) -> Result<(BTreeSet<PathBytes>, BTreeSet<PathBytes>), Error> {
-        let mut queue = Vec::from([(
-            self.root.clone(),
-            fs::symlink_metadata(&self.root)?.file_type(),
-        )]);
-
-        let mut i = 0;
-        while let Some((path, ty)) = queue.get(i) {
-            i += 1;
-
-            if !ty.is_dir() {
-                continue;
-            }
-
-            queue.extend(
-                fs::read_dir(path)?
-                    .map(|entry| {
-                        let entry = entry?;
-                        Ok((entry.path().into(), entry.file_type()?))
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?,
-            );
-        }
-
-        let internal: BTreeSet<_> = queue.into_iter().map(|(path, _)| path).collect();
-
-        let base = fs::canonicalize(&self.root)?;
-        let external = internal
-            .iter()
-            .map(|path| {
-                let mut stripped = BytesMut::new();
-                stripped.put_u8(b'/');
-                stripped.put_slice(
-                    path.as_ref()
-                        .strip_prefix(&base)
-                        .expect("path should be a child of root")
-                        .as_os_str()
-                        .as_bytes(),
-                );
-
-                stripped.freeze().into()
-            })
-            .collect();
-
-        Ok((internal, external))
-    }
-
-    fn process(&self, path: &PathBytes) -> Result<Event, Error> {
+    fn process(&self, path: &PathBytes, read_file: ReadFileFn) -> Result<Event, Error> {
         debug!("packing {}", path.as_ref().display());
 
         let metadata = if self.options.follow_symlinks {
@@ -137,7 +101,7 @@ impl Packer {
             Event::Operation(Operation::Create {
                 permissions,
                 object: Object::File {
-                    contents: fs::read(path)?.into(),
+                    contents: read_file(path)?,
                 },
             })
         } else if metadata.is_symlink() {
@@ -154,4 +118,59 @@ impl Packer {
 
         Ok(event)
     }
+}
+
+fn build_index(root: &PathBytes) -> Result<(BTreeSet<PathBytes>, BTreeSet<PathBytes>), Error> {
+    let mut queue = Vec::from([(root.clone(), fs::symlink_metadata(root)?.file_type())]);
+
+    let mut i = 0;
+    while let Some((path, ty)) = queue.get(i) {
+        i += 1;
+
+        if !ty.is_dir() {
+            continue;
+        }
+
+        queue.extend(
+            fs::read_dir(path)?
+                .map(|entry| {
+                    let entry = entry?;
+                    Ok((entry.path().into(), entry.file_type()?))
+                })
+                .collect::<Result<Vec<_>, Error>>()?,
+        );
+    }
+
+    let internal: BTreeSet<_> = queue.into_iter().map(|(path, _)| path).collect();
+
+    let base = fs::canonicalize(root)?;
+    let external = internal
+        .iter()
+        .map(|path| {
+            let mut stripped = BytesMut::new();
+            stripped.put_u8(b'/');
+            stripped.put_slice(
+                path.as_ref()
+                    .strip_prefix(&base)
+                    .expect("path should be a child of root")
+                    .as_os_str()
+                    .as_bytes(),
+            );
+
+            stripped.freeze().into()
+        })
+        .collect();
+
+    Ok((internal, external))
+}
+
+fn read_file_default(path: &PathBytes) -> Result<Bytes, Error> {
+    Ok(fs::read(path)?.into())
+}
+
+#[cfg(feature = "mmap")]
+fn read_file_mmap(path: &PathBytes) -> Result<Bytes, Error> {
+    let file = fs::File::open(path)?;
+    let mmap = unsafe { memmap2::Mmap::map(&file)? };
+    Ok(Bytes::from_owner(mmap))
 }
