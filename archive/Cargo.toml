@@ -10,7 +10,6 @@ test = false
 [[test]]
 name = "tests"
 path = "tests/main.rs"
-required-features = ["std"]
 harness = false
 
 [features]
