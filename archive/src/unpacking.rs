@@ -6,6 +6,7 @@ use std::{
     path::Path,
 };
 
+use bytes::Bytes;
 use thiserror::Error;
 
 use crate::{
@@ -26,10 +27,13 @@ pub enum Error {
     IOError(#[from] std::io::Error),
 }
 
+// TODO: impl overwrite option
 pub struct Unpacker<'a> {
     index: Option<BTreeSet<PathBytes>>,
     root: &'a Path,
 }
+
+type WriteFileFn = fn(&Path, &Bytes) -> Result<(), Error>;
 
 impl<'a> Unpacker<'a> {
     #[inline]
@@ -47,10 +51,26 @@ impl<'a> Unpacker<'a> {
     ) -> Result<(), Error> {
         iterator
             .into_iter()
-            .try_for_each(|event| self.process(event.borrow()))
+            .try_for_each(|event| self.process(event.borrow(), write_file_default))
     }
 
-    fn process_operation(&self, dest: PathBytes, operation: &Operation) -> Result<(), Error> {
+    #[cfg(feature = "mmap")]
+    #[inline]
+    pub unsafe fn unpack_mmap(
+        &mut self,
+        iterator: impl IntoIterator<Item = impl Borrow<Event>>,
+    ) -> Result<(), Error> {
+        iterator
+            .into_iter()
+            .try_for_each(|event| self.process(event.borrow(), write_file_mmap))
+    }
+
+    fn process_operation(
+        &self,
+        dest: PathBytes,
+        operation: &Operation,
+        write_file: WriteFileFn,
+    ) -> Result<(), Error> {
         let dest = resolve_path(self.root, &dest)?;
 
         debug!("unpacking to {}", dest.display());
@@ -61,9 +81,7 @@ impl<'a> Unpacker<'a> {
                 object,
             } => {
                 match object {
-                    Object::File {
-                        contents,
-                    } => fs::write(&dest, contents)?,
+                    Object::File { contents } => write_file(&dest, contents)?,
                     Object::Symlink { target } => symlink(resolve_path(self.root, target)?, &dest)?,
                     Object::Directory => fs::create_dir(&dest)?,
                 };
@@ -84,7 +102,7 @@ impl<'a> Unpacker<'a> {
         Ok(())
     }
 
-    fn process(&mut self, event: &Event) -> Result<(), Error> {
+    fn process(&mut self, event: &Event, write_file: WriteFileFn) -> Result<(), Error> {
         debug!("unpacking {event:?}");
 
         match self.index {
@@ -111,8 +129,32 @@ impl<'a> Unpacker<'a> {
                     reason: "too many events".into(),
                 })?;
 
-                self.process_operation(dest, operation)
+                self.process_operation(dest, operation, write_file)
             }
         }
     }
+}
+
+fn write_file_default(path: &Path, contents: &Bytes) -> Result<(), Error> {
+    fs::write(path, contents).map_err(Into::into)
+}
+
+#[cfg(feature = "mmap")]
+fn write_file_mmap(path: &Path, contents: &Bytes) -> Result<(), Error> {
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    file.set_len(contents.len() as u64)?;
+
+    let mut map = unsafe {
+        memmap2::MmapOptions::new()
+            .len(contents.len())
+            .map_mut(&file)
+    }?;
+
+    map.copy_from_slice(&contents);
+
+    Ok(())
 }
