@@ -1,5 +1,7 @@
-use std::collections::BTreeSet;
+#[cfg(feature = "std")]
+use std::path::Path;
 use std::time::{Duration, Instant};
+use std::{collections::BTreeSet, path::PathBuf};
 
 use arbitrary::Arbitrary;
 use bytes::{Bytes, BytesMut};
@@ -116,15 +118,23 @@ impl Arbitrary<'_> for ArbitraryArchive {
 }
 
 #[cfg(feature = "std")]
-pub fn pack(root: &std::path::Path) -> Vec<Event> {
+pub fn pack(root: &Path) -> Vec<Event> {
     xh_archive::packing::Packer::new(root.to_path_buf())
         .pack()
         .map(|event| event.expect("should be able to pack file"))
         .collect()
 }
 
+#[cfg(all(feature = "std", feature = "mmap"))]
+pub fn pack_mmap(root: &Path) -> Vec<Event> {
+    let mut packer = xh_archive::packing::Packer::new(root.to_path_buf());
+    unsafe { packer.pack_mmap() }
+        .map(|event| event.expect("should be able to pack file"))
+        .collect()
+}
+
 #[cfg(feature = "std")]
-pub fn unpack(root: &std::path::Path, events: &Vec<Event>) {
+pub fn unpack(root: &Path, events: &Vec<Event>) {
     xh_archive::unpacking::Unpacker::new(root)
         .unpack(events)
         .expect("should be able to unpack files")
@@ -150,6 +160,14 @@ pub fn encode(events: &Vec<Event>) -> Vec<u8> {
     assert!(encoder.finished(), "encoding should be finished");
 
     encoded.to_vec()
+}
+
+pub fn make_temp() -> (PathBuf, tempfile::TempDir) {
+    let temp =
+        tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("should be able to make temp dir");
+    let path = temp.path().join("root");
+
+    (path, temp)
 }
 
 #[cfg(feature = "log")]

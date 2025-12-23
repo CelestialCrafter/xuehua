@@ -13,7 +13,7 @@ path = "tests/main.rs"
 harness = false
 
 [features]
-default = ["std", "mmap"]
+default = ["std"]
 std = ["blake3/std", "thiserror/std"]
 mmap = ["dep:memmap2"]
 log = ["dep:log"]
