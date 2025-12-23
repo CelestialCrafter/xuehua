@@ -50,6 +50,11 @@ impl<'a, B: Buf> Decoder<'a, B> {
         }
     }
 
+    #[inline]
+    pub fn finished(&self) -> bool {
+        self.state.finished()
+    }
+
     pub fn decode(&mut self) -> impl Iterator<Item = Result<Event, Error>> {
         core::iter::from_fn(move || {
             if matches!(self.state, State::Operations(0)) {
