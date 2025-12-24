@@ -1,12 +1,13 @@
-#[cfg(feature = "std")]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use std::{collections::BTreeSet, path::PathBuf};
 
 use arbitrary::Arbitrary;
 use bytes::{Bytes, BytesMut};
 use libtest_mimic::{Failed, Measurement};
-use xh_archive::{Event, Object, Operation, PathBytes, decoding::Decoder, encoding::Encoder};
+use xh_archive::{
+    Event, Index, Object, ObjectMetadata, ObjectType, PathBytes, decoding::Decoder,
+    encoding::Encoder,
+};
 
 #[derive(Clone, Copy)]
 pub struct BenchmarkOptions {
@@ -74,44 +75,61 @@ pub struct ArbitraryArchive {
 
 impl Arbitrary<'_> for ArbitraryArchive {
     fn arbitrary(u: &mut arbitrary::Unstructured) -> arbitrary::Result<Self> {
-        let mut events = Vec::new();
+        fn arbitrary_bytes(u: &mut arbitrary::Unstructured<'_>) -> Result<Bytes, arbitrary::Error> {
+            Vec::<u8>::arbitrary(u).map(Into::into)
+        }
 
-        let index: BTreeSet<_> = u
-            .arbitrary_iter()?
-            .map(|data| {
-                Ok(PathBytes {
-                    inner: Bytes::copy_from_slice(data?),
-                })
+        let index: Index = (0..u.arbitrary_len::<(u8, &[u8], &[u8], u32)>()?)
+            .map(|_| {
+                let variant = match u.choose_index(2)? {
+                    0 => ObjectType::File,
+                    1 => ObjectType::Symlink,
+                    2 => ObjectType::Directory,
+                    _ => unreachable!()
+                };
+
+                let size = if let ObjectType::Directory = variant {
+                    0
+                } else {
+                    u.arbitrary_len::<&[u8]>()? as u64
+                };
+
+                Ok((
+                    PathBytes {
+                        inner: arbitrary_bytes(u)?,
+                    },
+                    ObjectMetadata {
+                        permissions: u.arbitrary()?,
+                        size,
+                        variant,
+                    },
+                ))
             })
             .collect::<Result<_, _>>()?;
-        let objects = index.len();
-        events.push(Event::Index(index));
 
-        for _ in 0..objects {
-            let operation = match u.choose_index(1)? {
-                0 => Operation::Create {
-                    permissions: *u.choose(&[0o755, 0o644])?,
-                    object: {
-                        match u.choose_index(2)? {
-                            0 => Object::File {
-                                contents: u.arbitrary().map(Bytes::copy_from_slice)?,
-                            },
-                            1 => Object::Symlink {
-                                target: PathBytes {
-                                    inner: u.arbitrary().map(Bytes::copy_from_slice)?,
-                                },
-                            },
-                            2 => Object::Directory,
-                            _ => unreachable!(),
-                        }
+        let objects = index
+            .iter()
+            .map(|(_, metadata)| {
+                let mut content = || {
+                    let mut content = BytesMut::zeroed(metadata.size as usize);
+                    u.fill_buffer(&mut content)?;
+                    Ok(content.freeze())
+                };
+
+                Ok(Event::Object(match metadata.variant {
+                    ObjectType::File => Object::File {
+                        contents: content()?,
                     },
-                },
-                1 => Operation::Delete,
-                _ => unreachable!(),
-            };
+                    ObjectType::Symlink => Object::Symlink {
+                        target: content()?.into(),
+                    },
+                    ObjectType::Directory => Object::Directory,
+                }))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
-            events.push(Event::Operation(operation));
-        }
+        let mut events = vec![Event::Index(index)];
+        events.extend(objects);
 
         Ok(Self { events })
     }
@@ -171,7 +189,7 @@ pub fn encode(events: &Vec<Event>) -> Vec<u8> {
 pub fn make_temp() -> (PathBuf, tempfile::TempDir) {
     let temp =
         tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("should be able to make temp dir");
-    let path = temp.path().join("root");
+    let path = temp.path().to_path_buf();
 
     (path, temp)
 }

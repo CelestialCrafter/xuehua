@@ -1,12 +1,12 @@
-use alloc::{borrow::Cow, vec};
 use core::{num::TryFromIntError, str::Utf8Error};
+use alloc::{borrow::Cow, collections::VecDeque};
 
 use blake3::Hash;
 use bytes::{Buf, Bytes, TryGetError};
 use thiserror::Error;
 
 use crate::{
-    Event, Object, Operation,
+    Event, Object, ObjectMetadata, ObjectType,
     hashing::Hasher,
     utils::{State, debug},
 };
@@ -32,6 +32,7 @@ pub enum Error {
 
 pub struct Decoder<'a, B> {
     state: State,
+    metadata: VecDeque<ObjectMetadata>,
     buffer: &'a mut B,
 }
 
@@ -40,12 +41,14 @@ impl<'a, B: Buf> Decoder<'a, B> {
         Self {
             buffer,
             state: Default::default(),
+            metadata: Default::default(),
         }
     }
 
     pub fn with_buffer<'b, T>(self, buffer: &'b mut T) -> Decoder<'b, T> {
         Decoder {
             state: self.state,
+            metadata: self.metadata,
             buffer,
         }
     }
@@ -57,7 +60,7 @@ impl<'a, B: Buf> Decoder<'a, B> {
 
     pub fn decode(&mut self) -> impl Iterator<Item = Result<Event, Error>> {
         core::iter::from_fn(move || {
-            if matches!(self.state, State::Operations(0)) {
+            if let State::Objects(0) = self.state {
                 None
             } else {
                 Some(self.process())
@@ -88,38 +91,28 @@ impl<'a, B: Buf> Decoder<'a, B> {
                 return self.process();
             }
             State::Index => {
-                let amount = self.buffer.try_get_u64_le()?.try_into()?;
-                let event = Event::Index(
-                    (0..amount)
-                        .map(|_| {
-                            let len = self.buffer.try_get_u64_le()?.try_into()?;
-                            let path = self.try_copy_to_bytes(len)?;
-                            Ok(path.into())
-                        })
-                        .collect::<Result<_, Error>>()?,
-                );
+                let amount = self.buffer.try_get_u64_le()?;
+                let (metadata, index) = (0..amount)
+                    .map(|_| {
+                        let (path, metadata) = self.get_index_entry()?;
+                        Ok((metadata, (path, metadata)))
+                    })
+                    .collect::<Result<_, Error>>()?;
 
-                self.state = State::Operations(amount);
-                event
+                self.state = State::Objects(amount);
+                self.metadata = metadata;
+
+                Event::Index(index)
             }
-            State::Operations(..) => {
-                let op_type = self.buffer.try_get_u8()?;
-                let event = Event::Operation(match op_type {
-                    0 => Operation::Create {
-                        permissions: self.buffer.try_get_u32_le()?,
-                        object: self.get_object()?,
-                    },
-                    1 => Operation::Delete,
-                    _ => {
-                        return Err(Error::UnexpectedToken {
-                            token: Bytes::from_owner(vec![op_type]),
-                            expected: "0 or 1".into(),
-                        });
-                    }
-                });
+            State::Objects(..) => {
+                let metadata = self
+                    .metadata
+                    .pop_front()
+                    .expect("object count should match index length");
+                let event = Event::Object(self.get_object(metadata)?);
 
                 match self.state {
-                    State::Operations(ref mut amount) => *amount -= 1,
+                    State::Objects(ref mut amount) => *amount -= 1,
                     _ => unreachable!(),
                 }
 
@@ -132,30 +125,44 @@ impl<'a, B: Buf> Decoder<'a, B> {
         Ok(event)
     }
 
-    fn get_object(&mut self) -> Result<Object, Error> {
-        let obj_type = self.buffer.try_get_u8()?;
-        debug!("decoding object type {obj_type}");
+    fn get_index_entry(&mut self) -> Result<(crate::PathBytes, ObjectMetadata), Error> {
+        let len = self.buffer.try_get_u64_le()?.try_into()?;
+        let path = self.try_copy_to_bytes(len)?.into();
 
-        Ok(match obj_type {
-            0 => Object::File {
-                contents: {
-                    let len = self.buffer.try_get_u64_le()?.try_into()?;
-                    self.try_copy_to_bytes(len)?
-                },
+        let metadata = ObjectMetadata {
+            permissions: self.buffer.try_get_u32_le()?,
+            size: self.buffer.try_get_u64_le()?,
+            variant: {
+                let token = self.buffer.try_get_u8()?;
+                match token {
+                    0 => ObjectType::File,
+                    1 => ObjectType::Symlink,
+                    2 => ObjectType::Directory,
+                    _ => {
+                        return Err(Error::UnexpectedToken {
+                            token: vec![token].into(),
+                            expected: "0, 1, or 2".into(),
+                        });
+                    }
+                }
             },
-            1 => Object::Symlink {
-                target: {
-                    let len = self.buffer.try_get_u64_le()?.try_into()?;
-                    self.try_copy_to_bytes(len)?.into()
-                },
+        };
+
+        Ok((path, metadata))
+    }
+
+    fn get_object(&mut self, metadata: ObjectMetadata) -> Result<Object, Error> {
+        debug!("decoding object with metadata {metadata:?}");
+
+        let mut contents = || self.try_copy_to_bytes(metadata.size.try_into()?);
+        Ok(match metadata.variant {
+            ObjectType::File => Object::File {
+                contents: contents()?,
             },
-            2 => Object::Directory,
-            _ => {
-                return Err(Error::UnexpectedToken {
-                    token: Bytes::from_owner(vec![obj_type]),
-                    expected: "0, 1, or 2".into(),
-                });
-            }
+            ObjectType::Symlink => Object::Symlink {
+                target: contents()?.into(),
+            },
+            ObjectType::Directory => Object::Directory,
         })
     }
 

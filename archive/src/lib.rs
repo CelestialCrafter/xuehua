@@ -14,8 +14,8 @@ pub mod unpacking;
 
 extern crate alloc;
 
-use alloc::collections::BTreeSet;
 use core::fmt::Debug;
+use alloc::collections::BTreeMap;
 
 use bytes::Bytes;
 
@@ -52,25 +52,40 @@ impl From<std::path::PathBuf> for PathBytes {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Object {
-    File {
-        contents: Bytes,
-    },
-    Symlink {
-        target: PathBytes,
-    },
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ObjectType {
+    File,
+    Symlink,
     Directory,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Operation {
-    Create { permissions: u32, object: Object },
-    Delete,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectMetadata {
+    pub permissions: u32,
+    pub size: u64,
+    pub variant: ObjectType,
 }
+
+#[cfg(feature = "std")]
+impl ObjectMetadata {
+    #[inline]
+    pub fn permissions(&self) -> std::fs::Permissions {
+        std::os::unix::fs::PermissionsExt::from_mode(self.permissions)
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Object {
+    File { contents: Bytes },
+    Symlink { target: PathBytes },
+    Directory,
+}
+
+pub type Index = BTreeMap<PathBytes, ObjectMetadata>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    Index(BTreeSet<PathBytes>),
-    Operation(Operation),
+    Index(Index),
+    Object(Object),
 }

@@ -1,16 +1,15 @@
 use std::{
-    collections::BTreeSet,
     fs,
     os::unix::{ffi::OsStrExt, fs::PermissionsExt},
     path::PathBuf,
 };
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 use thiserror::Error;
 
 use crate::{
-    Event, Object, Operation, PathBytes,
-    utils::{PathEscapeError, debug, resolve_path},
+    Event, Index, Object, ObjectMetadata, ObjectType, PathBytes,
+    utils::{PathEscapeError, debug},
 };
 
 #[derive(Error, Debug)]
@@ -23,23 +22,9 @@ pub enum Error {
     IOError(#[from] std::io::Error),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Options {
-    pub follow_symlinks: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            follow_symlinks: true,
-        }
-    }
-}
-
 pub struct Packer {
-    index: Option<BTreeSet<PathBytes>>,
+    index: Option<Index>,
     root: PathBytes,
-    options: Options,
 }
 
 type ReadFileFn = fn(&PathBytes) -> Result<Bytes, Error>;
@@ -48,14 +33,8 @@ impl Packer {
     pub fn new(root: PathBuf) -> Self {
         Self {
             index: None,
-            options: Default::default(),
             root: root.into(),
         }
-    }
-
-    pub fn with_options(mut self, options: Options) -> Self {
-        self.options = options;
-        self
     }
 
     pub fn pack(&mut self) -> impl Iterator<Item = Result<Event, Error>> {
@@ -71,8 +50,8 @@ impl Packer {
         std::iter::from_fn(move || {
             Some(match self.index {
                 Some(ref mut index) => {
-                    let path = index.pop_first()?;
-                    self.process(&path, read_file)
+                    let (path, metadata) = index.pop_first()?;
+                    self.process(path, metadata, read_file)
                 }
                 None => build_index(&self.root).map(|(internal, external)| {
                     self.index = Some(internal);
@@ -82,46 +61,28 @@ impl Packer {
         })
     }
 
-    fn process(&self, path: &PathBytes, read_file: ReadFileFn) -> Result<Event, Error> {
+    fn process(
+        &self,
+        path: PathBytes,
+        metadata: ObjectMetadata,
+        read_file: ReadFileFn,
+    ) -> Result<Event, Error> {
         debug!("packing {}", path.as_ref().display());
 
-        let metadata = if self.options.follow_symlinks {
-            fs::metadata(path)
-        } else {
-            fs::symlink_metadata(path)
-        }?;
-        let permissions = metadata.permissions().mode();
-
-        let event = if metadata.is_dir() {
-            Event::Operation(Operation::Create {
-                permissions,
-                object: Object::Directory,
-            })
-        } else if metadata.is_file() {
-            Event::Operation(Operation::Create {
-                permissions,
-                object: Object::File {
-                    contents: read_file(path)?,
-                },
-            })
-        } else if metadata.is_symlink() {
-            let target = fs::read_link(path)?.into();
-            resolve_path(&self.root, &target)?;
-
-            Event::Operation(Operation::Create {
-                permissions,
-                object: Object::Symlink { target },
-            })
-        } else {
-            return Err(Error::UnsupportedType(path.clone()));
-        };
-
-        Ok(event)
+        Ok(Event::Object(match metadata.variant {
+            ObjectType::File => Object::File {
+                contents: read_file(&path)?,
+            },
+            ObjectType::Symlink => Object::Symlink {
+                target: fs::read_link(path)?.into(),
+            },
+            ObjectType::Directory => Object::Directory,
+        }))
     }
 }
 
-fn build_index(root: &PathBytes) -> Result<(BTreeSet<PathBytes>, BTreeSet<PathBytes>), Error> {
-    let mut queue = Vec::from([(root.clone(), fs::symlink_metadata(root)?.file_type())]);
+fn build_index(root: &PathBytes) -> Result<(Index, Index), Error> {
+    let mut queue = Vec::from([(root.clone(), fs::symlink_metadata(root)?)]);
 
     let mut i = 0;
     while let Some((path, ty)) = queue.get(i) {
@@ -135,31 +96,43 @@ fn build_index(root: &PathBytes) -> Result<(BTreeSet<PathBytes>, BTreeSet<PathBy
             fs::read_dir(path)?
                 .map(|entry| {
                     let entry = entry?;
-                    Ok((entry.path().into(), entry.file_type()?))
+                    Ok((entry.path().into(), entry.metadata()?))
                 })
                 .collect::<Result<Vec<_>, Error>>()?,
         );
     }
 
-    let internal: BTreeSet<_> = queue.into_iter().map(|(path, _)| path).collect();
-
-    let base = fs::canonicalize(root)?;
-    let external = internal
-        .iter()
-        .map(|path| {
-            let mut stripped = BytesMut::new();
-            stripped.put_u8(b'/');
-            stripped.put_slice(
+    let (internal, external) = queue
+        .into_iter()
+        // skip root dir
+        .skip(1)
+        .map(|(path, metadata)| {
+            let stripped = Bytes::copy_from_slice(
                 path.as_ref()
-                    .strip_prefix(&base)
+                    .strip_prefix(&root)
                     .expect("path should be a child of root")
                     .as_os_str()
                     .as_bytes(),
-            );
+            )
+            .into();
 
-            stripped.freeze().into()
+            let metadata = ObjectMetadata {
+                permissions: metadata.permissions().mode(),
+                size: metadata.len(),
+                variant: if metadata.is_file() {
+                    ObjectType::File
+                } else if metadata.is_symlink() {
+                    ObjectType::Symlink
+                } else if metadata.is_dir() {
+                    ObjectType::Directory
+                } else {
+                    return Err(Error::UnsupportedType(path));
+                },
+            };
+
+            Ok(((path, metadata), (stripped, metadata)))
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
 
     Ok((internal, external))
 }
