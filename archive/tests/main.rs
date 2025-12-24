@@ -26,7 +26,7 @@ fn pack_unpack_roundtrip(events: Vec<Event>) {
 fn mmap_pack_unpack_roundtrip(events: Vec<Event>) {
     let (path, _temp) = make_temp();
 
-    utils::unpack(&path, &events);
+    utils::unpack_mmap(&path, &events);
     assert_eq!(events, utils::pack_mmap(&path));
 }
 
