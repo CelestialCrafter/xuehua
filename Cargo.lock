@@ -1451,6 +1451,7 @@ dependencies = [
  "petgraph",
  "tempfile",
  "tokio",
+ "xh-archive",
  "xh-engine",
 ]
 
