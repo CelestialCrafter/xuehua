@@ -11,6 +11,7 @@ path = "src/main.rs"
 fern.workspace = true
 eyre = { version = "0.6.12", default-features = false, features = ["track-caller"] }
 xh-engine = { path = "../engine", features = ["bubblewrap-executor", "http-executor", "local-store"] }
+xh-archive.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 log.workspace = true
 petgraph.workspace = true

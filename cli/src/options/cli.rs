@@ -4,10 +4,6 @@ use bpaf::{OptionParser, Parser, construct, long, positional, pure};
 
 use xh_engine::package::PackageId;
 
-fn pkgs_parser() -> impl Parser<Vec<PackageId>> {
-    positional("PACKAGE").many()
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct FormatParseError;
 
@@ -80,7 +76,7 @@ impl InspectAction {
         };
 
         let packages = {
-            let packages = pkgs_parser();
+            let packages = PackageAction::pkgs_parser();
             let format = long("format")
                 .short('f')
                 .help("Package output format")
@@ -119,12 +115,12 @@ impl LinkAction {
 }
 
 #[derive(Debug, Clone)]
-pub enum Action {
+pub enum PackageAction {
     Link {
         dry_run: bool,
         root: PathBuf,
-        packages: Vec<PackageId>,
         action: LinkAction,
+        packages: Vec<PackageId>,
     },
     Build {
         dry_run: bool,
@@ -133,8 +129,12 @@ pub enum Action {
     Inspect(InspectAction),
 }
 
-impl Action {
-    pub fn parser() -> impl Parser<Self> {
+impl PackageAction {
+    fn pkgs_parser() -> impl Parser<Vec<PackageId>> {
+        positional("PACKAGE").many()
+    }
+
+    fn parser() -> impl Parser<Self> {
         let dry_run = || {
             long("dry-run")
                 .help("Run without making changes to the system")
@@ -143,7 +143,7 @@ impl Action {
 
         let link = {
             let action = LinkAction::parser();
-            let packages = pkgs_parser();
+            let packages = Self::pkgs_parser();
             let root = long("root")
                 .short('r')
                 .help("Root filesystem to operate on")
@@ -161,10 +161,8 @@ impl Action {
         };
 
         let build = {
-            let packages = pkgs_parser();
-            let dry_run = dry_run();
-
-            construct!(Self::Build { dry_run, packages })
+            let packages = Self::pkgs_parser();
+            construct!(Self::Build { dry_run(), packages })
                 .to_options()
                 .descr("Builds packages")
                 .command("build")
@@ -184,22 +182,107 @@ impl Action {
 }
 
 #[derive(Debug, Clone)]
+pub enum ArchiveAction {
+    Pack { path: PathBuf },
+    Unpack { path: PathBuf },
+    Decode,
+    Hash { each_event: bool },
+}
+
+impl ArchiveAction {
+    fn path_parser() -> impl Parser<PathBuf> {
+        long("path")
+            .short('p')
+            .help("Path to the archive or directory")
+            .argument("PATH")
+            .fallback_with(env::current_dir)
+    }
+
+    fn parser() -> impl Parser<Self> {
+        let pack = {
+            let path = Self::path_parser();
+            construct!(Self::Pack { path })
+                .to_options()
+                .descr("Pack a directory into an archive")
+                .command("pack")
+        };
+
+        let unpack = {
+            let path = Self::path_parser();
+            construct!(Self::Unpack { path })
+                .to_options()
+                .descr("Unpack an archive into a directory")
+                .command("unpack")
+        };
+
+        // TODO: support json format
+        let decode = pure(Self::Decode)
+            .to_options()
+            .descr("Decode an archive into events")
+            .command("decode");
+
+        let hash = {
+            let each_event = long("each-event")
+                .help("Output the hash of each event individually")
+                .switch();
+
+            construct!(Self::Hash { each_event })
+                .to_options()
+                .descr("Hash an archive")
+                .command("hash")
+        };
+
+        construct!([pack, unpack, decode, hash])
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Action {
+    Package {
+        project: PathBuf,
+        action: PackageAction,
+    },
+    Archive(ArchiveAction),
+}
+
+impl Action {
+    pub fn parser() -> impl Parser<Self> {
+        let package = {
+            let action = PackageAction::parser();
+            let project = long("project")
+                .short('p')
+                .help("Path to the target project")
+                .argument("PROJECT")
+                .fallback_with(env::current_dir);
+
+            construct!(Self::Package { project, action })
+                .to_options()
+                .descr("Manage packages")
+                .command("package")
+        };
+
+        let archive = {
+            let action = ArchiveAction::parser();
+
+            construct!(Self::Archive(action))
+                .to_options()
+                .descr("Manage archives")
+                .command("archive")
+        };
+
+        construct!([package, archive])
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Options {
-    pub project: PathBuf,
     pub action: Action,
 }
 
 impl Options {
     pub fn options() -> OptionParser<Self> {
         let action = Action::parser();
-
-        let project = long("project")
-            .short('p')
-            .help("Path to the target project")
-            .argument("PROJECT")
-            .fallback_with(env::current_dir);
-
-        construct!(Self { project, action })
+        construct!(Self { action })
             .to_options()
             .fallback_to_usage()
             .version(env!("CARGO_PKG_VERSION"))
