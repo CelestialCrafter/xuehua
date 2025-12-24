@@ -145,5 +145,7 @@ fn read_file_default(path: &PathBytes) -> Result<Bytes, Error> {
 fn read_file_mmap(path: &PathBytes) -> Result<Bytes, Error> {
     let file = fs::File::open(path)?;
     let mmap = unsafe { memmap2::Mmap::map(&file)? };
+    mmap.advise(memmap2::Advice::Sequential)?;
+
     Ok(Bytes::from_owner(mmap))
 }
