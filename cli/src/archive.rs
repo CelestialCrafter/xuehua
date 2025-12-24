@@ -13,7 +13,7 @@ pub fn handle(action: &ArchiveAction) -> Result<(), eyre::Error> {
             let mut encoder = Encoder::new();
             let mut stdout = stdout().lock();
 
-            for event in Packer::new(path.to_path_buf()).pack() {
+            for event in Packer::new(path.clone()).pack() {
                 encoder
                     .encode_writer(&mut stdout, std::iter::once(event?))
                     .expect("should be able to encode events");

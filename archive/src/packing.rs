@@ -1,3 +1,5 @@
+//! Packing of [`Event`]s from the filesystem
+
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 use bytes::Bytes;
@@ -5,22 +7,30 @@ use thiserror::Error;
 
 use crate::{Event, Index, Object, ObjectMetadata, ObjectType, PathBytes, utils::debug};
 
+/// Error type for packing
 #[derive(Error, Debug)]
 pub enum Error {
+    /// A file had a type that could not be packed
     #[error("unsupported file type at {0:?}")]
     UnsupportedType(PathBytes),
+    #[allow(missing_docs)]
     #[error(transparent)]
     IOError(#[from] std::io::Error),
 }
 
 type ReadFileFn = fn(&PathBytes) -> Result<Bytes, Error>;
 
+// TODO: make packer stateless
+/// Packer for archive events
+///
+/// The packer walks a directory tree, and outputs [`Event`]s.
 pub struct Packer {
     index: Option<Index>,
     root: PathBytes,
 }
 
 impl Packer {
+    /// Constructs a new packer.
     pub fn new(root: PathBuf) -> Self {
         Self {
             index: None,
@@ -28,6 +38,7 @@ impl Packer {
         }
     }
 
+    /// Packs a directory into into an iterator of [`Event`]s.
     pub fn pack(&mut self) -> impl Iterator<Item = Result<Event, Error>> {
         self.process_all(read_file_default)
     }

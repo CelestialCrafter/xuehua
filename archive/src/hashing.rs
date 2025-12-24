@@ -1,15 +1,22 @@
+//! Hashing of [`Event`]s via [BLAKE3](https://github.com/BLAKE3-team/BLAKE3)
+
 use core::borrow::Borrow;
 
 use crate::{Event, Object, utils::debug};
 
+/// Stateless hashing methods for archives
 pub struct Hasher;
 
 impl Hasher {
+    /// Hash a single event
     #[inline]
     pub fn hash(event: impl Borrow<Event>) -> blake3::Hash {
         process(event.borrow())
     }
 
+    /// Hash an iterator of hashes
+    ///
+    /// This is useful for computing the hash of an entire archive.
     #[inline]
     pub fn aggregate(hashes: impl IntoIterator<Item = impl Borrow<blake3::Hash>>) -> blake3::Hash {
         let mut hasher = blake3::Hasher::new();

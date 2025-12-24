@@ -1,6 +1,6 @@
-# Xuehua Archive
+## Specification
 
-## Definitions
+### Definitions
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL
 NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED",  "MAY", and "OPTIONAL"
@@ -10,7 +10,7 @@ in this document are to be interpreted as described in
 The key word "BLAKE3" in this document is to be interpreted as
 described in [BLAKE3-team/BLAKE3-specs](https://github.com/BLAKE3-team/BLAKE3-specs).
 
-## Overview
+### Layout
 
 ```ebnf
 xhar = magic, index, { digest(object-contents) };
@@ -50,12 +50,12 @@ u32(n) = little-endian unsigned 32 bit integer;
 u64(n) = little-endian unsigned 64 bit integer;
 ```
 
-# Details
+### Details
 
-- **Directory Order:** Parent directory objects MUST be emitted before their children objects.
-- **Location Requirements:** `index` entries MUST be sorted by the bytes of their
+- **Ordering:** Parent directory objects MUST be emitted before their children objects.
+- **Paths:** `index` entries MUST be sorted by the bytes of their
 	`location` in ascending order.
 	Duplicate `location`'s' MUST NOT appear.
-	`location`'s MUST NOT have a leading "/".
-	`location`'s MUST NOT contain "." or ".." segments.
-- **Complete Digest:** When computing the digest of a complete archive, implementations MUST hash an aggregate of all existing digests.
+	`location`s MUST NOT have a leading "/".
+	`location`s MUST NOT contain "." or ".." segments.
+- **Hashing:** When computing the digest of a complete archive, implementations MUST hash an aggregate of all existing digests.
