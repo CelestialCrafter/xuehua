@@ -140,6 +140,12 @@ pub fn unpack(root: &Path, events: &Vec<Event>) {
         .expect("should be able to unpack files")
 }
 
+#[cfg(all(feature = "std", feature = "mmap"))]
+pub fn unpack_mmap(root: &Path, events: &Vec<Event>) {
+    let mut unpacker = xh_archive::unpacking::Unpacker::new(root);
+    unsafe { unpacker.unpack_mmap(events) }.expect("should be able to unpack files")
+}
+
 pub fn decode(mut contents: &[u8]) -> Vec<Event> {
     let mut decoder = Decoder::new(&mut contents);
 
