@@ -143,6 +143,7 @@ fn write_file_mmap(path: &Path, contents: &Bytes) -> Result<(), Error> {
             .len(contents.len())
             .map_mut(&file)
     }?;
+    map.advise(memmap2::Advice::Sequential)?;
 
     map.copy_from_slice(&contents);
 
