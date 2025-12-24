@@ -5,17 +5,17 @@ use bytes::BufMut;
 use thiserror::Error;
 
 use crate::{
-    Event, Object, Operation,
+    Event, Object,
     hashing::Hasher,
     utils::{State, debug},
 };
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("unexpected event: \"{event:?}\" ({reason})")]
+    #[error("unexpected event: \"{event:?}\" (expected: {expected})")]
     Unexpected {
         event: Event,
-        reason: Cow<'static, str>,
+        expected: Cow<'static, str>,
     },
 }
 
@@ -70,83 +70,58 @@ impl<'a, B: BufMut> Encoder<'a, B> {
                 self.buffer.put_u16_le(1);
 
                 self.state = State::Index;
-                self.process(event)
+                return self.process(event);
             }
             State::Index => {
                 let Event::Index(index) = event else {
                     return Err(Error::Unexpected {
                         event: event.clone(),
-                        reason: "need index event".into(),
+                        expected: "index event".into(),
                     });
                 };
 
-                self.buffer.put_u64_le(index.len() as u64);
-                index.iter().for_each(|path| self.put_plen(&path.inner));
-                self.put_hash(event);
+                let amount = index.len() as u64;
+                self.buffer.put_u64_le(amount);
+                index.iter().for_each(|(path, metadata)| {
+                    self.buffer.put_u64_le(path.inner.len() as u64);
+                    self.buffer.put_slice(&path.inner);
 
-                self.state = State::Operations(index.len());
-                Ok(())
+                    self.buffer.put_u32_le(metadata.permissions);
+                    self.buffer.put_u64_le(metadata.size);
+                    self.buffer.put_u8(metadata.variant as u8);
+                });
+
+                self.state = State::Objects(amount);
             }
-            State::Operations(amount) => {
-                let Event::Operation(operation) = event else {
-                    return Err(Error::Unexpected {
-                        event: event.clone(),
-                        reason: "need operation event".into(),
-                    });
-                };
-
+            State::Objects(amount) => {
                 if amount == 0 {
                     return Err(Error::Unexpected {
                         event: event.clone(),
-                        reason: "excess event".into(),
+                        expected: "no more events".into(),
                     });
                 }
 
-                match operation {
-                    Operation::Create {
-                        permissions,
-                        object,
-                        ..
-                    } => self.put_create_op(*permissions, object)?,
-                    Operation::Delete { .. } => self.buffer.put_u8(1),
+                let Event::Object(object) = event else {
+                    return Err(Error::Unexpected {
+                        event: event.clone(),
+                        expected: "object event".into(),
+                    });
                 };
-                self.put_hash(event);
+
+                match object {
+                    Object::File { contents } => self.buffer.put_slice(&contents),
+                    Object::Symlink { target } => self.buffer.put_slice(&target.inner),
+                    Object::Directory => (),
+                };
 
                 match self.state {
-                    State::Operations(ref mut amount) => *amount -= 1,
-                    _ => unreachable!(),
+                    State::Objects(ref mut amount) => *amount -= 1,
+                    _ => unreachable!("should not be called if amount == 0"),
                 };
-
-                Ok(())
             }
         }
-    }
 
-    fn put_hash(&mut self, event: &Event) {
         self.buffer.put_slice(Hasher::hash(event).as_bytes());
-    }
-
-    fn put_create_op(&mut self, permissions: u32, object: &Object) -> Result<(), Error> {
-        self.buffer.put_u8(0);
-        self.buffer.put_u32_le(permissions);
-
-        match object {
-            Object::File { contents } => {
-                self.buffer.put_u8(0);
-                self.put_plen(contents);
-            }
-            Object::Symlink { target } => {
-                self.buffer.put_u8(1);
-                self.put_plen(&target.inner);
-            }
-            Object::Directory => self.buffer.put_u8(2),
-        };
-
         Ok(())
-    }
-
-    fn put_plen(&mut self, bytes: &[u8]) {
-        self.buffer.put_u64_le(bytes.len() as u64);
-        self.buffer.put_slice(bytes);
     }
 }

@@ -3,19 +3,19 @@ pub enum State {
     #[default]
     Magic,
     Index,
-    Operations(usize),
+    Objects(u64),
 }
 
 impl State {
     #[inline]
     pub fn finished(&self) -> bool {
-        matches!(self, State::Operations(amount) if *amount == 0)
+        matches!(self, State::Objects(amount) if *amount == 0)
     }
 }
 
 #[cfg(feature = "std")]
 #[derive(thiserror::Error, Debug, Clone)]
-#[error("path {0:?} attempted to escape root")]
+#[error("path {0:?} attempted to escape the root")]
 pub struct PathEscapeError(crate::PathBytes);
 
 #[cfg(feature = "std")]

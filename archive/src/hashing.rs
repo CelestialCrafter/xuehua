@@ -1,8 +1,6 @@
 use core::borrow::Borrow;
 
-use bytes::Bytes;
-
-use crate::{Event, Object, Operation, utils::debug};
+use crate::{Event, Object, utils::debug};
 
 pub struct Hasher;
 
@@ -27,46 +25,29 @@ fn process(event: &Event) -> blake3::Hash {
 
     match event {
         Event::Index(index) => {
-            index
-                .iter()
-                .for_each(|path| process_plen(&mut hasher, &path.inner));
+            index.iter().for_each(|(path, metadata)| {
+                hasher
+                    .update(&(path.inner.len() as u64).to_le_bytes())
+                    .update(&path.inner);
+
+                hasher
+                    .update(&metadata.permissions.to_le_bytes())
+                    .update(&metadata.size.to_le_bytes())
+                    .update(&[metadata.variant as u8]);
+            });
         }
-        Event::Operation(operation) => match operation {
-            Operation::Create {
-                permissions,
-                object,
-            } => {
-                hasher.update(&[0]);
-                hasher.update(&permissions.to_le_bytes());
-                match object {
-                    Object::File {
-                        contents,
-                    } => {
-                        hasher.update(&[0]);
-                        process_plen(&mut hasher, contents);
-                    }
-                    Object::Symlink { target } => {
-                        hasher.update(&[1]);
-                        process_plen(&mut hasher, &target.inner);
-                    }
-                    Object::Directory => {
-                        hasher.update(&[2]);
-                    }
-                }
+        Event::Object(object) => match object {
+            Object::File { contents } => {
+                hasher.update(&contents);
             }
-            Operation::Delete => {
-                hasher.update(&[1]);
+            Object::Symlink { target } => {
+                hasher.update(&target.inner);
             }
+            Object::Directory => (),
         },
     }
 
     let hash = hasher.finalize();
     debug!("event hashed to {hash}");
     hash
-}
-
-fn process_plen(hasher: &mut blake3::Hasher, bytes: &Bytes) {
-    hasher
-        .update(&(bytes.len() as u64).to_le_bytes())
-        .update(&bytes);
 }
