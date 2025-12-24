@@ -1,5 +1,7 @@
+//! Decoding of [`Event`]s from binary
+
 use alloc::{borrow::Cow, collections::VecDeque, vec};
-use core::{num::TryFromIntError, str::Utf8Error};
+use core::num::TryFromIntError;
 
 use blake3::Hash;
 use bytes::{Buf, Bytes, TryGetError};
@@ -11,28 +13,46 @@ use crate::{
     utils::{State, debug},
 };
 
+/// Error type for decoding
 #[derive(Error, Debug)]
 pub enum Error {
+    /// An invalid token was provided
     #[error("unexpected token: {token:?} (expected {expected})")]
     UnexpectedToken {
+        #[allow(missing_docs)]
         token: Bytes,
+        #[allow(missing_docs)]
         expected: Cow<'static, str>,
     },
+    /// The buffer did not contain enough data to decode a full event
     #[error("not enough data was in buffer")]
     Incomplete(#[from] TryGetError),
+    /// The archive version is unsupported
     #[error("unsupported version: {0}")]
     UnsupportedVersion(u16),
+    /// The digest in the archive did not match the decoded [`Event`]'s digest
     #[error("digest mismatch: {found} (expected {expected})")]
-    DigestMismatch { expected: Hash, found: Hash },
+    DigestMismatch {
+        #[allow(missing_docs)]
+        expected: Hash,
+        #[allow(missing_docs)]
+        found: Hash,
+    },
+    #[allow(missing_docs)]
     #[error(transparent)]
     ConversionError(#[from] TryFromIntError),
-    #[error(transparent)]
-    Utf8Error(#[from] Utf8Error),
+    #[allow(missing_docs)]
     #[cfg(feature = "std")]
     #[error(transparent)]
     IOError(#[from] std::io::Error),
 }
 
+/// Decoder for archive events
+///
+/// The decoder consumes [`Bytes`] and outputs [`Event`]s
+///
+/// A decoder can only decode a single archive.
+/// Once [`finished`] returns true, no further data can be decoded.
 #[derive(Default)]
 pub struct Decoder {
     state: State,
@@ -40,16 +60,25 @@ pub struct Decoder {
 }
 
 impl Decoder {
+    /// Constructs a new encoder
     #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Returns whether or not the decoder has completed
     #[inline]
     pub fn finished(&self) -> bool {
         self.state.finished()
     }
 
+    /// Decodes [`Bytes`] into an iterator of [`Event`]s.
+    ///
+    /// # Errors
+    ///
+    /// If this function errors, both the internal
+    /// state and `buffer` are unmodified,
+    /// and this function may be retried.
     pub fn decode(&mut self, buffer: &mut Bytes) -> impl Iterator<Item = Result<Event, Error>> {
         let mut end = false;
         core::iter::from_fn(move || {
@@ -66,6 +95,15 @@ impl Decoder {
         })
     }
 
+    /// Decodes [`Bytes`] into an iterator of [`Event`]s.
+    ///
+    /// If possible, use [`decode`] due to this function's compute and memory overhead.
+    ///
+    /// # Errors
+    ///
+    /// If this function errors, both the internal
+    /// state and `reader` are unmodified,
+    /// and this function may be retried.
     #[cfg(feature = "std")]
     pub fn decode_reader(
         &mut self,

@@ -4,7 +4,7 @@ use arbitrary::Arbitrary;
 use bytes::{Bytes, BytesMut};
 use libtest_mimic::{Failed, Measurement};
 use xh_archive::{
-    Event, Index, Object, ObjectMetadata, ObjectType, PathBytes, decoding::Decoder,
+    Event, Index, Object, ObjectMetadata, ObjectType, decoding::Decoder,
     encoding::Encoder,
 };
 
@@ -95,9 +95,7 @@ impl Arbitrary<'_> for ArbitraryArchive {
                 };
 
                 Ok((
-                    PathBytes {
-                        inner: arbitrary_bytes(u)?,
-                    },
+                    arbitrary_bytes(u)?.into(),
                     ObjectMetadata {
                         permissions: u.arbitrary()?,
                         size,

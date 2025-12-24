@@ -1,3 +1,5 @@
+//! Unpacking of [`Event`]s into the filesystem
+
 use std::{
     borrow::{Borrow, Cow},
     fs,
@@ -10,20 +12,30 @@ use thiserror::Error;
 
 use crate::{Event, Index, Object, ObjectMetadata, PathBytes, utils::debug};
 
+/// Error type for unpacking
 #[derive(Error, Debug)]
 pub enum Error {
+    /// An invalid event was provided
     #[error("unexpected event: {event:?} ({reason})")]
     UnexpectedEvent {
+        #[allow(missing_docs)]
         event: Event,
+        #[allow(missing_docs)]
         reason: Cow<'static, str>,
     },
+    /// An invalid path was in the index
     #[error("invalid path: {0:?}")]
     InvalidPath(PathBytes),
+    #[allow(missing_docs)]
     #[error(transparent)]
     IOError(#[from] std::io::Error),
 }
 
 // TODO: impl overwrite option
+// TODO: make unpacker stateless
+/// Packer for archive events.
+///
+/// The unpacker consumes [`Event`]s and unpacks them to the filesystem.
 pub struct Unpacker<'a> {
     index: Option<Index>,
     root: &'a Path,
@@ -44,6 +56,7 @@ fn verify_path(path: &PathBytes) -> Result<&PathBytes, Error> {
 }
 
 impl<'a> Unpacker<'a> {
+    /// Constructs a new unpacker.
     #[inline]
     pub fn new(root: &'a Path) -> Self {
         Self {
@@ -52,6 +65,7 @@ impl<'a> Unpacker<'a> {
         }
     }
 
+    /// Unpacks an iterator of [`Event`]s onto the filesystem.
     #[inline]
     pub fn unpack(
         &mut self,

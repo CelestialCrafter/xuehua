@@ -1,3 +1,5 @@
+//! Encoding of [`Event`]s into binary
+
 use alloc::borrow::Cow;
 use core::borrow::Borrow;
 
@@ -10,37 +12,62 @@ use crate::{
     utils::{State, debug},
 };
 
+/// Error type for encoding
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("unexpected event: \"{event:?}\" (expected: {expected})")]
-    Unexpected {
+    /// An invalid event was provided
+    #[error("unexpected event: {event:?} (expected: {expected})")]
+    UnexpectedEvent {
+        #[allow(missing_docs)]
         event: Event,
+        #[allow(missing_docs)]
         expected: Cow<'static, str>,
     },
+    #[allow(missing_docs)]
     #[cfg(feature = "std")]
     #[error(transparent)]
-    IOError(#[from] std::io::Error)
+    IOError(#[from] std::io::Error),
 }
 
+/// Encoder for archive events
+///
+/// The encoder consumes [`Event`]s and outputs binary.
+///
+/// An encoder can only encode a single archive.
+/// Once [`finished`] returns true, no further events can be encoded.
 #[derive(Default)]
 pub struct Encoder {
     state: State,
 }
 
 impl Encoder {
+    /// Constructs a new encoder.
     #[inline]
     pub fn new() -> Self {
         Default::default()
     }
 
+    /// Returns whether or not the encoder has completed.
+    #[inline]
+    pub fn finished(&self) -> bool {
+        self.state.finished()
+    }
+
+    /// Encodes an iterator of [`Event`]s into a `buffer`.
+    ///
+    /// # Errors
+    ///
+    /// If this function errors, both the internal
+    /// state and `buffer` are unmodified,
+    /// and this function may be retried.
     #[inline]
     pub fn encode(
         &mut self,
         buffer: &mut BytesMut,
-        iterator: impl IntoIterator<Item = impl Borrow<Event>>,
+        events: impl IntoIterator<Item = impl Borrow<Event>>,
     ) -> Result<(), Error> {
         let mut start = 0;
-        iterator
+        events
             .into_iter()
             .try_for_each(|event| {
                 start = buffer.len();
@@ -49,26 +76,28 @@ impl Encoder {
             .inspect_err(|_| buffer.truncate(start))
     }
 
+    /// Encodes an iterator of [`Event`]s into a `writer`
+    ///
+    /// # Errors
+    ///
+    /// If this function errors, both the internal
+    /// state and `writer` are unmodified,
+    /// and this function may be retried.
     #[cfg(feature = "std")]
     #[inline]
     pub fn encode_writer(
         &mut self,
         writer: &mut impl std::io::Write,
-        iterator: impl IntoIterator<Item = impl Borrow<Event>>,
+        events: impl IntoIterator<Item = impl Borrow<Event>>,
     ) -> Result<(), Error> {
         let mut buffer = BytesMut::with_capacity(4096);
-        iterator.into_iter().try_for_each(|event| {
-            buffer.clear();
+        events.into_iter().try_for_each(|event| {
             self.process(&mut buffer, event.borrow())?;
             writer.write_all(&buffer)?;
+            buffer.clear();
 
             Ok(())
         })
-    }
-
-    #[inline]
-    pub fn finished(&self) -> bool {
-        self.state.finished()
     }
 
     fn process(&mut self, buffer: &mut impl BufMut, event: &Event) -> Result<(), Error> {
@@ -86,7 +115,7 @@ impl Encoder {
             }
             State::Index => {
                 let Event::Index(index) = event else {
-                    return Err(Error::Unexpected {
+                    return Err(Error::UnexpectedEvent {
                         event: event.clone(),
                         expected: "index event".into(),
                     });
@@ -107,14 +136,14 @@ impl Encoder {
             }
             State::Objects(amount) => {
                 if amount == 0 {
-                    return Err(Error::Unexpected {
+                    return Err(Error::UnexpectedEvent {
                         event: event.clone(),
                         expected: "no more events".into(),
                     });
                 }
 
                 let Event::Object(object) = event else {
-                    return Err(Error::Unexpected {
+                    return Err(Error::UnexpectedEvent {
                         event: event.clone(),
                         expected: "object event".into(),
                     });
