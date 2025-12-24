@@ -1,33 +1,24 @@
-use std::{
-    fs,
-    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
-    path::PathBuf,
-};
+use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
 use bytes::Bytes;
 use thiserror::Error;
 
-use crate::{
-    Event, Index, Object, ObjectMetadata, ObjectType, PathBytes,
-    utils::{PathEscapeError, debug},
-};
+use crate::{Event, Index, Object, ObjectMetadata, ObjectType, PathBytes, utils::debug};
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("unsupported file type at {0:?}")]
     UnsupportedType(PathBytes),
     #[error(transparent)]
-    PathEscape(#[from] PathEscapeError),
-    #[error(transparent)]
     IOError(#[from] std::io::Error),
 }
+
+type ReadFileFn = fn(&PathBytes) -> Result<Bytes, Error>;
 
 pub struct Packer {
     index: Option<Index>,
     root: PathBytes,
 }
-
-type ReadFileFn = fn(&PathBytes) -> Result<Bytes, Error>;
 
 impl Packer {
     pub fn new(root: PathBuf) -> Self {
@@ -82,7 +73,7 @@ impl Packer {
 }
 
 fn build_index(root: &PathBytes) -> Result<(Index, Index), Error> {
-    let mut queue = Vec::from([(root.clone(), fs::symlink_metadata(root)?)]);
+    let mut queue = Vec::from([(root.as_ref().to_path_buf(), fs::symlink_metadata(root)?)]);
 
     let mut i = 0;
     while let Some((path, ty)) = queue.get(i) {
@@ -96,7 +87,7 @@ fn build_index(root: &PathBytes) -> Result<(Index, Index), Error> {
             fs::read_dir(path)?
                 .map(|entry| {
                     let entry = entry?;
-                    Ok((entry.path().into(), entry.metadata()?))
+                    Ok((entry.path(), entry.metadata()?))
                 })
                 .collect::<Result<Vec<_>, Error>>()?,
         );
@@ -107,14 +98,12 @@ fn build_index(root: &PathBytes) -> Result<(Index, Index), Error> {
         // skip root dir
         .skip(1)
         .map(|(path, metadata)| {
-            let stripped = Bytes::copy_from_slice(
-                path.as_ref()
-                    .strip_prefix(&root)
-                    .expect("path should be a child of root")
-                    .as_os_str()
-                    .as_bytes(),
-            )
-            .into();
+            let stripped = path
+                .strip_prefix(root)
+                .expect("path should be a child of root")
+                .to_path_buf()
+                .into();
+            let path = path.into();
 
             let metadata = ObjectMetadata {
                 permissions: metadata.permissions().mode(),
@@ -137,11 +126,13 @@ fn build_index(root: &PathBytes) -> Result<(Index, Index), Error> {
     Ok((internal, external))
 }
 
+#[inline]
 fn read_file_default(path: &PathBytes) -> Result<Bytes, Error> {
     Ok(fs::read(path)?.into())
 }
 
 #[cfg(feature = "mmap")]
+#[inline]
 fn read_file_mmap(path: &PathBytes) -> Result<Bytes, Error> {
     let file = fs::File::open(path)?;
     let mmap = unsafe { memmap2::Mmap::map(&file)? };
