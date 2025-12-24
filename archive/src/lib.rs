@@ -18,6 +18,21 @@ use core::fmt::Debug;
 use alloc::collections::BTreeMap;
 
 use bytes::Bytes;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error(transparent)]
+    EncodingError(#[from] encoding::Error),
+    #[error(transparent)]
+    DecodingError(#[from] decoding::Error),
+    #[cfg(all(feature = "std", unix))]
+    #[error(transparent)]
+    PackingError(#[from] packing::Error),
+    #[cfg(all(feature = "std", unix))]
+    #[error(transparent)]
+    UnpackingError(#[from] unpacking::Error),
+}
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PathBytes {
