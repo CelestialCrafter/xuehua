@@ -13,41 +13,6 @@ impl State {
     }
 }
 
-#[cfg(feature = "std")]
-#[derive(thiserror::Error, Debug, Clone)]
-#[error("path {0:?} attempted to escape the root")]
-pub struct PathEscapeError(crate::PathBytes);
-
-#[cfg(feature = "std")]
-pub fn resolve_path<'b>(
-    root: impl AsRef<std::path::Path>,
-    path: &crate::PathBytes,
-) -> Result<std::path::PathBuf, PathEscapeError> {
-    use std::path::Component;
-
-    let resolved = path
-        .as_ref()
-        .components()
-        .fold(root.as_ref().to_path_buf(), |mut acc, x| {
-            match x {
-                Component::Prefix(..) => (),
-                Component::RootDir => (),
-                Component::CurDir => (),
-                Component::ParentDir => {
-                    acc.pop();
-                }
-                Component::Normal(segment) => acc.push(segment),
-            };
-
-            acc
-        });
-
-    resolved
-        .starts_with(root)
-        .then_some(resolved)
-        .ok_or_else(|| PathEscapeError(path.clone()))
-}
-
 #[cfg(feature = "log")]
 #[allow(unused_imports)]
 mod log {

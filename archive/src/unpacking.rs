@@ -2,26 +2,23 @@ use std::{
     borrow::{Borrow, Cow},
     fs,
     os::unix::fs::{PermissionsExt, symlink},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use bytes::Bytes;
 use thiserror::Error;
 
-use crate::{
-    Event, Index, Object, ObjectMetadata,
-    utils::{PathEscapeError, debug, resolve_path},
-};
+use crate::{Event, Index, Object, ObjectMetadata, PathBytes, utils::debug};
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("unexpected event: \"{event:?}\" ({reason})")]
+    #[error("unexpected event: {event:?} ({reason})")]
     UnexpectedEvent {
         event: Event,
         reason: Cow<'static, str>,
     },
-    #[error(transparent)]
-    PathEscape(#[from] PathEscapeError),
+    #[error("invalid path: {0:?}")]
+    InvalidPath(PathBytes),
     #[error(transparent)]
     IOError(#[from] std::io::Error),
 }
@@ -33,6 +30,18 @@ pub struct Unpacker<'a> {
 }
 
 type WriteFileFn = fn(&Path, &Bytes) -> Result<(), Error>;
+
+fn verify_path(path: &PathBytes) -> Result<&PathBytes, Error> {
+    if path
+        .as_ref()
+        .components()
+        .all(|c| matches!(c, Component::Normal(..)))
+    {
+        Ok(path)
+    } else {
+        Err(Error::InvalidPath(path.clone()))
+    }
+}
 
 impl<'a> Unpacker<'a> {
     #[inline]
@@ -93,7 +102,7 @@ impl<'a> Unpacker<'a> {
                 })?;
 
                 self.process_object(
-                    resolve_path(self.root, &path)?,
+                    self.root.join(verify_path(&path)?),
                     metadata,
                     object,
                     write_file,
@@ -125,11 +134,13 @@ impl<'a> Unpacker<'a> {
     }
 }
 
+#[inline]
 fn write_file_default(path: &Path, contents: &Bytes) -> Result<(), Error> {
     fs::write(path, contents).map_err(Into::into)
 }
 
 #[cfg(feature = "mmap")]
+#[inline]
 fn write_file_mmap(path: &Path, contents: &Bytes) -> Result<(), Error> {
     let file = fs::OpenOptions::new()
         .create(true)
