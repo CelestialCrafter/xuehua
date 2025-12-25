@@ -14,3 +14,4 @@ xh-archive = { path = "archive" }
 tempfile = "3.23.0"
 tokio = "1.48.0"
 petgraph = "0.8.3"
+bytes = "1.11.0"

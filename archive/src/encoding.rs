@@ -1,7 +1,7 @@
 use alloc::borrow::Cow;
 use core::borrow::Borrow;
 
-use bytes::BufMut;
+use bytes::{BufMut, BytesMut};
 use thiserror::Error;
 
 use crate::{
@@ -17,41 +17,53 @@ pub enum Error {
         event: Event,
         expected: Cow<'static, str>,
     },
+    #[cfg(feature = "std")]
+    #[error(transparent)]
+    IOError(#[from] std::io::Error)
 }
 
-pub struct Encoder<'a, B> {
+#[derive(Default)]
+pub struct Encoder {
     state: State,
-    buffer: &'a mut B,
 }
 
-impl<'a, B: BufMut> Encoder<'a, B> {
+impl Encoder {
     #[inline]
-    pub fn new(buffer: &'a mut B) -> Self {
-        Self {
-            state: Default::default(),
-            buffer,
-        }
-    }
-
-    #[inline]
-    pub fn with_buffer<'b, T>(self, buffer: &'b mut T) -> Encoder<'b, T>
-    where
-        T: BufMut,
-    {
-        Encoder {
-            state: self.state,
-            buffer: buffer,
-        }
+    pub fn new() -> Self {
+        Default::default()
     }
 
     #[inline]
     pub fn encode(
         &mut self,
+        buffer: &mut BytesMut,
         iterator: impl IntoIterator<Item = impl Borrow<Event>>,
     ) -> Result<(), Error> {
+        let mut start = 0;
         iterator
             .into_iter()
-            .try_for_each(|event| self.process(event.borrow()))
+            .try_for_each(|event| {
+                start = buffer.len();
+                self.process(buffer, event.borrow())
+            })
+            .inspect_err(|_| buffer.truncate(start))
+    }
+
+    #[cfg(feature = "std")]
+    #[inline]
+    pub fn encode_writer(
+        &mut self,
+        writer: &mut impl std::io::Write,
+        iterator: impl IntoIterator<Item = impl Borrow<Event>>,
+    ) -> Result<(), Error> {
+        let mut buffer = BytesMut::with_capacity(4096);
+        iterator.into_iter().try_for_each(|event| {
+            buffer.clear();
+            self.process(&mut buffer, event.borrow())?;
+            writer.write_all(&buffer)?;
+
+            Ok(())
+        })
     }
 
     #[inline]
@@ -59,18 +71,18 @@ impl<'a, B: BufMut> Encoder<'a, B> {
         self.state.finished()
     }
 
-    fn process(&mut self, event: &Event) -> Result<(), Error> {
+    fn process(&mut self, buffer: &mut impl BufMut, event: &Event) -> Result<(), Error> {
         debug!("encoding event {event:?} in state {:?}", self.state);
 
         match self.state {
             State::Magic => {
                 debug!("encoding magic");
 
-                self.buffer.put_slice(b"xuehua-archive");
-                self.buffer.put_u16_le(1);
+                buffer.put_slice(b"xuehua-archive");
+                buffer.put_u16_le(1);
 
                 self.state = State::Index;
-                return self.process(event);
+                return self.process(buffer, event);
             }
             State::Index => {
                 let Event::Index(index) = event else {
@@ -81,14 +93,14 @@ impl<'a, B: BufMut> Encoder<'a, B> {
                 };
 
                 let amount = index.len() as u64;
-                self.buffer.put_u64_le(amount);
+                buffer.put_u64_le(amount);
                 index.iter().for_each(|(path, metadata)| {
-                    self.buffer.put_u64_le(path.inner.len() as u64);
-                    self.buffer.put_slice(&path.inner);
+                    buffer.put_u64_le(path.inner.len() as u64);
+                    buffer.put_slice(&path.inner);
 
-                    self.buffer.put_u32_le(metadata.permissions);
-                    self.buffer.put_u64_le(metadata.size);
-                    self.buffer.put_u8(metadata.variant as u8);
+                    buffer.put_u32_le(metadata.permissions);
+                    buffer.put_u64_le(metadata.size);
+                    buffer.put_u8(metadata.variant as u8);
                 });
 
                 self.state = State::Objects(amount);
@@ -109,8 +121,8 @@ impl<'a, B: BufMut> Encoder<'a, B> {
                 };
 
                 match object {
-                    Object::File { contents } => self.buffer.put_slice(&contents),
-                    Object::Symlink { target } => self.buffer.put_slice(&target.inner),
+                    Object::File { contents } => buffer.put_slice(&contents),
+                    Object::Symlink { target } => buffer.put_slice(&target.inner),
                     Object::Directory => (),
                 };
 
@@ -121,7 +133,7 @@ impl<'a, B: BufMut> Encoder<'a, B> {
             }
         }
 
-        self.buffer.put_slice(Hasher::hash(event).as_bytes());
+        buffer.put_slice(Hasher::hash(event).as_bytes());
         Ok(())
     }
 }
