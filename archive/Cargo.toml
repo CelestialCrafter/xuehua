@@ -22,7 +22,7 @@ log = ["dep:log"]
 log = { workspace = true, optional = true }
 blake3.workspace = true
 thiserror.workspace = true
-bytes = "1.11.0"
+bytes.workspace = true
 memmap2 = { version = "0.9.9", optional = true }
 
 [dev-dependencies]

@@ -105,18 +105,26 @@ fn build_index(root: &PathBytes) -> Result<(Index, Index), Error> {
                 .into();
             let path = path.into();
 
+            let variant = if metadata.is_file() {
+                ObjectType::File
+            } else if metadata.is_symlink() {
+                ObjectType::Symlink
+            } else if metadata.is_dir() {
+                ObjectType::Directory
+            } else {
+                return Err(Error::UnsupportedType(path));
+            };
+
+            let size = if let ObjectType::Directory = variant {
+                0
+            } else {
+                metadata.len()
+            };
+
             let metadata = ObjectMetadata {
                 permissions: metadata.permissions().mode(),
-                size: metadata.len(),
-                variant: if metadata.is_file() {
-                    ObjectType::File
-                } else if metadata.is_symlink() {
-                    ObjectType::Symlink
-                } else if metadata.is_dir() {
-                    ObjectType::Directory
-                } else {
-                    return Err(Error::UnsupportedType(path));
-                },
+                size,
+                variant,
             };
 
             Ok(((path, metadata), (stripped, metadata)))
