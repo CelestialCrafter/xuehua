@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use arbitrary::Arbitrary;
@@ -26,15 +25,16 @@ impl Default for BenchmarkOptions {
 
 // implements welford's online algorithm
 pub fn benchmark(
-    func: impl Fn() -> Result<(), Failed>,
+    func: impl Fn(),
     options: BenchmarkOptions,
 ) -> impl FnOnce(bool) -> Result<Option<Measurement>, Failed> {
     move |first| {
         if first {
-            func().map(|_| None)
+            func();
+            Ok(None)
         } else {
             for _ in 0..options.warmups {
-                func()?;
+                func();
             }
 
             let mut count: u64 = 0;
@@ -45,7 +45,7 @@ pub fn benchmark(
 
             while Instant::now() < end || count == 0 {
                 let t0 = Instant::now();
-                func()?;
+                func();
                 let s = t0.elapsed().as_nanos() as f64;
 
                 count += 1;
@@ -85,7 +85,7 @@ impl Arbitrary<'_> for ArbitraryArchive {
                     0 => ObjectType::File,
                     1 => ObjectType::Symlink,
                     2 => ObjectType::Directory,
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 };
 
                 let size = if let ObjectType::Directory = variant {
@@ -136,7 +136,7 @@ impl Arbitrary<'_> for ArbitraryArchive {
 }
 
 #[cfg(feature = "std")]
-pub fn pack(root: &Path) -> Vec<Event> {
+pub fn pack(root: &std::path::Path) -> Vec<Event> {
     xh_archive::packing::Packer::new(root.to_path_buf())
         .pack()
         .map(|event| event.expect("should be able to pack file"))
@@ -152,7 +152,7 @@ pub fn pack_mmap(root: &Path) -> Vec<Event> {
 }
 
 #[cfg(feature = "std")]
-pub fn unpack(root: &Path, events: &Vec<Event>) {
+pub fn unpack(root: &std::path::Path, events: &Vec<Event>) {
     xh_archive::unpacking::Unpacker::new(root)
         .unpack(events)
         .expect("should be able to unpack files")
@@ -164,11 +164,11 @@ pub fn unpack_mmap(root: &Path, events: &Vec<Event>) {
     unsafe { unpacker.unpack_mmap(events) }.expect("should be able to unpack files")
 }
 
-pub fn decode(mut contents: &[u8]) -> Vec<Event> {
-    let mut decoder = Decoder::new(&mut contents);
+pub fn decode(contents: &mut Bytes) -> Vec<Event> {
+    let mut decoder = Decoder::new();
 
     let decoded = decoder
-        .decode()
+        .decode(contents)
         .collect::<Result<Vec<_>, _>>()
         .expect("decoding should not fail");
     assert!(decoder.finished(), "decoding should be finished");
@@ -176,17 +176,43 @@ pub fn decode(mut contents: &[u8]) -> Vec<Event> {
     decoded
 }
 
-pub fn encode(events: &Vec<Event>) -> Vec<u8> {
-    let mut encoded = BytesMut::new();
-    let mut encoder = Encoder::new(&mut encoded);
+#[cfg(feature = "std")]
+pub fn decode_reader(contents: &mut impl std::io::Read) -> Vec<Event> {
+    let mut decoder = Decoder::new();
 
-    encoder.encode(events).expect("encoding should not fail");
-    assert!(encoder.finished(), "encoding should be finished");
+    let decoded = decoder
+        .decode_reader(contents)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("decoding should not fail");
+    assert!(decoder.finished(), "decoding should be finished");
 
-    encoded.to_vec()
+    decoded
 }
 
-pub fn make_temp() -> (PathBuf, tempfile::TempDir) {
+pub fn encode(events: &Vec<Event>) -> Bytes {
+    let mut encoder = Encoder::new();
+    let mut encoded = BytesMut::new();
+
+    encoder
+        .encode(&mut encoded, events)
+        .expect("encoding should not fail");
+    assert!(encoder.finished(), "encoding should be finished");
+
+    encoded.freeze()
+}
+
+#[cfg(feature = "std")]
+pub fn encode_writer(events: &Vec<Event>, writer: &mut impl std::io::Write) {
+    let mut encoder = Encoder::new();
+
+    encoder
+        .encode_writer(writer, events)
+        .expect("encoding should not fail");
+    assert!(encoder.finished(), "encoding should be finished");
+}
+
+#[cfg(feature = "std")]
+ pub fn make_temp() -> (std::path::PathBuf, tempfile::TempDir) {
     let temp =
         tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("should be able to make temp dir");
     let path = temp.path().to_path_buf();
