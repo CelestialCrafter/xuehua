@@ -1,28 +1,20 @@
 //! Unpacking of [`Event`]s into the filesystem
 
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Borrow,
     fs,
     os::unix::fs::{PermissionsExt, symlink},
-    path::{Component, Path, PathBuf},
+    path::{Component, Path},
 };
 
 use bytes::Bytes;
 use thiserror::Error;
 
-use crate::{Event, Index, Object, ObjectMetadata, PathBytes, utils::debug};
+use crate::{Object, ObjectContent, PathBytes, utils::debug};
 
 /// Error type for unpacking
 #[derive(Error, Debug)]
 pub enum Error {
-    /// An invalid event was provided
-    #[error("unexpected event: {event:?} ({reason})")]
-    UnexpectedEvent {
-        #[allow(missing_docs)]
-        event: Event,
-        #[allow(missing_docs)]
-        reason: Cow<'static, str>,
-    },
     /// An invalid path was in the index
     #[error("invalid path: {0:?}")]
     InvalidPath(PathBytes),
@@ -37,7 +29,6 @@ pub enum Error {
 ///
 /// The unpacker consumes [`Event`]s and unpacks them to the filesystem.
 pub struct Unpacker<'a> {
-    index: Option<Index>,
     root: &'a Path,
 }
 
@@ -59,17 +50,14 @@ impl<'a> Unpacker<'a> {
     /// Constructs a new unpacker.
     #[inline]
     pub fn new(root: &'a Path) -> Self {
-        Self {
-            root,
-            index: Default::default(),
-        }
+        Self { root }
     }
 
     /// Unpacks an iterator of [`Event`]s onto the filesystem.
     #[inline]
     pub fn unpack(
         &mut self,
-        iterator: impl IntoIterator<Item = impl Borrow<Event>>,
+        iterator: impl IntoIterator<Item = impl Borrow<Object>>,
     ) -> Result<(), Error> {
         iterator
             .into_iter()
@@ -80,69 +68,37 @@ impl<'a> Unpacker<'a> {
     #[inline]
     pub unsafe fn unpack_mmap(
         &mut self,
-        iterator: impl IntoIterator<Item = impl Borrow<Event>>,
+        iterator: impl IntoIterator<Item = impl Borrow<Object>>,
     ) -> Result<(), Error> {
         iterator
             .into_iter()
             .try_for_each(|event| self.process(event.borrow(), write_file_mmap))
     }
 
-    fn process(&mut self, event: &Event, write_file: WriteFileFn) -> Result<(), Error> {
-        debug!("unpacking {event:?}");
+    fn process(&mut self, object: &Object, write_file: WriteFileFn) -> Result<(), Error> {
+        debug!("unpacking object: {object:?}");
 
-        match self.index {
-            None => {
-                let Event::Index(index) = event else {
-                    return Err(Error::UnexpectedEvent {
-                        event: event.clone(),
-                        reason: "expected index".into(),
-                    });
-                };
-
-                self.index = Some(index.clone());
-                Ok(())
-            }
-            Some(ref mut index) => {
-                let Event::Object(object) = event else {
-                    return Err(Error::UnexpectedEvent {
-                        event: event.clone(),
-                        reason: "expected object".into(),
-                    });
-                };
-
-                let (path, metadata) = index.pop_first().ok_or_else(|| Error::UnexpectedEvent {
-                    event: event.clone(),
-                    reason: "too many events".into(),
-                })?;
-
-                self.process_object(
-                    self.root.join(verify_path(&path)?),
-                    metadata,
-                    object,
-                    write_file,
-                )
-            }
-        }
+        self.process_object(object, write_file)
     }
 
-    fn process_object(
-        &self,
-        path: PathBuf,
-        metadata: ObjectMetadata,
-        object: &Object,
-        write_file: WriteFileFn,
-    ) -> Result<(), Error> {
-        debug!("unpacking to {}", path.display());
+    fn process_object(&self, object: &Object, write_file: WriteFileFn) -> Result<(), Error> {
+        let location = self.root.join(verify_path(&object.location)?);
+        debug!("unpacking to {}", location.display());
 
-        match object {
-            Object::File { contents } => write_file(path.as_ref(), contents)?,
-            Object::Symlink { target } => symlink(target, &path)?,
-            Object::Directory => fs::create_dir(&path)?,
+        let set_permissions =
+            || fs::set_permissions(&location, fs::Permissions::from_mode(object.permissions));
+
+        match &object.content {
+            ObjectContent::File { data } => {
+                write_file(&location, &data)?;
+                set_permissions()?;
+            }
+            ObjectContent::Symlink { target } => symlink(target, &location)?,
+            ObjectContent::Directory => {
+                fs::create_dir(&location)?;
+                set_permissions()?;
+            }
         };
-
-        if let Object::File { .. } | Object::Directory = object {
-            fs::set_permissions(&path, fs::Permissions::from_mode(metadata.permissions))?;
-        }
 
         Ok(())
     }

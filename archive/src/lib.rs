@@ -1,5 +1,4 @@
 #![warn(missing_docs)]
-#![warn(rustdoc::missing_doc_code_examples)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 //! # Xuehua Archive Format
@@ -31,7 +30,6 @@ pub mod unpacking;
 
 extern crate alloc;
 
-use alloc::collections::BTreeMap;
 use core::fmt::Debug;
 
 use bytes::Bytes;
@@ -40,9 +38,6 @@ use thiserror::Error;
 /// Root error type
 #[derive(Error, Debug)]
 pub enum Error {
-    #[allow(missing_docs)]
-    #[error(transparent)]
-    EncodingError(#[from] encoding::Error),
     #[allow(missing_docs)]
     #[error(transparent)]
     DecodingError(#[from] decoding::Error),
@@ -54,6 +49,10 @@ pub enum Error {
     #[cfg(all(feature = "std", unix))]
     #[error(transparent)]
     UnpackingError(#[from] unpacking::Error),
+    #[allow(missing_docs)]
+    #[cfg(all(feature = "std", unix))]
+    #[error(transparent)]
+    IOError(#[from] std::io::Error),
 }
 
 /// A path internally represented with [`Bytes`].
@@ -96,57 +95,34 @@ impl From<std::path::PathBuf> for PathBytes {
     }
 }
 
-#[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ObjectType {
-    #[allow(missing_docs)]
-    File,
-    #[allow(missing_docs)]
-    Symlink,
-    #[allow(missing_docs)]
-    Directory,
-}
-
-#[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ObjectMetadata {
-    pub permissions: u32,
-    pub size: u64,
-    pub variant: ObjectType,
-}
-
-#[cfg(feature = "std")]
-impl ObjectMetadata {
-    #[allow(missing_docs)]
-    #[inline]
-    pub fn permissions(&self) -> std::fs::Permissions {
-        std::os::unix::fs::PermissionsExt::from_mode(self.permissions)
-    }
-}
-
-/// An individual archive object
+/// The contents of an object
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Object {
+pub enum ObjectContent {
     #[allow(missing_docs)]
-    File { contents: Bytes },
+    File { data: Bytes },
     #[allow(missing_docs)]
     Symlink { target: PathBytes },
     #[allow(missing_docs)]
     Directory,
 }
 
-/// A map of paths to object metadata
-pub type Index = BTreeMap<PathBytes, ObjectMetadata>;
-
-/// An archive event.
+/// An individual archive object.
 ///
 /// An archive is represented as a sequence of [`Event`]s.
 /// They must start with one [`Event::Index`], followed by [`Event::Object`]s.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Event {
+pub struct Object {
+    pub location: PathBytes,
+    pub permissions: u32,
     #[allow(missing_docs)]
-    Index(Index),
+    pub content: ObjectContent,
+}
+
+#[cfg(feature = "std")]
+impl Object {
     #[allow(missing_docs)]
-    Object(Object),
+    #[inline]
+    pub fn permissions(&self) -> std::fs::Permissions {
+        std::os::unix::fs::PermissionsExt::from_mode(self.permissions)
+    }
 }

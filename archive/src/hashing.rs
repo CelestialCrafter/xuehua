@@ -2,7 +2,9 @@
 
 use core::borrow::Borrow;
 
-use crate::{Event, Object, utils::debug};
+use bytes::Bytes;
+
+use crate::{Object, ObjectContent, utils::debug};
 
 /// Stateless hashing methods for archives
 pub struct Hasher;
@@ -10,7 +12,7 @@ pub struct Hasher;
 impl Hasher {
     /// Hash a single event
     #[inline]
-    pub fn hash(event: impl Borrow<Event>) -> blake3::Hash {
+    pub fn hash(event: impl Borrow<Object>) -> blake3::Hash {
         process(event.borrow())
     }
 
@@ -27,34 +29,29 @@ impl Hasher {
     }
 }
 
-fn process(event: &Event) -> blake3::Hash {
+#[inline]
+fn process(object: &Object) -> blake3::Hash {
     let mut hasher = blake3::Hasher::new();
 
-    match event {
-        Event::Index(index) => {
-            index.iter().for_each(|(path, metadata)| {
-                hasher
-                    .update(&(path.inner.len() as u64).to_le_bytes())
-                    .update(&path.inner);
+    process_lenp(&mut hasher, &object.location.inner);
+    hasher.update(&object.permissions.to_le_bytes());
+    let (variant, content) = match &object.content {
+        ObjectContent::File { data } => (0, data),
+        ObjectContent::Symlink { target } => (1, &target.inner),
+        ObjectContent::Directory => (2, &Bytes::new()),
+    };
 
-                hasher
-                    .update(&metadata.permissions.to_le_bytes())
-                    .update(&metadata.size.to_le_bytes())
-                    .update(&[metadata.variant as u8]);
-            });
-        }
-        Event::Object(object) => match object {
-            Object::File { contents } => {
-                hasher.update(&contents);
-            }
-            Object::Symlink { target } => {
-                hasher.update(&target.inner);
-            }
-            Object::Directory => (),
-        },
-    }
+    hasher.update(&[variant]);
+    process_lenp(&mut hasher, content);
 
     let hash = hasher.finalize();
     debug!("event hashed to {hash}");
     hash
+}
+
+#[inline]
+fn process_lenp(hasher: &mut blake3::Hasher, bytes: &Bytes) {
+    hasher
+        .update(&(bytes.len() as u64).to_le_bytes())
+        .update(bytes);
 }
