@@ -13,34 +13,25 @@ described in [BLAKE3-team/BLAKE3-specs](https://github.com/BLAKE3-team/BLAKE3-sp
 ### Layout
 
 ```ebnf
-xhar = magic, index, { digest(object-contents) };
+archive = magic, { object };
 
 magic = "xuehua-archive", u16(1);
 
-index = digest({ lenp(index-entry) });
+object = digest(
+	lenp(location),
+	u32(permissions),
+	object-contents
+);
 
-// location = pathname
-object-metadata = lenp(location), u32(permissions), u64(|object-contents|) object-type;
-
-object-type
+object-contents
 	// File
-	= u8(0)
+	= u8(0), lenp(contents)
 	// Symlink
-	| u8(1)
+  | u8(1), lenp(target)
 	// Directory
 	| u8(2)
 	;
 
-object-contents
-	// File
-	= contents
-	// Symlink
-  | target
-	// Directory
-	| ()
-	;
-
-() = unit function;
 lenp(x) = u64(|x|), x;
 digest(b) = x, BLAKE3 hash of x with an output length of 32;
 
@@ -53,9 +44,9 @@ u64(n) = little-endian unsigned 64 bit integer;
 ### Details
 
 - **Ordering:** Parent directory objects MUST be emitted before their children objects.
-- **Paths:** `index` entries MUST be sorted by the bytes of their
+- **Paths:** `object`s MUST be sorted by the bytes of their
 	`location` in ascending order.
 	Duplicate `location`'s' MUST NOT appear.
 	`location`s MUST NOT have a leading "/".
 	`location`s MUST NOT contain "." or ".." segments.
-- **Hashing:** When computing the digest of a complete archive, implementations MUST hash an aggregate of all existing digests.
+- **Hashing:** When computing the digest of a complete archive, implementations MUST hash an aggregate of all object digests.

@@ -1,6 +1,6 @@
 //! Decoding of [`Event`]s from binary
 
-use alloc::{borrow::Cow, collections::VecDeque, vec};
+use alloc::{borrow::Cow, collections::VecDeque};
 use core::num::TryFromIntError;
 
 use blake3::Hash;
@@ -8,9 +8,9 @@ use bytes::{Buf, Bytes, TryGetError};
 use thiserror::Error;
 
 use crate::{
-    Event, Object, ObjectMetadata, ObjectType,
+    Object, ObjectContent,
     hashing::Hasher,
-    utils::{State, debug},
+    utils::{MAGIC, VERSION, debug},
 };
 
 /// Error type for decoding
@@ -55,8 +55,7 @@ pub enum Error {
 /// Once [`finished`] returns true, no further data can be decoded.
 #[derive(Default)]
 pub struct Decoder {
-    state: State,
-    metadata: VecDeque<ObjectMetadata>,
+    magic: bool,
 }
 
 impl Decoder {
@@ -66,12 +65,6 @@ impl Decoder {
         Self::default()
     }
 
-    /// Returns whether or not the decoder has completed
-    #[inline]
-    pub fn finished(&self) -> bool {
-        self.state.finished()
-    }
-
     /// Decodes [`Bytes`] into an iterator of [`Event`]s.
     ///
     /// # Errors
@@ -79,19 +72,27 @@ impl Decoder {
     /// If this function errors, both the internal
     /// state and `buffer` are unmodified,
     /// and this function may be retried.
-    pub fn decode(&mut self, buffer: &mut Bytes) -> impl Iterator<Item = Result<Event, Error>> {
-        let mut end = false;
+    pub fn decode(&mut self, buffer: &mut Bytes) -> impl Iterator<Item = Result<Object, Error>> {
         core::iter::from_fn(move || {
-            if end || self.finished() {
+            let mut attempt = buffer.clone();
+            if !self.magic {
+                if let Err(err) = process_magic(&mut attempt) {
+                    return Some(Err(err));
+                }
+            }
+
+            let rval = if attempt.is_empty() {
                 None
             } else {
-                let mut attempt = buffer.clone();
-                Some(
-                    self.process(&mut attempt)
-                        .inspect(|_| *buffer = attempt)
-                        .inspect_err(|_| end = true),
-                )
+                Some(process_object(&mut attempt))
+            };
+
+            if let None | Some(Ok(_)) = rval {
+                self.magic = true;
+                *buffer = attempt;
             }
+
+            rval
         })
     }
 
@@ -108,33 +109,24 @@ impl Decoder {
     pub fn decode_reader(
         &mut self,
         reader: &mut impl std::io::Read,
-    ) -> impl Iterator<Item = Result<Event, Error>> {
-        fn fill_buffer(buffer: &mut Bytes, reader: &mut impl std::io::Read) -> Result<(), Error> {
-            debug!("refilling buffer");
-            use bytes::BytesMut;
-
-            let mut new = BytesMut::new();
+    ) -> impl Iterator<Item = Result<Object, Error>> {
+        fn fill_buffer(
+            buffer: &mut Bytes,
+            reader: &mut impl std::io::Read,
+        ) -> Result<usize, Error> {
+            let mut new = bytes::BytesMut::new();
             new.extend_from_slice(buffer);
 
             let start = new.len();
-            new.resize((start * 2).max(4096), 0);
             let mut position = start;
+            new.resize((start * 2).max(4096), 0);
 
             loop {
                 match reader.read(&mut new[position..]) {
                     Ok(0) => {
-                        if position > start {
-                            new.truncate(position);
-                            *buffer = new.freeze();
-                            break;
-                        }
-
-                        let incomplete = Error::Incomplete(TryGetError {
-                            requested: 1,
-                            available: 0,
-                        });
-
-                        return Err(incomplete.into());
+                        new.truncate(position);
+                        *buffer = new.freeze();
+                        break;
                     }
                     Ok(n) => position += n,
                     Err(err) if err.kind() == std::io::ErrorKind::Interrupted => (),
@@ -142,150 +134,101 @@ impl Decoder {
                 }
             }
 
-            debug!("fetched {} more bytes", position - start);
-
-            Ok(())
+            Ok(position - start)
         }
 
         let mut buffer = Bytes::new();
         let mut queue = VecDeque::new();
         std::iter::from_fn(move || {
-            Some(loop {
+            loop {
                 match queue.pop_front() {
                     None | Some(Err(Error::Incomplete(_))) => {
-                        if self.finished() {
-                            return None;
-                        }
-
                         match fill_buffer(&mut buffer, reader) {
-                            Ok(()) => queue.extend(self.decode(&mut buffer)),
-                            Err(err) => break Err(err.into()),
+                            Ok(0) => break None,
+                            Ok(_) => {
+                                let decoded = self.decode(&mut buffer);
+                                let fused = decoded.scan(true, |advance, result| {
+                                    advance.then_some(result.inspect_err(|_| *advance = false))
+                                });
+
+                                queue.extend(fused)
+                            }
+                            Err(err) => break Some(Err(err.into())),
                         }
                     }
-                    Some(result) => break result.map_err(Into::into),
+                    Some(result) => break Some(result.map_err(Into::into)),
                 }
-            })
+            }
         })
-    }
-
-    fn process(&mut self, buffer: &mut Bytes) -> Result<Event, Error> {
-        debug!("decoding in state: {:?}", self.state);
-
-        let event = match self.state {
-            State::Magic => {
-                const MAGIC: &str = "xuehua-archive";
-                let token = try_split_to(buffer, MAGIC.len())?;
-                if token != MAGIC {
-                    return Err(Error::UnexpectedToken {
-                        token,
-                        expected: MAGIC.into(),
-                    });
-                }
-
-                let version = buffer.try_get_u16_le()?;
-                if version != 1 {
-                    return Err(Error::UnsupportedVersion(version));
-                }
-
-                self.state = State::Index;
-                return self
-                    .process(buffer)
-                    .inspect_err(|_| self.state = State::Magic);
-            }
-            State::Index => {
-                let amount = buffer.try_get_u64_le()?;
-                let (metadata, index) = (0..usize::try_from(amount)?)
-                    .map(|_| {
-                        let (path, metadata) = get_index_entry(buffer)?;
-                        Ok((metadata, (path, metadata)))
-                    })
-                    .collect::<Result<_, Error>>()?;
-
-                let event = Event::Index(index);
-                verify_event(buffer, &event)?;
-
-                self.state = State::Objects(amount);
-                self.metadata = metadata;
-
-                event
-            }
-            State::Objects(..) => {
-                let metadata = self
-                    .metadata
-                    .front()
-                    .expect("object count should match index length");
-
-                let event = Event::Object(get_object(buffer, *metadata)?);
-                verify_event(buffer, &event)?;
-
-                if let State::Objects(ref mut amount) = self.state {
-                    self.metadata.pop_front();
-                    *amount -= 1
-                }
-
-                event
-            }
-        };
-
-        debug!("decoded event: {event:?}");
-        Ok(event)
     }
 }
 
-fn verify_event(buffer: &mut Bytes, event: &Event) -> Result<(), Error> {
-    let expect = Hasher::hash(event);
+fn process_magic(buffer: &mut Bytes) -> Result<(), Error> {
+    let magic = try_split_to(buffer, MAGIC.len())?;
+    if magic != MAGIC {
+        return Err(Error::UnexpectedToken {
+            token: magic,
+            expected: MAGIC.into(),
+        });
+    }
+
+    let version = buffer.try_get_u16_le()?;
+    if version != VERSION {
+        return Err(Error::UnsupportedVersion(version));
+    }
+
+    debug!("decoded magic {magic:?} and version {version}");
+    Ok(())
+}
+
+fn process_object(buffer: &mut Bytes) -> Result<Object, Error> {
+    let location = process_plen(buffer)?.into();
+    let permissions = buffer.try_get_u32_le()?;
+
+    let variant = buffer.try_get_u8()?;
+    let content = match variant {
+        0 => ObjectContent::File {
+            data: process_plen(buffer)?,
+        },
+        1 => ObjectContent::Symlink {
+            target: process_plen(buffer)?.into(),
+        },
+        2 => ObjectContent::Directory,
+        _ => {
+            return Err(Error::UnexpectedToken {
+                token: Bytes::copy_from_slice(&[variant]),
+                expected: "0, 1, or 2".into(),
+            });
+        }
+    };
+
+    let object = Object {
+        location,
+        permissions,
+        content,
+    };
+
+    debug!("decoded object: {object:?}");
+
+    let expect = Hasher::hash(&object);
     let actual = Hash::from_slice(&try_split_to(buffer, blake3::OUT_LEN)?)
         .expect("bytes should be OUT_LEN long");
 
     (actual == expect)
-        .then_some(())
+        .then_some(object)
         .ok_or(Error::DigestMismatch {
             expected: expect,
             found: actual,
         })
 }
 
-fn get_index_entry(buffer: &mut Bytes) -> Result<(crate::PathBytes, ObjectMetadata), Error> {
+#[inline]
+fn process_plen(buffer: &mut Bytes) -> Result<Bytes, Error> {
     let len = buffer.try_get_u64_le()?.try_into()?;
-    let path = try_split_to(buffer, len)?.into();
-
-    let metadata = ObjectMetadata {
-        permissions: buffer.try_get_u32_le()?,
-        size: buffer.try_get_u64_le()?,
-        variant: {
-            let token = buffer.try_get_u8()?;
-            match token {
-                0 => ObjectType::File,
-                1 => ObjectType::Symlink,
-                2 => ObjectType::Directory,
-                _ => {
-                    return Err(Error::UnexpectedToken {
-                        token: vec![token].into(),
-                        expected: "0, 1, or 2".into(),
-                    });
-                }
-            }
-        },
-    };
-
-    Ok((path, metadata))
+    try_split_to(buffer, len)
 }
 
-fn get_object(buffer: &mut Bytes, metadata: ObjectMetadata) -> Result<Object, Error> {
-    debug!("decoding object with metadata {metadata:?}");
-
-    let mut contents = || try_split_to(buffer, metadata.size.try_into()?);
-    Ok(match metadata.variant {
-        ObjectType::File => Object::File {
-            contents: contents()?,
-        },
-        ObjectType::Symlink => Object::Symlink {
-            target: contents()?.into(),
-        },
-        ObjectType::Directory => Object::Directory,
-    })
-}
-
+#[inline]
 fn try_split_to(buffer: &mut Bytes, at: usize) -> Result<Bytes, Error> {
     let len = buffer.len();
     if at > len {

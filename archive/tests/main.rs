@@ -5,7 +5,7 @@ use arbtest::arbtest;
 use bytes::Bytes;
 use include_dir::include_dir;
 use libtest_mimic::{Arguments, Trial};
-use xh_archive::Event;
+use xh_archive::Object;
 
 use crate::utils::{ArbitraryArchive, BenchmarkOptions, benchmark, decode, encode, setup};
 
@@ -13,7 +13,7 @@ mod utils;
 
 #[cfg(feature = "std")]
 #[inline]
-fn pack_unpack_roundtrip(events: &Vec<Event>) {
+fn pack_unpack_roundtrip(events: &Vec<Object>) {
     let (path, _temp) = utils::make_temp();
 
     utils::unpack(&path, events);
@@ -22,7 +22,7 @@ fn pack_unpack_roundtrip(events: &Vec<Event>) {
 
 #[cfg(all(feature = "std", feature = "mmap"))]
 #[inline]
-fn mmap_pack_unpack_roundtrip(events: &Vec<Event>) {
+fn mmap_pack_unpack_roundtrip(events: &Vec<Object>) {
     let (path, _temp) = utils::make_temp();
 
     utils::unpack_mmap(&path, events);
@@ -30,13 +30,13 @@ fn mmap_pack_unpack_roundtrip(events: &Vec<Event>) {
 }
 
 #[inline]
-fn enc_dec_roundtrip(events: &Vec<Event>) {
+fn enc_dec_roundtrip(events: &Vec<Object>) {
     assert_eq!(events, &decode(&mut encode(events)));
 }
 
 #[cfg(feature = "std")]
 #[inline]
-fn io_enc_dec_roundtrip(events: &Vec<Event>) {
+fn io_enc_dec_roundtrip(events: &Vec<Object>) {
     use bytes::{Buf, BufMut, BytesMut};
 
     let mut writer = BytesMut::new().writer();
@@ -50,12 +50,12 @@ fn io_enc_dec_roundtrip(events: &Vec<Event>) {
 fn arbitrary_trials() -> impl Iterator<Item = Trial> {
     fn trial<F>(name: &str, runner: F) -> Trial
     where
-        F: Fn(&Vec<Event>),
+        F: Fn(&Vec<Object>),
         F: Send + Sync + 'static,
     {
         Trial::test(name, move || {
             arbtest(|u| {
-                runner(&ArbitraryArchive::arbitrary(u)?.events);
+                runner(&ArbitraryArchive::arbitrary(u)?.objects);
                 Ok(())
             })
             .run();
@@ -96,7 +96,7 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
             #[cfg(all(feature = "std", feature = "mmap"))]
             Trial::bench(
                 format!("mmap-pack-unpack-{name}"),
-                benchmark(|| Ok(mmap_pack_unpack_roundtrip(events)), options),
+                benchmark(|| mmap_pack_unpack_roundtrip(events), options),
             ),
         ]
     };

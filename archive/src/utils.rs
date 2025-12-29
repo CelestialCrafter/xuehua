@@ -1,17 +1,5 @@
-#[derive(Debug, Default, Clone, Copy)]
-pub enum State {
-    #[default]
-    Magic,
-    Index,
-    Objects(u64),
-}
-
-impl State {
-    #[inline]
-    pub fn finished(&self) -> bool {
-        matches!(self, State::Objects(amount) if *amount == 0)
-    }
-}
+pub const MAGIC: &str = "xuehua-archive";
+pub const VERSION: u16 = 1;
 
 #[cfg(feature = "log")]
 #[allow(unused_imports)]

@@ -26,6 +26,7 @@ bytes.workspace = true
 memmap2 = { version = "0.9.9", optional = true }
 
 [dev-dependencies]
+log.workspace = true
 tempfile.workspace = true
 arbitrary = "1.4.2"
 arbtest = "0.3.2"
