@@ -1,14 +1,15 @@
-pub mod id;
 pub mod manifest;
 
-use std::fmt;
+use std::{fmt, str::FromStr};
 
-use mlua::{AnyUserData, FromLua, Function, Lua, LuaSerdeExt, Table};
+use derivative::Derivative;
 use petgraph::graph::NodeIndex;
+use smol_str::SmolStr;
+use thiserror::Error;
 
-pub use crate::package::id::PackageId;
+use crate::backend::Backend;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum LinkTime {
     Runtime,
     Buildtime,
@@ -27,132 +28,75 @@ impl fmt::Display for LinkTime {
     }
 }
 
-impl FromLua for LinkTime {
-    fn from_lua(value: mlua::Value, _: &Lua) -> Result<Self, mlua::Error> {
-        match value.to_string()?.as_str() {
+#[derive(Error, Debug)]
+#[error("could not parse link time (expected \"buildtime\" or \"runtime\", found: {0:?})")]
+pub struct LinkTimeParseError(String);
+
+impl FromStr for LinkTime {
+    type Err = LinkTimeParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
             "buildtime" => Ok(LinkTime::Buildtime),
             "runtime" => Ok(LinkTime::Runtime),
-            _ => Err(mlua::Error::FromLuaConversionError {
-                from: value.type_name(),
-                to: "LinkTime".to_string(),
-                message: Some(r#"value is not "buildtime" or "runtime""#.to_string()),
-            }),
+            _ => Err(LinkTimeParseError(s.to_string())),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Hash, PartialEq, Eq)]
+pub struct PackageName {
+    pub identifier: SmolStr,
+    pub namespace: Vec<SmolStr>,
+}
+
+impl fmt::Display for PackageName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.namespace.is_empty() {
+            self.identifier.fmt(f)
+        } else {
+            write!(f, "{}@{}", self.identifier, self.namespace.join("/"))
+        }
+    }
+}
+
+impl FromStr for PackageName {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (identifier, namespace) = s.split_once("@").unwrap_or((s, Default::default()));
+
+        let identifier = SmolStr::new(identifier);
+        let namespace = namespace.split('/').map(Into::into).collect::<Vec<_>>();
+
+        Ok(Self {
+            identifier,
+            namespace,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct Metadata;
+
+#[derive(Debug, Hash, PartialEq, Derivative)]
+#[derivative(Clone(bound = ""))]
+pub struct DispatchRequest<B: Backend> {
+    pub executor: SmolStr,
+    pub payload: B::Value,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Dependency {
     pub node: NodeIndex,
     pub time: LinkTime,
 }
 
-impl FromLua for Dependency {
-    fn from_lua(value: mlua::Value, lua: &Lua) -> Result<Self, mlua::Error> {
-        let table = Table::from_lua(value, lua)?;
-
-        Ok(Self {
-            node: *table.get::<AnyUserData>("package")?.borrow::<NodeIndex>()?,
-            time: table.get("type")?,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Metadata;
-
-#[derive(Debug, Clone)]
-struct Partial {
-    metadata: Metadata,
-    build: Function,
-    dependencies: Vec<Dependency>,
-}
-
-impl FromLua for Partial {
-    fn from_lua(value: mlua::Value, lua: &Lua) -> mlua::Result<Self> {
-        let table = Table::from_lua(value, lua)?;
-
-        let dependencies = table.get::<Option<_>>("dependencies")?.unwrap_or_default();
-        let build = match table.get::<Option<_>>("build")? {
-            Some(func) => func,
-            None => lua.create_function(|_, ()| Ok(()))?,
-        };
-
-        Ok(Self {
-            metadata: Metadata,
-            build,
-            dependencies,
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Config {
-    current: serde_json::Value,
-    apply: Function,
-}
-
-impl Config {
-    fn configure(&mut self, lua: &Lua, modify: Function) -> Result<Partial, mlua::Error> {
-        let new = modify.call::<mlua::Value>(lua.to_value(&self.current)?)?;
-        let partial = self.apply.call(&new)?;
-        self.current = lua.from_value(new)?;
-
-        Ok(partial)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Package {
-    pub id: PackageId,
-    partial: Partial,
-    config: Config,
-}
-
-impl Package {
-    pub fn configure(&mut self, lua: &Lua, modify: Function) -> Result<(), mlua::Error> {
-        self.partial = self.config.configure(lua, modify)?;
-        Ok(())
-    }
-
-    pub fn build(&self) -> &Function {
-        &self.partial.build
-    }
-
-    pub fn metadata(&self) -> &Metadata {
-        &self.partial.metadata
-    }
-
-    pub fn dependencies(&self) -> &Vec<Dependency> {
-       &self.partial.dependencies
-    }
-}
-
-impl FromLua for Package {
-    fn from_lua(value: mlua::Value, lua: &Lua) -> Result<Self, mlua::Error> {
-        let table = Table::from_lua(value, lua)?;
-
-        let name = table.get("name")?;
-
-        let mut config = Config {
-            current: serde_json::Value::Null,
-            apply: table.get("configure")?,
-        };
-
-        let partial = config.configure(
-            lua,
-            lua.create_function::<_, _, mlua::Value>(move |_, _: mlua::Value| {
-                table.get("defaults")
-            })?,
-        )?;
-
-        Ok(Self {
-            id: PackageId {
-                name,
-                namespace: Default::default(),
-            },
-            partial,
-            config,
-        })
-    }
+#[derive(Debug, PartialEq, Derivative)]
+#[derivative(Clone(bound = ""))]
+pub struct Package<B: Backend> {
+    pub name: PackageName,
+    pub metadata: Metadata,
+    pub requests: Vec<DispatchRequest<B>>,
+    pub dependencies: Vec<Dependency>,
 }
