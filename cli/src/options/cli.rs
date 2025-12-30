@@ -2,7 +2,7 @@ use std::{env, fmt, path::PathBuf, str::FromStr};
 
 use bpaf::{OptionParser, Parser, construct, long, positional, pure};
 
-use xh_engine::package::PackageId;
+use xh_engine::package::PackageName;
 
 #[derive(Debug, Clone, Copy)]
 pub struct FormatParseError;
@@ -55,7 +55,7 @@ pub enum InspectAction {
         format: ProjectFormat,
     },
     Packages {
-        packages: Vec<PackageId>,
+        packages: Vec<PackageName>,
         format: PackageFormat,
     },
 }
@@ -86,7 +86,7 @@ impl InspectAction {
             construct!(Self::Packages { format, packages })
                 .to_options()
                 .descr("Inspects the given packages declarations")
-                .command("package")
+                .command("packages")
         };
 
         construct!([project, packages])
@@ -120,17 +120,17 @@ pub enum PackageAction {
         dry_run: bool,
         root: PathBuf,
         action: LinkAction,
-        packages: Vec<PackageId>,
+        packages: Vec<PackageName>,
     },
     Build {
         dry_run: bool,
-        packages: Vec<PackageId>,
+        packages: Vec<PackageName>,
     },
     Inspect(InspectAction),
 }
 
 impl PackageAction {
-    fn pkgs_parser() -> impl Parser<Vec<PackageId>> {
+    fn pkgs_parser() -> impl Parser<Vec<PackageName>> {
         positional("PACKAGE").many()
     }
 

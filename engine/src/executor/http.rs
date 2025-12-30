@@ -1,28 +1,32 @@
 use std::{
     io::copy,
-    path::{Component, Path, PathBuf},
+    path::{Component, PathBuf},
     str::FromStr,
     sync::Arc,
 };
 
 use log::debug;
 use mlua::{ExternalResult, FromLua, Table, UserData};
+use serde::Deserialize;
+use thiserror::Error;
 use tokio::{fs::OpenOptions, task::spawn_blocking};
 use tokio_util::io::SyncIoBridge;
 use ureq::{
     Agent,
     config::Config,
-    http::{Method, Request, StatusCode, Uri},
+    http::{Method, Request, Uri},
 };
 
-use crate::{executor::Executor, utils::BoxDynError};
+use crate::{builder::InitializeContext, executor::Executor};
 
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct HttpRequest {
     pub path: PathBuf,
+    #[serde(with = "http_serde::uri")]
     pub url: Uri,
+    #[serde(with = "http_serde::method")]
     pub method: Method,
 }
 
@@ -55,36 +59,39 @@ impl FromLua for HttpRequest {
     }
 }
 
-#[derive(Debug)]
-pub struct HttpResponse {
-    pub status: StatusCode,
-}
-
-impl UserData for HttpResponse {
-    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
-        fields.add_field_method_get("status", |_, this| Ok(this.status.as_u16()));
-    }
-}
-
 pub struct HttpExecutor {
-    environment: Arc<Path>,
+    ctx: Arc<InitializeContext>,
     agent: Agent,
 }
 
 impl HttpExecutor {
-    pub fn new(environment: Arc<Path>) -> Self {
+    pub fn new(ctx: Arc<InitializeContext>) -> Self {
         Self {
-            environment,
+            ctx,
             agent: Config::builder().user_agent(USER_AGENT).build().new_agent(),
         }
     }
 }
 
-impl Executor for HttpExecutor {
-    type Request = HttpRequest;
-    type Response = HttpResponse;
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error(transparent)]
+    IOError(#[from] std::io::Error),
+    #[error(transparent)]
+    RequestError(#[from] ureq::Error),
 
-    async fn dispatch(&mut self, request: Self::Request) -> Result<Self::Response, BoxDynError> {
+    #[error(transparent)]
+    JoinError(#[from] tokio::task::JoinError),
+    #[error("paths referencing parent directories are not allowed")]
+    InvalidPath,
+}
+
+impl Executor for HttpExecutor {
+    const NAME: &'static str = "http@xuehua/executors";
+    type Request = HttpRequest;
+    type Error = Error;
+
+    async fn execute(&mut self, request: Self::Request) -> Result<(), Self::Error> {
         debug!("making request to {}", request.url);
         // TODO: support parent refs
         // crude check to ensure no directory traversals are possible
@@ -94,32 +101,30 @@ impl Executor for HttpExecutor {
             .find(|component| matches!(component, Component::ParentDir))
             .is_some()
         {
-            return Err("paths referencing parent directories are not allowed".into());
+            return Err(Error::InvalidPath);
         }
 
         let file = OpenOptions::new()
             .write(true)
             .create(true)
-            .open(self.environment.join(request.path))
+            .open(self.ctx.environment.join(request.path))
             .await?;
         let mut sync_file = SyncIoBridge::new(file);
 
         // TODO: switch to hyper if this becomes an issue
         let agent = self.agent.clone();
-        let status = spawn_blocking(move || {
+        spawn_blocking(move || {
             let request = Request::builder()
                 .method(request.method)
                 .uri(request.url)
-                .body(())?;
+                .body(())
+                .map_err(ureq::Error::from)?;
 
             let response = agent.run(request)?;
-            let status = response.status();
             copy(&mut response.into_body().into_reader(), &mut sync_file)?;
 
-            Ok::<_, ureq::Error>(status)
+            Ok::<_, Error>(())
         })
-        .await??;
-
-        Ok(HttpResponse { status: status })
+        .await?
     }
 }

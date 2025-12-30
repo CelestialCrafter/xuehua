@@ -1,48 +1,22 @@
 pub mod empty;
-pub use empty::EmptyStore;
-
 #[cfg(feature = "local-store")]
 pub mod local;
 
+pub use empty::EmptyStore;
 #[cfg(feature = "local-store")]
 pub use local::LocalStore;
 
-use std::{
-    fs::File,
-    future::Future,
-    io::{self, Write},
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{MetadataExt, PermissionsExt},
-    },
-    path::Path,
-};
+use std::path::Path;
 
-use blake3::Hash;
 use jiff::Timestamp;
-use thiserror::Error;
-use walkdir::WalkDir;
 
-use crate::{
-    package::{Package, PackageId},
-    utils::BoxDynError,
-};
-
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("package {0} not found")]
-    PackageNotFound(PackageId),
-    #[error("artifact {0} not found")]
-    ArtifactNotFound(ArtifactId),
-    #[error(transparent)]
-    ExternalError(#[from] BoxDynError),
-}
+use crate::package::PackageName;
 
 pub type ArtifactId = blake3::Hash;
 
 #[derive(Debug)]
 pub struct StorePackage {
-    pub package: PackageId,
+    pub package: PackageName,
     pub artifact: ArtifactId,
     pub created_at: Timestamp,
 }
@@ -62,65 +36,32 @@ pub struct StoreArtifact {
 /// - Stores **must** use directories for all content inputs and outputs. If contents need to be packed or unpacked (eg. downloading package contents over the network), the store needs to handle it.
 /// - The returned ArtifactHash **must** be a secure hash of the contents. The [`hash_directory`] utility function can be used as the canonical implementation.
 pub trait Store {
+    type Error: std::error::Error + Send + Sync;
+
     fn register_package(
         &mut self,
-        package: &Package,
+        package: &PackageName,
         artifact: &ArtifactId,
-    ) -> impl Future<Output = Result<StorePackage, Error>> + Send;
+    ) -> impl Future<Output = Result<StorePackage, Self::Error>> + Send;
 
     fn package(
         &self,
-        package: &PackageId,
-    ) -> impl Future<Output = Result<impl Iterator<Item = StorePackage>, Error>> + Send;
+        package: &PackageName,
+    ) -> impl Future<Output = impl Iterator<Item = Result<StorePackage, Self::Error>>> + Send;
 
     fn register_artifact(
         &mut self,
         content: &Path,
-    ) -> impl Future<Output = Result<StoreArtifact, Error>> + Send;
+    ) -> impl Future<Output = Result<StoreArtifact, Self::Error>> + Send;
 
     fn artifact(
         &self,
         artifact: &ArtifactId,
-    ) -> impl Future<Output = Result<StoreArtifact, Error>> + Send;
-
-    fn unpack(
-        &self,
-        artifact: &ArtifactId,
-        output_directory: &Path,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
+    ) -> impl Future<Output = Result<Option<StoreArtifact>, Self::Error>> + Send;
 }
 
-// TODO: implement async hashing
-pub fn hash_directory(dir: &Path) -> Result<Hash, io::Error> {
+pub fn hash_directory(dir: &Path) -> Result<ArtifactId, std::io::Error> {
     let mut hasher = blake3::Hasher::new();
-    let map_walkdir_err = |err: walkdir::Error| {
-        let fallback = io::Error::new(io::ErrorKind::Other, err.to_string());
-        err.into_io_error().unwrap_or(fallback)
-    };
-
-    for entry in WalkDir::new(dir).sort_by_file_name() {
-        let entry = entry.map_err(map_walkdir_err)?;
-        let metadata = entry.metadata().map_err(map_walkdir_err)?;
-        let file_type = entry.file_type();
-        if file_type.is_file() {
-            let path = entry.path();
-            let stripped_path = path
-                .strip_prefix(dir)
-                .map_err(|err| io::Error::new(io::ErrorKind::InvalidFilename, err))?;
-
-            hasher.write_all(
-                &[
-                    stripped_path.as_os_str().as_bytes(),
-                    &metadata.permissions().mode().to_be_bytes(),
-                    &metadata.gid().to_be_bytes(),
-                    &metadata.uid().to_be_bytes(),
-                    &metadata.len().to_be_bytes(),
-                ]
-                .concat(),
-            )?;
-            hasher.update_reader(&mut File::open(path)?)?;
-        }
-    }
-
+    todo!();
     Ok(hasher.finalize())
 }

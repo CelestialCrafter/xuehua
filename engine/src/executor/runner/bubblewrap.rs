@@ -1,11 +1,15 @@
-use std::{ffi::OsStr, io, iter::once, path::Path, process::Command, sync::Arc};
+use std::{process::Command, sync::Arc};
 
 use log::debug;
 use tokio::process::Command as TokioCommand;
 
-use crate::{executor::{
-    runner::{LuaCommand, LuaOutput}, Executor
-}, utils::BoxDynError};
+use crate::{
+    builder::InitializeContext,
+    executor::{
+        Executor,
+        runner::{CommandRequest, Error},
+    },
+};
 
 #[derive(Debug)]
 pub struct BubblewrapExecutorOptions {
@@ -42,31 +46,28 @@ impl Default for BubblewrapExecutorOptions {
 /// To execute multiple commands within the sandbox, this executor bundles a command runner.
 /// The runner is embedded within the library at compile-time, and is controlled via stdin/stdout.
 pub struct BubblewrapExecutor {
-    environment: Arc<Path>,
+    ctx: Arc<InitializeContext>,
     options: BubblewrapExecutorOptions,
 }
 
 impl BubblewrapExecutor {
-    pub fn new(environment: Arc<Path>, options: BubblewrapExecutorOptions) -> Self {
-        Self {
-            environment,
-            options,
-        }
+    pub fn new(ctx: Arc<InitializeContext>, options: BubblewrapExecutorOptions) -> Self {
+        Self { ctx, options }
     }
 }
 
 impl Executor for BubblewrapExecutor {
-    type Request = LuaCommand;
-    type Response = LuaOutput;
+    const NAME: &'static str = "bubblewrap@xuehua/executors";
+    type Request = CommandRequest;
+    type Error = Error;
 
-    async fn dispatch(&mut self, request: Self::Request) -> Result<Self::Response, BoxDynError> {
-        let original = request.0;
+    async fn execute(&mut self, request: Self::Request) -> Result<(), Self::Error> {
         debug!(
             "running command {:?}",
-            once(original.get_program())
-                .chain(original.get_args())
+            std::iter::once(request.program.clone())
+                .chain(request.arguments.clone())
                 .collect::<Vec<_>>()
-                .join(OsStr::new(" ")),
+                .join(" "),
         );
 
         let mut sandboxed = Command::new("bwrap");
@@ -74,7 +75,7 @@ impl Executor for BubblewrapExecutor {
         // essentials
         sandboxed
             .arg("--bind")
-            .arg(&*self.environment)
+            .arg(&self.ctx.environment)
             .arg("/")
             .args(&[
                 // TODO: move busybox bootstrap to its own package
@@ -116,36 +117,23 @@ impl Executor for BubblewrapExecutor {
         }
 
         // command payload
-        if let Some(working_dir) = original.get_current_dir() {
+        if let Some(working_dir) = request.working_dir {
             sandboxed.arg("--chdir").arg(working_dir);
         }
 
-        sandboxed.args(
-            original
-                .get_envs()
-                .into_iter()
-                .filter_map(|(key, value)| Some([OsStr::new("--setenv"), key, value?]))
-                .flatten(),
-        );
+        for (key, value) in request.environment {
+            sandboxed.args(["--setenv", &key, &value]);
+        }
 
         sandboxed
             .arg("--")
-            .arg(original.get_program())
-            .args(original.get_args());
+            .arg(request.program)
+            .args(request.arguments);
 
-        // execution
-        let output = TokioCommand::from(sandboxed)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8(output.stderr)?;
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("{}\nstderr: {}", output.status, stderr),
-            ).into());
-        }
-
-        Ok(LuaOutput::try_from(output)?)
+        let status = TokioCommand::from(sandboxed).spawn()?.wait().await?;
+        status
+            .success()
+            .then_some(())
+            .ok_or(Error::CommandFailed(status))
     }
 }

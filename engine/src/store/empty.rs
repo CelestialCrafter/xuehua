@@ -1,49 +1,43 @@
-use std::{iter::Empty, path::Path};
+use std::path::Path;
+
+use thiserror::Error;
 
 use crate::{
-    package::{Package, PackageId},
-    store::Store,
-    utils::BoxDynError,
+    package::PackageName,
+    store::{ArtifactId, Store, StoreArtifact, StorePackage},
 };
-
-use crate::store::{ArtifactId, Error, StoreArtifact, StorePackage};
 
 #[derive(Error, Debug)]
 #[error("registry is unimplemented for EmptyStore")]
-struct CannotRegister;
-
-#[derive(Error, Debug)]
-#[error("unpacking is unimplemented for EmptyStore")]
-struct CannotUnpack;
+pub struct CannotRegister;
 
 #[derive(Default, Clone, Copy)]
 pub struct EmptyStore;
 
 impl Store for EmptyStore {
+    type Error = CannotRegister;
+
     async fn register_package(
         &mut self,
-        _package: &Package,
+        _package: &PackageName,
         _artifact: &ArtifactId,
-    ) -> Result<StorePackage, Error> {
-        Err(BoxDynError::from(CannotRegister).into())
+    ) -> Result<StorePackage, Self::Error> {
+        Err(CannotRegister)
     }
 
     async fn package(
         &self,
-        package: &PackageId,
-    ) -> Result<impl Iterator<Item = StorePackage>, Error> {
-        Err::<Empty<_>, _>(Error::PackageNotFound(package.clone()))
+
+        _package: &PackageName,
+    ) -> impl Iterator<Item = Result<StorePackage, Self::Error>> {
+        std::iter::empty()
     }
 
-    async fn register_artifact(&mut self, _content: &Path) -> Result<StoreArtifact, Error> {
-        Err(BoxDynError::from(CannotRegister).into())
+    async fn register_artifact(&mut self, _content: &Path) -> Result<StoreArtifact, Self::Error> {
+        Err(CannotRegister)
     }
 
-    async fn artifact(&self, artifact: &ArtifactId) -> Result<StoreArtifact, Error> {
-        Err(Error::ArtifactNotFound(artifact.clone()))
-    }
-
-    async fn unpack(&self, _artifact: &ArtifactId, _output_directory: &Path) -> Result<(), Error> {
-        Err(BoxDynError::from(CannotUnpack).into())
+    async fn artifact(&self, _artifact: &ArtifactId) -> Result<Option<StoreArtifact>, Self::Error> {
+        Ok(None)
     }
 }

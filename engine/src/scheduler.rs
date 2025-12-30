@@ -1,188 +1,122 @@
-use std::{mem, sync::mpsc};
+use std::sync::mpsc;
 
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use log::{debug, trace};
-use petgraph::{
-    Direction,
-    graph::{DiGraph, NodeIndex},
-    visit::{Dfs, EdgeRef},
-};
+use petgraph::{Direction, graph::NodeIndex, visit::Dfs};
 
 use crate::{
-    builder::{BuildInfo, Builder, Error},
-    package::{Package, PackageId, LinkTime},
-    planner::Plan,
-    utils::passthru::PassthruHashSet,
+    backend::Backend,
+    builder::{BuildRequest, Builder, Dispatch, Error as BuilderError, Initialize},
+    planner::{Frozen, Planner},
+    utils::passthru::{PassthruHashMap, PassthruHashSet},
 };
 
 #[derive(Debug)]
 enum PackageState {
-    Unbuilt {
-        package: Package,
-        remaining: usize,
-    },
-    // NOTE: Scheduler can be put into a non-ideal state if Builder::build() panics
-    Building,
-    Built {
-        package: Package,
-        runtime: Vec<NodeIndex>,
-    },
+    Unbuilt { remaining: usize },
+    Built,
 }
 
+// TODO: add the ability for packages to report custom statuses
 #[derive(Debug)]
-pub enum Event {
-    Started,
-    Finished(Result<(), Error>),
+pub enum Event<B: Backend> {
+    Started {
+        request: BuildRequest,
+    },
+    Finished {
+        request: BuildRequest,
+        result: Result<(), BuilderError<B>>,
+    },
 }
 
 /// Package build scheduler
 ///
 /// The builder traverses through a [`Planner`]'s instructions and queues builds of the packages needed to build the target package
-pub struct Scheduler {
-    state: DiGraph<PackageState, LinkTime>,
+pub struct Scheduler<'a, B: Backend, E> {
+    state: PassthruHashMap<NodeIndex, PackageState>,
+    planner: &'a Planner<Frozen<'a, B>>,
+    builder: &'a Builder<'a, B, E>,
 }
 
-impl Scheduler {
-    pub fn new(plan: Plan) -> Self {
-        let mut state = plan.into_inner().map_owned(
-            |_, weight| PackageState::Unbuilt {
-                remaining: 0,
-                package: weight.into(),
-            },
-            |_, weight| weight,
-        );
+impl<'a, B, E> Scheduler<'a, B, E>
+where
+    B: Backend,
+    E: Initialize,
+    E::Output: Dispatch<B>
+{
+    pub fn new(planner: &'a Planner<Frozen<B>>, builder: &'a Builder<'a, B, E>) -> Self {
+        let plan = planner.graph();
+        let state = plan
+            .node_indices()
+            .map(|node| {
+                (
+                    node,
+                    PackageState::Unbuilt {
+                        remaining: plan.neighbors_directed(node, Direction::Outgoing).count(),
+                    },
+                )
+            })
+            .collect();
 
-        for node in state.node_indices() {
-            let count = state.neighbors_directed(node, Direction::Outgoing).count();
-            match state[node] {
-                PackageState::Unbuilt {
-                    ref mut remaining, ..
-                } => *remaining = count,
-                _ => unreachable!(),
-            }
+        Self {
+            planner,
+            builder,
+            state,
         }
-
-        Self { state }
     }
 
-    pub async fn schedule(
-        &mut self,
-        targets: &[NodeIndex],
-        builder: &Builder<'_>,
-        events: mpsc::Sender<(PackageId, Event)>,
-    ) {
+    pub async fn schedule(&mut self, targets: &[NodeIndex], events: mpsc::Sender<Event<B>>) {
         let mut futures = FuturesUnordered::new();
-        let mut subset = PassthruHashSet::default();
-        let run_builder = async |info: BuildInfo| {
-            let _ = events.send((info.package.id.clone(), Event::Started));
-            let result = builder.build(&info).await;
-            (info, result)
+        let plan = self.planner.graph();
+
+        let build = async |node| {
+            // TODO: populate build id
+            let request = BuildRequest {
+                id: 0,
+                target: node,
+            };
+
+            (request, self.builder.build(self.planner, request).await)
         };
 
         // compute subset and build leaf packages
-        let mut visitor = Dfs::empty(&self.state);
+        let mut subset = PassthruHashSet::default();
+        let mut visitor = Dfs::empty(&plan);
         for target in targets {
             visitor.move_to(*target);
-            while let Some(node) = visitor.next(&self.state) {
+            while let Some(node) = visitor.next(plan) {
                 subset.insert(node);
-                if let Some(info) = self.prepare_info(node) {
-                    trace!("adding package {} as a leaf", info.package.id);
-                    futures.push(run_builder(info));
+                if let PackageState::Unbuilt { remaining: 0, .. } = self.state[&target] {
+                    trace!("adding node {:?} as a leaf", node);
+                    futures.push(build(node));
                 }
             }
         }
 
         // main build loop
-        while let Some((
-            BuildInfo {
-                node: target,
-                package,
-                runtime,
-                ..
-            },
-            result,
-        )) = futures.next().await
-        {
+        while let Some((request, result)) = futures.next().await {
             let errored = result.is_err();
-            let _ = events.send((package.id.clone(), Event::Finished(result)));
+            let _ = events.send(Event::Finished { request, result });
 
             if errored {
-                self.state[target] = PackageState::Unbuilt {
-                    package,
-                    remaining: 0,
-                };
                 continue;
-            } else {
-                self.state[target] = PackageState::Built { runtime, package };
-            };
+            }
 
-            for parent in self
-                .state
-                .neighbors_directed(target, Direction::Incoming)
-                .collect::<Vec<_>>()
-            {
-                match &mut self.state[parent] {
-                    PackageState::Unbuilt { remaining, package } => {
-                        *remaining -= 1;
-                        debug!("{} has {} dependencies remaining", package.id, remaining);
-                    }
-                    state => panic!(
-                        "parent node {parent:?} should not be in the {state:?} state before child node {target:?} finishes building"
-                    ),
-                }
+            self.state.insert(request.target, PackageState::Built);
+            for parent in plan.neighbors_directed(request.target, Direction::Incoming) {
+                let Some(PackageState::Unbuilt { remaining }) = self.state.get_mut(&parent) else {
+                    unreachable!(
+                        "parent node {parent:?} should be unbuilt state while child node {:?} is building",
+                        request.target
+                    );
+                };
 
-                if subset.contains(&parent) {
-                    if let Some(info) = self.prepare_info(parent) {
-                        futures.push(run_builder(info));
-                    }
+                *remaining -= 1;
+                debug!("{:?} has {} dependencies remaining", parent, remaining);
+                if *remaining == 0 && subset.contains(&parent) {
+                    futures.push(build(parent));
                 }
             }
         }
-    }
-
-    fn prepare_info(&mut self, target: NodeIndex) -> Option<BuildInfo> {
-        // check if package can be built
-        match self.state[target] {
-            PackageState::Unbuilt {
-                ref mut remaining, ..
-            } if *remaining == 0 => (),
-            _ => return None,
-        };
-
-        let package = match mem::replace(&mut self.state[target], PackageState::Building) {
-            PackageState::Unbuilt { package, .. } => package,
-            _ => unreachable!(),
-        };
-
-        // gather dependencies into the build closure
-        let mut buildtime = Vec::default();
-        let mut runtime = Vec::default();
-        for edge in self.state.edges_directed(target, Direction::Outgoing) {
-            let child = edge.target();
-            match &self.state[child] {
-                PackageState::Built {
-                    runtime: dep_runtime,
-                    ..
-                } => {
-                    let closure = match edge.weight() {
-                        LinkTime::Runtime => &mut runtime,
-                        LinkTime::Buildtime => &mut buildtime,
-                    };
-
-                    closure.extend(dep_runtime.into_iter());
-                    closure.push(child);
-                }
-                state => panic!(
-                    "child node {child:?} should not be in the {state:?} while building {target:?}"
-                ),
-            }
-        }
-
-        Some(BuildInfo {
-            node: target,
-            package,
-            runtime,
-            buildtime,
-        })
     }
 }
