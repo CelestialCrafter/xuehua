@@ -5,7 +5,7 @@ use arbtest::arbtest;
 use bytes::Bytes;
 use include_dir::include_dir;
 use libtest_mimic::{Arguments, Trial};
-use xh_archive::Object;
+use xh_archive::Event;
 
 use crate::utils::{ArbitraryArchive, BenchmarkOptions, benchmark, decode, encode, setup};
 
@@ -13,7 +13,7 @@ mod utils;
 
 #[cfg(feature = "std")]
 #[inline]
-fn pack_unpack_roundtrip(events: &Vec<Object>) {
+fn pack_unpack_roundtrip(events: &Vec<Event>) {
     let (path, _temp) = utils::make_temp();
 
     utils::unpack(&path, events);
@@ -22,7 +22,7 @@ fn pack_unpack_roundtrip(events: &Vec<Object>) {
 
 #[cfg(all(feature = "std", feature = "mmap"))]
 #[inline]
-fn mmap_pack_unpack_roundtrip(events: &Vec<Object>) {
+fn mmap_pack_unpack_roundtrip(events: &Vec<Event>) {
     let (path, _temp) = utils::make_temp();
 
     utils::unpack_mmap(&path, events);
@@ -30,32 +30,20 @@ fn mmap_pack_unpack_roundtrip(events: &Vec<Object>) {
 }
 
 #[inline]
-fn enc_dec_roundtrip(events: &Vec<Object>) {
+fn enc_dec_roundtrip(events: &Vec<Event>) {
     assert_eq!(events, &decode(&mut encode(events)));
-}
-
-#[cfg(feature = "std")]
-#[inline]
-fn io_enc_dec_roundtrip(events: &Vec<Object>) {
-    use bytes::{Buf, BufMut, BytesMut};
-
-    let mut writer = BytesMut::new().writer();
-    utils::encode_writer(events, &mut writer);
-
-    let mut reader = writer.into_inner().reader();
-    assert_eq!(events, &utils::decode_reader(&mut reader));
 }
 
 #[inline]
 fn arbitrary_trials() -> impl Iterator<Item = Trial> {
     fn trial<F>(name: &str, runner: F) -> Trial
     where
-        F: Fn(&Vec<Object>),
+        F: Fn(&Vec<Event>),
         F: Send + Sync + 'static,
     {
         Trial::test(name, move || {
             arbtest(|u| {
-                runner(&ArbitraryArchive::arbitrary(u)?.objects);
+                runner(&ArbitraryArchive::arbitrary(u)?.events);
                 Ok(())
             })
             .run();
@@ -63,13 +51,9 @@ fn arbitrary_trials() -> impl Iterator<Item = Trial> {
         })
     }
 
-    [
-        trial("enc-dec-arbitrary", enc_dec_roundtrip),
-        #[cfg(feature = "std")]
-        trial("io-enc-dec-arbitrary", io_enc_dec_roundtrip),
-    ]
-    .into_iter()
-    .map(|trial| trial.with_kind("arbitrary"))
+    [trial("enc-dec-arbitrary", enc_dec_roundtrip)]
+        .into_iter()
+        .map(|trial| trial.with_kind("arbitrary"))
 }
 
 #[inline]
@@ -82,11 +66,6 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
             Trial::bench(
                 format!("enc-dec-{name}"),
                 benchmark(|| enc_dec_roundtrip(events), options),
-            ),
-            #[cfg(feature = "std")]
-            Trial::bench(
-                format!("io-enc-dec-{name}"),
-                benchmark(|| io_enc_dec_roundtrip(events), options),
             ),
             #[cfg(feature = "std")]
             Trial::bench(

@@ -2,23 +2,21 @@
 
 use core::borrow::Borrow;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes};
+use ed25519_dalek::Signature;
 
 use crate::{
-    Object, ObjectContent,
+    Event, Fingerprint, Object, ObjectContent,
     hashing::Hasher,
-    utils::{MAGIC, VERSION, debug},
+    utils::{MAGIC, Marker, VERSION, debug},
 };
 
 /// Encoder for archive events
 ///
-/// The encoder consumes [`Event`]s and outputs binary.
-///
-/// An encoder can only encode a single archive.
-/// Once [`finished`] returns true, no further events can be encoded.
-#[derive(Default)]
+/// The encoder consumes [`Event`]s and outputs binary data.
+#[derive(Clone, Default)]
 pub struct Encoder {
-    magic: bool,
+    hasher: blake3::Hasher,
 }
 
 impl Encoder {
@@ -28,84 +26,81 @@ impl Encoder {
         Default::default()
     }
 
-    /// Encodes an iterator of [`Event`]s into a `buffer`.
-    ///
-    /// # Errors
-    ///
-    /// If this function errors, both the internal
-    /// state and `buffer` are unmodified,
-    /// and this function may be retried.
+    /// Encodes an iterator of [`Event`]s into `buffer`.
     #[inline]
-    pub fn encode(
+    pub fn encode_iter(
         &mut self,
-        buffer: &mut BytesMut,
-        objects: impl IntoIterator<Item = impl Borrow<Object>>,
+        buffer: &mut impl BufMut,
+        events: impl IntoIterator<Item = impl Borrow<Event>>,
     ) {
-        if !self.magic {
-            buffer.put_slice(MAGIC.as_bytes());
-            buffer.put_u16_le(VERSION);
-            self.magic = true;
-        }
-
-        for object in objects {
-            process(buffer, object.borrow());
-        }
+        events
+            .into_iter()
+            .for_each(|event| self.encode(buffer, event))
     }
 
-    /// Encodes an iterator of [`Event`]s into a `writer`
-    ///
-    /// # Errors
-    ///
-    /// If this function errors, partial events will not be written.
-    #[cfg(feature = "std")]
+    /// Encodes a single [`Event`] into `buffer`.
     #[inline]
-    pub fn encode_writer(
-        &mut self,
-        writer: &mut impl std::io::Write,
-        objects: impl IntoIterator<Item = impl Borrow<Object>>,
-    ) -> Result<(), std::io::Error> {
-        let mut buffer = BytesMut::with_capacity(4096);
-        if !self.magic {
-            buffer.put_slice(MAGIC.as_bytes());
-            buffer.put_u16_le(VERSION);
-            writer.write_all(&buffer)?;
-            self.magic = true;
+    pub fn encode(&mut self, buffer: &mut impl BufMut, event: impl Borrow<Event>) {
+        match event.borrow() {
+            Event::Header => self.process_header(buffer),
+            Event::Object(object) => self.process_object(buffer, object),
+            Event::Footer(signatures) => self.process_footer(buffer, signatures),
         }
-
-        for object in objects {
-            buffer.clear();
-            process(&mut buffer, object.borrow());
-            writer.write_all(&buffer)?;
-        }
-
-        Ok(())
     }
-}
 
-fn process(buffer: &mut impl BufMut, object: &Object) {
-    debug!("encoding object: {object:?}");
+    fn process_header(&mut self, buffer: &mut impl BufMut) {
+        debug!("encoding header");
+        self.hasher.reset();
 
-    process_lenp(buffer, &object.location.inner);
-    buffer.put_u32_le(object.permissions);
+        Marker::Header.put(buffer);
+        buffer.put_slice(MAGIC.as_bytes());
+        buffer.put_u16_le(VERSION);
+    }
 
-    match &object.content {
-        ObjectContent::File { data } => {
-            buffer.put_u8(0);
-            process_lenp(buffer, data);
+    fn process_object(&mut self, buffer: &mut impl BufMut, object: &Object) {
+        debug!("encoding object: {object:?}");
+
+        Marker::Object.put(buffer);
+        Self::process_lenp(buffer, &object.location.inner);
+        buffer.put_u32_le(object.permissions);
+
+        match &object.content {
+            ObjectContent::File { data } => {
+                buffer.put_u8(0);
+                Self::process_lenp(buffer, data);
+            }
+            ObjectContent::Symlink { target } => {
+                buffer.put_u8(1);
+                Self::process_lenp(buffer, &target.inner);
+            }
+            ObjectContent::Directory => {
+                buffer.put_u8(2);
+            }
+        };
+
+        let hash = Hasher::hash(object);
+        let hash = hash.as_bytes();
+        self.hasher.update(hash);
+        buffer.put_slice(hash);
+    }
+
+    fn process_footer(&self, buffer: &mut impl BufMut, signatures: &alloc::vec::Vec<(Fingerprint, Signature)>) {
+        Marker::Footer.put(buffer);
+
+        let hash = self.hasher.finalize();
+        buffer.put_slice(hash.as_bytes());
+
+        buffer.put_u64_le(signatures.len() as u64);
+        for (fingerprint, signature) in signatures {
+            buffer.put_slice(fingerprint.as_bytes());
+            buffer.put_slice(&signature.to_bytes());
         }
-        ObjectContent::Symlink { target } => {
-            buffer.put_u8(1);
-            process_lenp(buffer, &target.inner);
-        }
-        ObjectContent::Directory => {
-            buffer.put_u8(2);
-        }
-    };
 
-    buffer.put_slice(Hasher::hash(object).as_bytes());
-}
+        debug!("encoding footer with hash {hash} and signatures {signatures:?}");
+    }
 
-fn process_lenp(buffer: &mut impl BufMut, bytes: &Bytes) {
-    buffer.put_u64_le(bytes.len() as u64);
-    buffer.put_slice(bytes);
+    fn process_lenp(buffer: &mut impl BufMut, bytes: &Bytes) {
+        buffer.put_u64_le(bytes.len() as u64);
+        buffer.put_slice(bytes);
+    }
 }

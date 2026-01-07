@@ -1,12 +1,12 @@
 #[cfg(feature = "std")]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use arbitrary::Arbitrary;
 use bytes::{Bytes, BytesMut};
 use libtest_mimic::{Failed, Measurement};
 use log::debug;
-use xh_archive::{Object, ObjectContent, decoding::Decoder, encoding::Encoder};
+use xh_archive::{Event, Object, ObjectContent, decoding::Decoder, encoding::Encoder};
 
 #[derive(Clone, Copy)]
 pub struct BenchmarkOptions {
@@ -70,18 +70,30 @@ pub fn benchmark(
 
 #[derive(Debug, Clone)]
 pub struct ArbitraryArchive {
-    pub objects: Vec<Object>,
+    pub events: Vec<Event>,
 }
 
 impl Arbitrary<'_> for ArbitraryArchive {
     fn arbitrary(u: &mut arbitrary::Unstructured) -> arbitrary::Result<Self> {
-        let objects = (0..u.arbitrary_len::<(&[u8], &[u8], u8, u32)>()?)
-            .map(|_| {
+        let signatures = u
+            .arbitrary_iter()?
+            .map(|result| {
+                result.map(|(hash, signature)| {
+                    (
+                        blake3::Hash::from_bytes(hash),
+                        ed25519_dalek::Signature::from_bytes(&signature),
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
+
+        let events = std::iter::once(Ok(Event::Header))
+            .chain((0..u.arbitrary_len::<(&[u8], &[u8], u8, u32)>()?).map(|_| {
                 let bytes = |u: &mut arbitrary::Unstructured<'_>| {
                     Ok(Bytes::from_owner(u.arbitrary::<Vec<u8>>()?))
                 };
 
-                Ok(Object {
+                let object = Object {
                     location: bytes(u)?.into(),
                     permissions: u.arbitrary()?,
                     content: match u.choose_index(3)? {
@@ -92,54 +104,49 @@ impl Arbitrary<'_> for ArbitraryArchive {
                         2 => ObjectContent::Directory,
                         _ => unreachable!(),
                     },
-                })
-            })
+                };
+
+                Ok(Event::Object(object))
+            }))
+            .chain(std::iter::once(Ok(Event::Footer(signatures))))
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(Self { objects })
+        Ok(Self { events })
     }
 }
 
 #[cfg(feature = "std")]
-pub fn pack(root: &Path) -> Vec<Object> {
+pub fn pack(root: &Path) -> Vec<Event> {
     xh_archive::packing::Packer::new(root.to_path_buf())
-        .pack()
+        .pack_iter()
         .map(|event| event.expect("should be able to pack file"))
         .collect()
 }
 
 #[cfg(all(feature = "std", feature = "mmap"))]
-pub fn pack_mmap(root: &Path) -> Vec<Object> {
+pub fn pack_mmap(root: &Path) -> Vec<Event> {
     let mut packer = xh_archive::packing::Packer::new(root.to_path_buf());
-    unsafe { packer.pack_mmap() }
+    unsafe { packer.pack_mmap_iter() }
         .map(|event| event.expect("should be able to pack file"))
         .collect()
 }
 
 #[cfg(feature = "std")]
-pub fn unpack(root: &Path, events: &Vec<Object>) {
+pub fn unpack(root: &Path, events: &Vec<Event>) {
     xh_archive::unpacking::Unpacker::new(root)
-        .unpack(events)
+        .unpack_iter(events)
         .expect("should be able to unpack files")
 }
 
 #[cfg(all(feature = "std", feature = "mmap"))]
-pub fn unpack_mmap(root: &Path, events: &Vec<Object>) {
+pub fn unpack_mmap(root: &Path, events: &Vec<Event>) {
     let mut unpacker = xh_archive::unpacking::Unpacker::new(root);
-    unsafe { unpacker.unpack_mmap(events) }.expect("should be able to unpack files")
+    unsafe { unpacker.unpack_mmap_iter(events) }.expect("should be able to unpack files")
 }
 
-pub fn decode(contents: &mut Bytes) -> Vec<Object> {
-    Decoder::new()
-        .decode(contents)
-        .collect::<Result<Vec<_>, _>>()
-        .expect("decoding should not fail")
-}
-
-#[cfg(feature = "std")]
-pub fn decode_reader(contents: &mut impl std::io::Read) -> Vec<Object> {
+pub fn decode(contents: &mut Bytes) -> Vec<Event> {
     let decoded = Decoder::new()
-        .decode_reader(contents)
+        .decode_iter(contents)
         .collect::<Result<Vec<_>, _>>()
         .expect("decoding should not fail");
 
@@ -147,23 +154,16 @@ pub fn decode_reader(contents: &mut impl std::io::Read) -> Vec<Object> {
     decoded
 }
 
-pub fn encode(events: &Vec<Object>) -> Bytes {
+pub fn encode(events: &Vec<Event>) -> Bytes {
     let mut encoded = BytesMut::new();
-    Encoder::new().encode(&mut encoded, events);
+    Encoder::new().encode_iter(&mut encoded, events);
 
     debug!("encoded data: {encoded:?}");
     encoded.freeze()
 }
 
 #[cfg(feature = "std")]
-pub fn encode_writer(events: &Vec<Object>, writer: &mut impl std::io::Write) {
-    Encoder::new()
-        .encode_writer(writer, events)
-        .expect("encoding should not fail");
-}
-
-#[cfg(feature = "std")]
- pub fn make_temp() -> (std::path::PathBuf, tempfile::TempDir) {
+pub fn make_temp() -> (PathBuf, tempfile::TempDir) {
     let temp =
         tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("should be able to make temp dir");
     let path = temp.path().to_path_buf();
