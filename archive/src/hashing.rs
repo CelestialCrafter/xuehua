@@ -1,4 +1,4 @@
-//! Hashing of [`Event`]s via [BLAKE3](https://github.com/BLAKE3-team/BLAKE3)
+//! Hashing of [`Object`]s via [BLAKE3](https://github.com/BLAKE3-team/BLAKE3)
 
 use core::borrow::Borrow;
 
@@ -10,10 +10,18 @@ use crate::{Object, ObjectContent, utils::debug};
 pub struct Hasher;
 
 impl Hasher {
-    /// Hash a single event
+    /// Hash an iterator of [`Object`]s
     #[inline]
-    pub fn hash(event: impl Borrow<Object>) -> blake3::Hash {
-        process(event.borrow())
+    pub fn hash_iter(
+        objects: impl IntoIterator<Item = impl Borrow<Object>>,
+    ) -> impl Iterator<Item = blake3::Hash> {
+        objects.into_iter().map(Self::hash)
+    }
+
+    /// Hash a single [`Object`]
+    #[inline]
+    pub fn hash(object: impl Borrow<Object>) -> blake3::Hash {
+        process(object.borrow())
     }
 
     /// Hash an iterator of hashes
@@ -29,7 +37,6 @@ impl Hasher {
     }
 }
 
-#[inline]
 fn process(object: &Object) -> blake3::Hash {
     let mut hasher = blake3::Hasher::new();
 
@@ -45,11 +52,10 @@ fn process(object: &Object) -> blake3::Hash {
     process_lenp(&mut hasher, content);
 
     let hash = hasher.finalize();
-    debug!("event hashed to {hash}");
+    debug!("object hashed to {hash}");
     hash
 }
 
-#[inline]
 fn process_lenp(hasher: &mut blake3::Hasher, bytes: &Bytes) {
     hasher
         .update(&(bytes.len() as u64).to_le_bytes())

@@ -1,5 +1,31 @@
+use bytes::BufMut;
+
 pub const MAGIC: &str = "xuehua-archive";
 pub const VERSION: u16 = 1;
+
+#[derive(Clone, Copy)]
+pub enum Marker {
+    Header,
+    Footer,
+    Object,
+    Signature,
+}
+
+impl Marker {
+    pub fn len() -> usize {
+        2
+    }
+
+    pub fn put(&self, buffer: &mut impl BufMut) {
+        buffer.put_slice(b"xuehua-archive@");
+        buffer.put_slice(match self {
+            Marker::Header => b"hd",
+            Marker::Footer => b"ft",
+            Marker::Object => b"ob",
+            Marker::Signature => b"sg",
+        });
+    }
+}
 
 #[cfg(feature = "log")]
 #[allow(unused_imports)]

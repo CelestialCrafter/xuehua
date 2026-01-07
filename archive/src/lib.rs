@@ -33,6 +33,7 @@ extern crate alloc;
 use core::fmt::Debug;
 
 use bytes::Bytes;
+use ed25519_dalek::Signature;
 use thiserror::Error;
 
 /// Root error type
@@ -49,10 +50,6 @@ pub enum Error {
     #[cfg(all(feature = "std", unix))]
     #[error(transparent)]
     UnpackingError(#[from] unpacking::Error),
-    #[allow(missing_docs)]
-    #[cfg(all(feature = "std", unix))]
-    #[error(transparent)]
-    IOError(#[from] std::io::Error),
 }
 
 /// A path internally represented with [`Bytes`].
@@ -95,7 +92,7 @@ impl From<std::path::PathBuf> for PathBytes {
     }
 }
 
-/// The contents of an object
+/// The contents of an object.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ObjectContent {
     #[allow(missing_docs)]
@@ -106,13 +103,12 @@ pub enum ObjectContent {
     Directory,
 }
 
-/// An individual archive object.
-///
-/// An archive is represented as a sequence of [`Event`]s.
-/// They must start with one [`Event::Index`], followed by [`Event::Object`]s.
+/// An individual file object.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Object {
+    #[allow(missing_docs)]
     pub location: PathBytes,
+    #[allow(missing_docs)]
     pub permissions: u32,
     #[allow(missing_docs)]
     pub content: ObjectContent,
@@ -125,4 +121,20 @@ impl Object {
     pub fn permissions(&self) -> std::fs::Permissions {
         std::os::unix::fs::PermissionsExt::from_mode(self.permissions)
     }
+}
+
+pub type Fingerprint = blake3::Hash;
+
+/// An individual archive event.
+///
+/// An archive is represented as a sequence of [`Event`]s.
+/// They must start with one [`Event::Header`], followed by [`Event::Object`]s, and then finally an [`Event::Footer`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// The header containing the magic bytes, and the version.
+    Header,
+    /// An object containing an individual file
+    Object(Object),
+    /// The footer containing the archive digest and signature
+    Footer(alloc::vec::Vec<(Fingerprint, Signature)>),
 }
