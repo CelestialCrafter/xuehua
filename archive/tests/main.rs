@@ -13,37 +13,45 @@ mod utils;
 
 #[cfg(feature = "std")]
 #[inline]
-fn pack_unpack_roundtrip(events: &Vec<Event>) {
+fn pack_unpack_roundtrip(events: &Vec<Event>, assert: bool) {
     let (path, _temp) = utils::make_temp();
 
     utils::unpack(&path, events);
-    assert_eq!(events, &utils::pack(&path));
+    if assert {
+        assert_eq!(events, &utils::pack(&path));
+    }
 }
 
 #[cfg(all(feature = "std", feature = "mmap"))]
 #[inline]
-fn mmap_pack_unpack_roundtrip(events: &Vec<Event>) {
+fn mmap_pack_unpack_roundtrip(events: &Vec<Event>, assert: bool) {
     let (path, _temp) = utils::make_temp();
 
     utils::unpack_mmap(&path, events);
-    assert_eq!(events, &utils::pack_mmap(&path));
+    if assert {
+        assert_eq!(events, &utils::pack_mmap(&path));
+    }
 }
 
 #[inline]
-fn enc_dec_roundtrip(events: &Vec<Event>) {
-    assert_eq!(events, &decode(&mut encode(events)));
+fn enc_dec_roundtrip(events: &Vec<Event>, assert: bool) {
+    let decoded = decode(&mut encode(events));
+    if assert {
+        assert_eq!(events, &decoded);
+    }
 }
 
 #[inline]
 fn arbitrary_trials() -> impl Iterator<Item = Trial> {
     fn trial<F>(name: &str, runner: F) -> Trial
     where
-        F: Fn(&Vec<Event>),
+        F: Fn(&Vec<Event>, bool),
         F: Send + Sync + 'static,
     {
         Trial::test(name, move || {
             arbtest(|u| {
-                runner(&ArbitraryArchive::arbitrary(u)?.events);
+                // arbitrary tests arent used for benchmarks
+                runner(&ArbitraryArchive::arbitrary(u)?.events, true);
                 Ok(())
             })
             .run();
@@ -65,17 +73,17 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
         [
             Trial::bench(
                 format!("enc-dec-{name}"),
-                benchmark(|| enc_dec_roundtrip(events), options),
+                benchmark(|| enc_dec_roundtrip(events, false), options),
             ),
             #[cfg(feature = "std")]
             Trial::bench(
                 format!("pack-unpack-{name}"),
-                benchmark(|| pack_unpack_roundtrip(events), options),
+                benchmark(|| pack_unpack_roundtrip(events, false), options),
             ),
             #[cfg(all(feature = "std", feature = "mmap"))]
             Trial::bench(
                 format!("mmap-pack-unpack-{name}"),
-                benchmark(|| mmap_pack_unpack_roundtrip(events), options),
+                benchmark(|| mmap_pack_unpack_roundtrip(events, false), options),
             ),
         ]
     };
