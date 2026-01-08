@@ -1,64 +1,84 @@
-use std::{io::Write, path::Path, sync::mpsc};
+use std::{
+    io::Write,
+    path::Path,
+    sync::{Arc, mpsc},
+};
 
 use crate::options::{
-    cli::{PackageAction, ProjectFormat},
-    get_opts,
+    base::Locations, cli::{PackageAction, ProjectFormat}, get_opts
 };
 
 use eyre::OptionExt;
-use log::{info, warn};
+use log::info;
 use petgraph::{dot, graph::NodeIndex};
 use tokio::task;
 use xh_engine::{
     backend::{Backend, lua::LuaBackend},
     builder::Builder,
     executor::{
-        bubblewrap::{BubblewrapExecutor, BubblewrapExecutorOptions},
+        bubblewrap::{BubblewrapExecutor, Options as BubblewrapOptions},
         http::HttpExecutor,
     },
     package::PackageName,
     planner::{Frozen, Planner},
-    scheduler::Scheduler,
+    scheduler::{Event, Scheduler},
+    store::{LocalStore, Store},
 };
 
 use crate::options::cli::{InspectAction, PackageFormat};
 
 pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), eyre::Error> {
-    let backend = LuaBackend::new()?;
+    let backend = Arc::new(LuaBackend::new()?);
     let mut planner = Planner::new();
     backend.plan(&mut planner, project)?;
-    let planner = planner.freeze(&backend)?;
+    let planner = planner.freeze(backend.as_ref())?;
 
     match action {
         PackageAction::Build { packages, .. } => {
             let nodes =
                 resolve_many(&planner, packages).ok_or_eyre("could not resolve all package ids")?;
 
-            // run builder
-            let build_root = tempfile::tempdir_in(&get_opts().base.locations.build)?;
-            info!("building to {:?}", build_root.path());
+            // let locations = &get_opts().base.locations;
+            let locations = Locations {
+                build: "build".into(),
+                store: "store".into(),
+                options: Default::default(),
+            };
 
-            let builder = Builder::new(build_root.path(), &backend)
-                .register(|ctx| {
-                    Ok(BubblewrapExecutor::new(
-                        ctx,
-                        BubblewrapExecutorOptions::default(),
-                    ))
-                })
-                .register(|ctx| Ok(HttpExecutor::new(ctx)));
-            let mut scheduler = Scheduler::new(&planner, &builder);
+            let mut store = LocalStore::new(locations.store.clone())?;
+            let builder: Arc<_> = Builder::new(locations.build.clone(), backend.clone())
+                .register(|ctx| Ok(BubblewrapExecutor::new(ctx, BubblewrapOptions::default())))
+                .register(|ctx| Ok(HttpExecutor::new(ctx)))
+                .into();
 
+            let mut scheduler = Scheduler::new(&planner, builder.as_ref());
+
+            let builder = builder.clone();
             let (results_tx, results_rx) = mpsc::channel();
             let handle = task::spawn(async move {
                 while let Ok(event) = results_rx.recv() {
-                    warn!("build result streamed: {:?}", event);
+                    info!("build result streamed: {:?}", event);
+
+                    if let Event::Finished {
+                        request,
+                        result: Ok(_),
+                    } = event
+                    {
+                        let archive = builder
+                            .fetch(&request.id)
+                            .ok()
+                            .flatten()
+                            .expect("could not fetch package output");
+
+                        store
+                            .register_artifact(archive)
+                            .await
+                            .expect("could not register artifact");
+                    }
                 }
             });
 
             scheduler.schedule(&nodes, results_tx).await;
-
-            // TODO: push builds into store and delete build dir
-            let _ = build_root.keep();
 
             handle.await?
         }

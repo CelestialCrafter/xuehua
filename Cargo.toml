@@ -10,7 +10,7 @@ jiff = { version = "0.2.15", default-features = false, features = ["alloc", "std
 thiserror = { version = "2.0.17", default-features = false }
 blake3 = { version = "1.8.2", default-features = false }
 fern = { version = "0.7.1", features = ["colored"] }
-xh-archive = { path = "archive" }
+xh-archive = { path = "archive", features = ["std", "mmap"] }
 tempfile = "3.23.0"
 tokio = "1.48.0"
 petgraph = "0.8.3"

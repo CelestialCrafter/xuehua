@@ -5,8 +5,8 @@ edition = "2024"
 
 [features]
 bubblewrap-executor = ["tokio/process"]
-http-executor = ["dep:ureq", "dep:tokio-util", "tokio/fs", "dep:http-serde"]
-local-store = ["dep:rusqlite"]
+http-executor = ["dep:ureq", "dep:http-serde"]
+local-store = ["dep:rusqlite", "tokio/fs", "tokio/io-util"]
 
 [dependencies]
 petgraph.workspace = true
@@ -16,12 +16,14 @@ serde.workspace = true
 jiff.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
-blake3 = { workspace = true, features = ["std"] }
+xh-archive.workspace = true
+ed25519-dalek.workspace = true
+bytes.workspace = true
 tokio = { workspace = true, features = ["sync"] }
+blake3 = { workspace = true, features = ["std"] }
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 rusqlite = { version = "0.37.0", features = ["jiff"], optional = true }
 ureq = { version = "3.1.2", optional = true }
-tokio-util = { version = "0.7.17", optional = true, features = ["io-util"] }
 http-serde = { version = "2.1.1", optional = true }
 smol_str = "0.3.4"
 derivative = "2.2.0"

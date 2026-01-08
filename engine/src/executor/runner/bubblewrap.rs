@@ -1,7 +1,6 @@
-use std::{process::Command, sync::Arc};
+use std::sync::Arc;
 
 use log::debug;
-use tokio::process::Command as TokioCommand;
 
 use crate::{
     builder::InitializeContext,
@@ -12,13 +11,13 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct BubblewrapExecutorOptions {
+pub struct Options {
     network: bool,
     add_capabilities: Vec<String>,
     drop_capabilities: Vec<String>,
 }
 
-impl Default for BubblewrapExecutorOptions {
+impl Default for Options {
     fn default() -> Self {
         Self {
             network: true,
@@ -47,11 +46,11 @@ impl Default for BubblewrapExecutorOptions {
 /// The runner is embedded within the library at compile-time, and is controlled via stdin/stdout.
 pub struct BubblewrapExecutor {
     ctx: Arc<InitializeContext>,
-    options: BubblewrapExecutorOptions,
+    options: Options,
 }
 
 impl BubblewrapExecutor {
-    pub fn new(ctx: Arc<InitializeContext>, options: BubblewrapExecutorOptions) -> Self {
+    pub fn new(ctx: Arc<InitializeContext>, options: Options) -> Self {
         Self { ctx, options }
     }
 }
@@ -70,7 +69,7 @@ impl Executor for BubblewrapExecutor {
                 .join(" "),
         );
 
-        let mut sandboxed = Command::new("bwrap");
+        let mut sandboxed = tokio::process::Command::new("bwrap");
 
         // essentials
         sandboxed
@@ -130,7 +129,7 @@ impl Executor for BubblewrapExecutor {
             .arg(request.program)
             .args(request.arguments);
 
-        let status = TokioCommand::from(sandboxed).spawn()?.wait().await?;
+        let status = sandboxed.spawn()?.wait().await?;
         status
             .success()
             .then_some(())

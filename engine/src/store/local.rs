@@ -1,31 +1,29 @@
-use std::{
-    fs,
-    ops::DerefMut,
-    path::{Path, PathBuf},
-};
+use std::path::PathBuf;
 
+use derivative::Derivative;
 use jiff::Timestamp;
 use log::debug;
 use rusqlite::{Connection, OptionalExtension, named_params};
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot};
+use xh_archive::Event;
 
 use crate::{
-    store::{ArtifactId, PackageName, Store, StoreArtifact, StorePackage},
+    planner::PackageId,
+    store::{ArtifactId, Store, StoreArtifact, StorePackage},
     utils::ensure_dir,
 };
-
-const DATABASE_NAME: &str = "store.db";
 
 struct Queries;
 
 impl Queries {
     const REGISTER_ARTIFACT: &'static str =
-        "INSERT INTO artifacts (artifact, created_at) VALUES (:artifact, :created_at)";
-    const REGISTER_PACKAGE: &'static str = "INSERT INTO packages (package, artifact, created_at) VALUES (:package, :artifact, :created_at)";
+        "INSERT INTO artifacts (id, created_at) VALUES (:id, :created_at)";
+    const REGISTER_PACKAGE: &'static str =
+        "INSERT INTO packages (id, artifact, created_at) VALUES (:id, :artifact, :created_at)";
     const GET_PACKAGE: &'static str =
-        "SELECT * FROM packages WHERE package IS :package ORDER BY created_at DESC";
-    const GET_ARTIFACT: &'static str = "SELECT 1 FROM artifacts WHERE artifact IS :artifact";
+        "SELECT 1 FROM packages WHERE id IS :id ORDER BY created_at DESC";
+    const GET_ARTIFACT: &'static str = "SELECT 1 FROM artifacts WHERE id IS :id";
 }
 
 #[derive(Error, Debug)]
@@ -34,148 +32,242 @@ pub enum Error {
     IOError(#[from] std::io::Error),
     #[error(transparent)]
     SQLiteError(#[from] rusqlite::Error),
+    #[error("could not communicate with task channel")]
+    TaskError,
 }
 
-/// A local store using SQLite as a database, and locally stored contents
-pub struct LocalStore<'a> {
-    root: &'a Path,
-    db: Mutex<Connection>,
+#[derive(Derivative)]
+#[derivative(Debug)]
+enum Task {
+    RegisterPackage {
+        package: PackageId,
+        artifact: ArtifactId,
+        channel: oneshot::Sender<Result<StorePackage, Error>>,
+    },
+    GetPackage {
+        package: PackageId,
+        channel: oneshot::Sender<Result<Option<StorePackage>, Error>>,
+    },
+    RegisterArtifact {
+        #[derivative(Debug="ignore")]
+        archive: Vec<Event>,
+        root: PathBuf,
+        channel: oneshot::Sender<Result<StoreArtifact, Error>>,
+    },
+    GetArtifact {
+        artifact: ArtifactId,
+        channel: oneshot::Sender<Result<Option<StoreArtifact>, Error>>,
+    },
+    DecodeArtifact {
+        artifact: ArtifactId,
+        channel: oneshot::Sender<Result<Option<Vec<Event>>, Error>>,
+    },
+    Shutdown,
 }
 
-impl<'a> LocalStore<'a> {
-    pub fn new(root: &'a Path) -> Result<Self, Error> {
-        let db = Connection::open(root.join(DATABASE_NAME))?;
+fn register_package(
+    db: &mut Connection,
+    package: PackageId,
+    artifact: ArtifactId,
+) -> Result<StorePackage, Error> {
+    db.execute(
+        Queries::REGISTER_PACKAGE,
+        named_params! {
+            ":id": package.as_bytes(),
+            ":artifact": artifact.as_bytes(),
+            ":created_at": Timestamp::now(),
+        },
+    )?;
+
+    db.prepare_cached(Queries::GET_PACKAGE)?
+        .query_one(named_params! { ":id": package.as_bytes() }, |row| {
+            Ok(StorePackage {
+                id: PackageId::from_bytes(row.get("id")?),
+                artifact: ArtifactId::from_bytes(row.get("artifact")?),
+                created_at: row.get("created_at")?,
+            })
+        })
+        .optional()
+        .transpose()
+        .ok_or(Error::SQLiteError(rusqlite::Error::QueryReturnedNoRows))?
+        .map_err(Into::into)
+}
+
+fn get_package(db: &mut Connection, package: PackageId) -> Result<Option<StorePackage>, Error> {
+    db.prepare_cached(Queries::GET_PACKAGE)?
+        .query_one(named_params! { ":id": package.as_bytes() }, |row| {
+            Ok(StorePackage {
+                id: PackageId::from_bytes(row.get("id")?),
+                artifact: ArtifactId::from_bytes(row.get("artifact")?),
+                created_at: row.get("created_at")?,
+            })
+        })
+        .optional()
+        .map_err(Into::into)
+}
+
+fn register_artifact(
+    db: &mut Connection,
+    root: PathBuf,
+    archive: Vec<Event>,
+) -> Result<StoreArtifact, Error> {
+    todo!()
+}
+
+fn get_artifact(db: &mut Connection, artifact: ArtifactId) -> Result<Option<StoreArtifact>, Error> {
+    db.query_one(
+        Queries::GET_ARTIFACT,
+        named_params! { ":artifact": artifact.as_bytes() },
+        |row| {
+            Ok(StoreArtifact {
+                id: ArtifactId::from_bytes(row.get("id")?),
+                created_at: row.get("created_at")?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn decode_artifact(artifact: ArtifactId) -> Result<Option<Vec<Event>>, Error> {
+    todo!()
+}
+
+fn processing_thread(mut db: Connection, mut rx: mpsc::Receiver<Task>) {
+    while let Some(task) = rx.blocking_recv() {
+        debug!("processing task: {task:?}");
+
+        match task {
+            Task::RegisterPackage {
+                package,
+                artifact,
+                channel,
+            } => {
+                let _ = channel.send(register_package(&mut db, package, artifact));
+            }
+            Task::GetPackage { package, channel } => {
+                let _ = channel.send(get_package(&mut db, package));
+            }
+            Task::RegisterArtifact {
+                archive,
+                root,
+                channel,
+            } => {
+                let _ = channel.send(register_artifact(&mut db, root, archive));
+            }
+            Task::GetArtifact { artifact, channel } => {
+                let _ = channel.send(get_artifact(&mut db, artifact));
+            }
+            Task::DecodeArtifact { artifact, channel } => {
+                let _ = channel.send(decode_artifact(artifact));
+            }
+            Task::Shutdown => break,
+        }
+    }
+}
+
+/// A local store using SQLite as a database, and locally stored artifacts
+pub struct LocalStore {
+    tx: mpsc::Sender<Task>,
+    root: PathBuf,
+}
+
+impl LocalStore {
+    pub fn new(root: PathBuf) -> Result<Self, Error> {
+        let root = root.join("artifacts");
+        ensure_dir(&root)?;
+
+        let db = Connection::open(root.join("store.db"))?;
         db.execute_batch(include_str!("local/initialize.sql"))?;
 
-        ensure_dir(&root.join("content"))?;
-        Ok(Self {
-            root,
-            db: db.into(),
+        let (tx, rx) = mpsc::channel(16);
+
+        std::thread::Builder::new()
+            .name("local-store-processor".to_string())
+            .spawn(move || processing_thread(db, rx))?;
+
+        Ok(Self { root, tx })
+    }
+
+    async fn queue<R>(
+        &self,
+        task: impl FnOnce(oneshot::Sender<Result<R, Error>>) -> Task,
+    ) -> Result<R, Error> {
+        let (req_tx, resp_rx) = oneshot::channel();
+
+        self.tx
+            .send(task(req_tx))
+            .await
+            .map_err(|_| Error::TaskError)?;
+
+        resp_rx.await.map_err(|_| Error::TaskError).flatten()
+    }
+}
+
+impl Store for LocalStore {
+    type Error = Error;
+
+    fn register_package(
+        &mut self,
+        package: &PackageId,
+        artifact: &ArtifactId,
+    ) -> impl Future<Output = Result<StorePackage, Self::Error>> {
+        self.queue(|channel| Task::RegisterPackage {
+            package: *package,
+            artifact: *artifact,
+            channel,
         })
     }
 
-    fn artifact_path(&self, hash: &ArtifactId) -> PathBuf {
-        self.root.join("content").join(hash.to_hex().as_str())
+    fn package(
+        &self,
+        package: &PackageId,
+    ) -> impl Future<Output = Result<Option<StorePackage>, Self::Error>> {
+        self.queue(|channel| Task::GetPackage {
+            package: *package,
+            channel,
+        })
     }
 
-    async fn package_inner(
-        connection: impl DerefMut<Target = Connection>,
-        id: &PackageName,
-    ) -> impl Iterator<Item = Result<StorePackage, Error>> {
-        todo!();
-        std::iter::empty()
-        // let error = |err| {
-        //     itertools::Either::Right(std::iter::once(Err::<StorePackage, _>(Error::SQLiteError(
-        //         err,
-        //     ))))
-        // };
+    fn register_artifact(
+        &mut self,
+        archive: Vec<Event>,
+    ) -> impl Future<Output = Result<StoreArtifact, Error>> {
+        self.queue(|channel| Task::RegisterArtifact {
+            archive,
+            channel,
+            root: self.root.clone(),
+        })
+    }
 
-        // let mut query = match connection.prepare_cached(Queries::GET_PACKAGE) {
-        //     Ok(v) => v,
-        //     Err(err) => return error(err),
-        // };
+    fn artifact(
+        &self,
+        artifact: &ArtifactId,
+    ) -> impl Future<Output = Result<Option<StoreArtifact>, Error>> {
+        self.queue(|channel| Task::GetArtifact {
+            artifact: *artifact,
+            channel,
+        })
+    }
 
-        // let iterator = match query.query_map(named_params! { ":package": id.to_string() }, |row| {
-        //     Ok(StorePackage {
-        //         package: PackageName::from_str(&row.get::<_, String>("package")?)
-        //             .map_err(FromSqlError::other)?,
-        //         artifact: ArtifactId::from_bytes(row.get("artifact")?),
-        //         created_at: row.get("created_at")?,
-        //     })
-        // }) {
-        //     Ok(v) => v,
-        //     Err(err) => return error(err),
-        // };
-
-        // let iterator = iterator
-        //     .map(|result| result.map_err(Into::into))
-        //     .collect::<Vec<_>>()
-        //     .into_iter();
-
-        // itertools::Either::Left(iterator)
+    fn download(
+        &self,
+        artifact: &ArtifactId,
+    ) -> impl Future<Output = Result<Option<Vec<Event>>, Self::Error>> {
+        self.queue(|channel| Task::DecodeArtifact {
+            artifact: *artifact,
+            channel,
+        })
     }
 }
 
-impl Store for LocalStore<'_> {
-    type Error = Error;
-
-    async fn register_package(
-        &mut self,
-        package: &PackageName,
-        artifact: &ArtifactId,
-    ) -> Result<StorePackage, Self::Error> {
-        debug!("registering package {} with artifact {}", package, artifact);
-
-        let connection = self.db.lock().await;
-        connection.execute(
-            Queries::REGISTER_PACKAGE,
-            named_params! {
-                ":package": package.to_string(),
-                ":artifact": artifact.as_bytes(),
-                ":created_at": Timestamp::now()
-            },
-        )?;
-
-        let package = Self::package_inner(connection, &package)
-            .await
-            .next()
-            .ok_or(Error::SQLiteError(rusqlite::Error::QueryReturnedNoRows))??;
-
-        Ok(package)
+impl Drop for LocalStore {
+    fn drop(&mut self) {
+        let _ = self.tx.send(Task::Shutdown);
     }
+}
 
-    async fn package(
-        &self,
-        package: &PackageName,
-    ) -> impl Iterator<Item = Result<StorePackage, Self::Error>> {
-        Self::package_inner(self.db.lock().await, package)
-            .await
-            .collect::<Vec<_>>()
-            .into_iter()
-    }
-
-    async fn register_artifact(&mut self, content: &Path) -> Result<StoreArtifact, Error> {
-        let hash: blake3::Hash = todo!("hash archive");
-        debug!("registering artifact {:?} as {}", content, hash);
-
-        match self.db.lock().await.execute(
-            Queries::REGISTER_ARTIFACT,
-            named_params! {
-                ":artifact": hash.as_bytes(),
-                ":created_at": Timestamp::now()
-            },
-        ) {
-            Ok(_) => fs::rename(content, self.artifact_path(&hash))?,
-            Err(rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error {
-                    code: rusqlite::ffi::ErrorCode::ConstraintViolation,
-                    ..
-                },
-                ..,
-            )) => (),
-            Err(err) => return Err(err.into()),
-        };
-
-        self.artifact(&hash)
-            .await?
-            .ok_or(rusqlite::Error::QueryReturnedNoRows.into())
-    }
-
-    async fn artifact(&self, artifact: &ArtifactId) -> Result<Option<StoreArtifact>, Error> {
-        self.db
-            .lock()
-            .await
-            .query_one(
-                Queries::GET_ARTIFACT,
-                named_params! { ":artifact": artifact.as_bytes() },
-                |row| {
-                    Ok(StoreArtifact {
-                        artifact: ArtifactId::from_bytes(row.get("artifact")?),
-                        created_at: row.get("created_at")?,
-                    })
-                },
-            )
-            .optional()
-            .map_err(Into::into)
-    }
+fn artifact_path(mut root: PathBuf, artifact: &ArtifactId) -> PathBuf {
+    root.push(artifact.to_hex().as_str());
+    root
 }

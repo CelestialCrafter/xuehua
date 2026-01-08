@@ -1,5 +1,4 @@
 use std::{
-    io::copy,
     path::{Component, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -9,8 +8,6 @@ use log::debug;
 use mlua::{ExternalResult, FromLua, Table, UserData};
 use serde::Deserialize;
 use thiserror::Error;
-use tokio::{fs::OpenOptions, task::spawn_blocking};
-use tokio_util::io::SyncIoBridge;
 use ureq::{
     Agent,
     config::Config,
@@ -79,7 +76,6 @@ pub enum Error {
     IOError(#[from] std::io::Error),
     #[error(transparent)]
     RequestError(#[from] ureq::Error),
-
     #[error(transparent)]
     JoinError(#[from] tokio::task::JoinError),
     #[error("paths referencing parent directories are not allowed")]
@@ -93,6 +89,7 @@ impl Executor for HttpExecutor {
 
     async fn execute(&mut self, request: Self::Request) -> Result<(), Self::Error> {
         debug!("making request to {}", request.url);
+
         // TODO: support parent refs
         // crude check to ensure no directory traversals are possible
         if request
@@ -104,16 +101,11 @@ impl Executor for HttpExecutor {
             return Err(Error::InvalidPath);
         }
 
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .open(self.ctx.environment.join(request.path))
-            .await?;
-        let mut sync_file = SyncIoBridge::new(file);
-
-        // TODO: switch to hyper if this becomes an issue
+        let path = self.ctx.environment.join(request.path);
         let agent = self.agent.clone();
-        spawn_blocking(move || {
+
+        tokio::task::spawn_blocking(move || {
+            let mut file = std::fs::File::create(path)?;
             let request = Request::builder()
                 .method(request.method)
                 .uri(request.url)
@@ -121,9 +113,9 @@ impl Executor for HttpExecutor {
                 .map_err(ureq::Error::from)?;
 
             let response = agent.run(request)?;
-            copy(&mut response.into_body().into_reader(), &mut sync_file)?;
+            std::io::copy(&mut response.into_body().as_reader(), &mut file)?;
 
-            Ok::<_, Error>(())
+            Ok(())
         })
         .await?
     }

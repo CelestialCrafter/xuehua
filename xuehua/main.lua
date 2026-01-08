@@ -22,10 +22,7 @@ ns:scope("alpine", function()
 
       local unpack = {
         program = "/busybox",
-        arguments = { "sh", "-c", [[
-          /busybox mkdir output
-          /busybox tar -xf minirootfs.tar.gz -C output
-        ]] }
+        arguments = { "sh", "-c", "/busybox tar -xf minirootfs.tar.gz -C output" }
       }
 
       table.insert(requests, {

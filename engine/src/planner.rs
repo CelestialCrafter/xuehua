@@ -84,6 +84,8 @@ impl<B: Backend> Config<B> {
 
 pub type Plan<B> = Acyclic<DiGraph<Package<B>, LinkTime>>;
 
+pub type PackageId = blake3::Hash;
+
 #[derive(Debug, Derivative)]
 #[derivative(Default(bound = ""))]
 pub struct Unfrozen<B: Backend> {
@@ -303,7 +305,7 @@ impl<'a, B: Backend> Planner<Frozen<'a, B>> {
     }
 
     // TODO: cache identity
-    pub fn identity(&self, node: NodeIndex) -> Option<Result<blake3::Hash, B::Error>> {
+    pub fn identity(&self, node: NodeIndex) -> Option<Result<PackageId, B::Error>> {
         let mut hasher = blake3::Hasher::new();
         let mut hash_pkg = |pkg: &Package<B>| {
             hasher.update(pkg.name.identifier.as_bytes());
