@@ -1,9 +1,8 @@
-use std::path::Path;
-
 use thiserror::Error;
+use xh_archive::Event;
 
 use crate::{
-    package::PackageName,
+    planner::PackageId,
     store::{ArtifactId, Store, StoreArtifact, StorePackage},
 };
 
@@ -19,25 +18,28 @@ impl Store for EmptyStore {
 
     async fn register_package(
         &mut self,
-        _package: &PackageName,
+        _package: &PackageId,
         _artifact: &ArtifactId,
     ) -> Result<StorePackage, Self::Error> {
         Err(CannotRegister)
     }
 
-    async fn package(
-        &self,
-
-        _package: &PackageName,
-    ) -> impl Iterator<Item = Result<StorePackage, Self::Error>> {
-        std::iter::empty()
+    async fn package(&self, _package: &PackageId) -> Result<Option<StorePackage>, Self::Error> {
+        Ok(None)
     }
 
-    async fn register_artifact(&mut self, _content: &Path) -> Result<StoreArtifact, Self::Error> {
+    async fn register_artifact(
+        &mut self,
+        _archive: Vec<Event>,
+    ) -> Result<StoreArtifact, Self::Error> {
         Err(CannotRegister)
     }
 
     async fn artifact(&self, _artifact: &ArtifactId) -> Result<Option<StoreArtifact>, Self::Error> {
+        Ok(None)
+    }
+
+    async fn download(&self, _artifact: &ArtifactId) -> Result<Option<Vec<Event>>, Self::Error> {
         Ok(None)
     }
 }

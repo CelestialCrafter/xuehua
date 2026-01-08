@@ -1,19 +1,20 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fs::create_dir, path::PathBuf, sync::Arc};
 
 use futures_util::{FutureExt, future::BoxFuture};
 use petgraph::graph::NodeIndex;
 use smol_str::SmolStr;
 use thiserror::Error;
+use xh_archive::{
+    Event,
+    packing::{Error as PackingError, Packer},
+};
 
 use crate::{
     backend::Backend,
     executor::Executor,
     package::DispatchRequest,
     planner::{Frozen, Planner},
-    utils::BoxDynError,
+    utils::{BoxDynError, ensure_dir},
 };
 
 #[derive(Error, Debug)]
@@ -22,6 +23,8 @@ pub enum Error<B: Backend> {
     UnregisteredExecutor(SmolStr),
     #[error(transparent)]
     IOError(#[from] std::io::Error),
+    #[error(transparent)]
+    PackingError(#[from] PackingError),
     #[error(transparent)]
     BackendError(B::Error),
     #[error(transparent)]
@@ -128,14 +131,14 @@ where
     }
 }
 
-pub struct Builder<'a, B, T> {
-    pub root: &'a Path,
-    pub backend: &'a B,
+pub struct Builder<B, T> {
+    pub root: PathBuf,
+    pub backend: Arc<B>,
     pub executors: T,
 }
 
-impl<'a, B: Backend> Builder<'a, B, ExecutorPair<()>> {
-    pub fn new(root: &'a Path, backend: &'a B) -> Self {
+impl<B: Backend> Builder<B, ExecutorPair<()>> {
+    pub fn new(root: PathBuf, backend: Arc<B>) -> Self {
         Self {
             root,
             backend,
@@ -144,13 +147,13 @@ impl<'a, B: Backend> Builder<'a, B, ExecutorPair<()>> {
     }
 }
 
-impl<'a, B, T> Builder<'a, B, T>
+impl<B, T> Builder<B, T>
 where
     B: Backend,
     T: Initialize,
     T::Output: Dispatch<B>,
 {
-    pub fn register<E, F>(self, init: F) -> Builder<'a, B, ExecutorPair<(F, T)>>
+    pub fn register<E, F>(self, init: F) -> Builder<B, ExecutorPair<(F, T)>>
     where
         E: Executor,
         F: Fn(Arc<InitializeContext>) -> Result<E, BoxDynError>,
@@ -162,13 +165,30 @@ where
         }
     }
 
+    fn environment_path(&self, id: &BuildId) -> PathBuf {
+        self.root.join(id.to_string())
+    }
+
+    pub fn fetch(&self, build: &BuildId) -> Result<Option<Vec<Event>>, Error<B>> {
+        let output = self.environment_path(build).join("output");
+        if !std::fs::exists(&output)? {
+            return Ok(None);
+        }
+
+        let mut packer = Packer::new(output);
+        let archive = unsafe { packer.pack_mmap_iter() }.collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Some(archive))
+    }
+
     pub async fn build(
         &self,
         planner: &Planner<Frozen<'_, B>>,
         request: BuildRequest,
     ) -> Result<(), Error<B>> {
-        let environment = self.root.join(request.id.to_string());
-        std::fs::create_dir(&environment)?;
+        let environment = self.environment_path(&request.id);
+        create_dir(&environment)?;
+        create_dir(environment.join("output"))?;
 
         // TODO: link closure
         // planner.closure(request.target);
@@ -179,7 +199,7 @@ where
 
         for request in &planner.graph()[request.target].requests {
             executors
-                .dispatch(self.backend, request)
+                .dispatch(&self.backend, request)
                 .ok_or_else(|| Error::UnregisteredExecutor(request.executor.clone()))?
                 .await?;
         }

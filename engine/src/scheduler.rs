@@ -35,7 +35,7 @@ pub enum Event<B: Backend> {
 pub struct Scheduler<'a, B: Backend, E> {
     state: PassthruHashMap<NodeIndex, PackageState>,
     planner: &'a Planner<Frozen<'a, B>>,
-    builder: &'a Builder<'a, B, E>,
+    builder: &'a Builder<B, E>,
 }
 
 impl<'a, B, E> Scheduler<'a, B, E>
@@ -44,7 +44,7 @@ where
     E: Initialize,
     E::Output: Dispatch<B>
 {
-    pub fn new(planner: &'a Planner<Frozen<B>>, builder: &'a Builder<'a, B, E>) -> Self {
+    pub fn new(planner: &'a Planner<Frozen<B>>, builder: &'a Builder<B, E>) -> Self {
         let plan = planner.graph();
         let state = plan
             .node_indices()
@@ -69,10 +69,9 @@ where
         let mut futures = FuturesUnordered::new();
         let plan = self.planner.graph();
 
-        let build = async |node| {
-            // TODO: populate build id
+        let build = async |node: NodeIndex| {
             let request = BuildRequest {
-                id: 0,
+                id: node.index() as u64,
                 target: node,
             };
 
