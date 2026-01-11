@@ -1,0 +1,6 @@
+[book]
+authors = []
+language = "en"
+
+[build]
+create-missing = false
