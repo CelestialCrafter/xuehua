@@ -71,7 +71,7 @@ where
 
         let build = async |node: NodeIndex| {
             let request = BuildRequest {
-                id: node.index() as u64,
+                id: fastrand::u64(..),
                 target: node,
             };
 
