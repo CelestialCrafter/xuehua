@@ -3,15 +3,14 @@
 use alloc::borrow::Cow;
 use core::num::TryFromIntError;
 
-use ed25519_dalek::Signature;
 use blake3::Hash;
 use bytes::{Buf, Bytes, TryGetError};
+use ed25519_dalek::Signature;
 use thiserror::Error;
 
 use crate::{
     Event, Object, ObjectContent,
-    hashing::Hasher,
-    utils::{MAGIC, Marker, VERSION, debug},
+    utils::{MAGIC, Marker, VERSION, debug, hash_object},
 };
 
 /// Error type for decoding
@@ -42,9 +41,6 @@ pub enum Error {
     #[allow(missing_docs)]
     #[error(transparent)]
     ConversionError(#[from] TryFromIntError),
-    #[allow(missing_docs)]
-    #[error(transparent)]
-    Ed25519Error(#[from] ed25519_dalek::ed25519::Error),
 }
 
 /// Decoder for archive events
@@ -94,6 +90,12 @@ impl Decoder {
             let mut attempt = buffer.clone();
             Some(self.process(&mut attempt).inspect(|_| *buffer = attempt))
         }
+    }
+
+    /// Gets the current digest of the archive.
+    #[inline]
+    pub fn digest(&self) -> blake3::Hash {
+        self.hasher.finalize()
     }
 
     fn process(&mut self, buffer: &mut Bytes) -> Result<Event, Error> {
@@ -188,7 +190,7 @@ impl Decoder {
 
         debug!("decoded object: {object:?}");
 
-        let hash = Hasher::hash(&object);
+        let hash = hash_object(&object);
         verify_hash(buffer, hash)?;
         self.hasher.update(hash.as_bytes());
 

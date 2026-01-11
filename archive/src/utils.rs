@@ -1,4 +1,4 @@
-use bytes::BufMut;
+use bytes::{BufMut, Bytes};
 
 pub const MAGIC: &str = "xuehua-archive";
 pub const VERSION: u16 = 1;
@@ -25,6 +25,31 @@ impl Marker {
             Marker::Signature => b"sg",
         });
     }
+}
+
+pub fn hash_object(object: &Object) -> blake3::Hash {
+    fn process_lenp(hasher: &mut blake3::Hasher, bytes: &Bytes) {
+        hasher
+            .update(&(bytes.len() as u64).to_le_bytes())
+            .update(bytes);
+    }
+
+    let mut hasher = blake3::Hasher::new();
+
+    process_lenp(&mut hasher, &object.location.inner);
+    hasher.update(&object.permissions.to_le_bytes());
+    let (variant, content) = match &object.content {
+        ObjectContent::File { data } => (0, data),
+        ObjectContent::Symlink { target } => (1, &target.inner),
+        ObjectContent::Directory => (2, &Default::default()),
+    };
+
+    hasher.update(&[variant]);
+    process_lenp(&mut hasher, content);
+
+    let hash = hasher.finalize();
+    log::debug!("object hashed to {hash}");
+    hash
 }
 
 #[cfg(feature = "log")]
@@ -62,3 +87,5 @@ mod log {
 }
 
 pub(crate) use log::*;
+
+use crate::{Object, ObjectContent};
