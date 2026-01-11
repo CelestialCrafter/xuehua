@@ -72,24 +72,14 @@ impl Decoder {
         &mut self,
         buffer: &mut Bytes,
     ) -> impl Iterator<Item = Result<Event, Error>> {
-        core::iter::from_fn(|| self.decode(buffer))
-    }
-
-    /// Decodes [`Bytes`] into a single [`Event`].
-    ///
-    /// # Errors
-    ///
-    /// If this function errors, both the internal
-    /// state and `buffer` are unmodified,
-    /// and this function may be retried.
-    #[inline]
-    pub fn decode(&mut self, buffer: &mut Bytes) -> Option<Result<Event, Error>> {
-        if buffer.is_empty() {
-            None
-        } else {
-            let mut attempt = buffer.clone();
-            Some(self.process(&mut attempt).inspect(|_| *buffer = attempt))
-        }
+        core::iter::from_fn(|| {
+            if buffer.is_empty() {
+                None
+            } else {
+                let mut attempt = buffer.clone();
+                Some(self.process(&mut attempt).inspect(|_| *buffer = attempt))
+            }
+        })
     }
 
     /// Gets the current digest of the archive.
