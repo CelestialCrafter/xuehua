@@ -8,8 +8,12 @@ name = "xh"
 path = "src/main.rs"
 
 [dependencies]
-xh-engine = { path = "../engine", features = ["bubblewrap-executor", "http-executor", "local-store"] }
+xh-engine.workspace = true
 xh-archive.workspace = true
+xh-executor-http = { path = "../executor-http" }
+xh-executor-bubblewrap = { path = "../executor-bubblewrap" }
+xh-store-local = { path = "../store-local" }
+xh-backend-lua = { path = "../backend-lua" }
 eyre = { version = "0.6.12", default-features = false, features = ["track-caller"] }
 bpaf = { version = "0.9.20", features = ["bright-color"] }
 dirs = "6.0.0"
@@ -18,7 +22,6 @@ fern.workspace = true
 memmap2.workspace = true
 log.workspace = true
 petgraph.workspace = true
-mlua.workspace = true
 jiff.workspace = true
 tempfile.workspace = true
 bytes.workspace = true

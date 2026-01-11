@@ -14,7 +14,7 @@ use crate::{
     executor::Executor,
     package::DispatchRequest,
     planner::{Frozen, Planner},
-    utils::{BoxDynError, ensure_dir},
+    utils::BoxDynError,
 };
 
 #[derive(Error, Debug)]

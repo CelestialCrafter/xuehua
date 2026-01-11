@@ -11,7 +11,7 @@ use petgraph::graph::{DefaultIx, NodeIndex};
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
-use crate::{
+use xh_engine::{
     backend::Backend,
     package::{Dependency, DispatchRequest, LinkTime, Metadata, Package, PackageName},
     planner::{Config, NamespaceTracker, Planner, Unfrozen},

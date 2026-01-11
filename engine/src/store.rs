@@ -1,10 +1,6 @@
 pub mod empty;
-#[cfg(feature = "local-store")]
-pub mod local;
 
 pub use empty::EmptyStore;
-#[cfg(feature = "local-store")]
-pub use local::LocalStore;
 
 use jiff::Timestamp;
 use xh_archive::Event;

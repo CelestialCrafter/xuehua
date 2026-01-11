@@ -1,59 +1,60 @@
 use std::{
+    fmt,
+    marker::PhantomData,
     path::{Component, PathBuf},
     str::FromStr,
     sync::Arc,
 };
 
 use log::debug;
-use mlua::{ExternalResult, FromLua, Table, UserData};
-use serde::Deserialize;
+use serde::{
+    Deserialize, Deserializer,
+    de::{Error as DeError, Visitor},
+};
 use thiserror::Error;
 use ureq::{
     Agent,
     config::Config,
     http::{Method, Request, Uri},
 };
-
-use crate::{builder::InitializeContext, executor::Executor};
+use xh_engine::{builder::InitializeContext, executor::Executor};
 
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+
+// stolen from https://users.rust-lang.org/t/serde-fromstr-on-a-field/99457/5
+fn deserialize_from_str<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    T: FromStr,
+    T::Err: fmt::Display,
+    D: Deserializer<'de>,
+{
+    struct Helper<S>(PhantomData<S>);
+    impl<'de, S> Visitor<'de> for Helper<S>
+    where
+        S: FromStr,
+        S::Err: fmt::Display,
+    {
+        type Value = S;
+
+        fn expecting(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(fmt, "a string")
+        }
+
+        fn visit_str<E: DeError>(self, value: &str) -> Result<Self::Value, E> {
+            value.parse::<Self::Value>().map_err(DeError::custom)
+        }
+    }
+
+    deserializer.deserialize_str(Helper(PhantomData))
+}
 
 #[derive(Debug, Deserialize)]
 pub struct HttpRequest {
     pub path: PathBuf,
-    #[serde(with = "http_serde::uri")]
+    #[serde(deserialize_with = "deserialize_from_str")]
     pub url: Uri,
-    #[serde(with = "http_serde::method")]
+    #[serde(deserialize_with = "deserialize_from_str")]
     pub method: Method,
-}
-
-impl UserData for HttpRequest {
-    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
-        fields.add_field_method_get("path", |_, this| Ok(this.path.clone()));
-        fields.add_field_method_get("url", |_, this| Ok(this.url.to_string()));
-        fields.add_field_method_get("method", |_, this| Ok(this.method.to_string()));
-    }
-}
-
-impl FromLua for HttpRequest {
-    fn from_lua(value: mlua::Value, lua: &mlua::Lua) -> mlua::Result<Self> {
-        let table = Table::from_lua(value, lua)?;
-
-        let url = Uri::from_str(&table.get::<String>("url")?).into_lua_err()?;
-        let method = Method::from_str(&table.get::<String>("method")?).into_lua_err()?;
-        // ensure the method is:
-        // 1. a valid method, and not an accidental extension
-        // 2. a read-only method, to prevent misuse
-        if !method.is_safe() {
-            return Err(mlua::Error::external("unsafe request method"));
-        }
-
-        Ok(Self {
-            path: table.get("path")?,
-            url,
-            method,
-        })
-    }
 }
 
 pub struct HttpExecutor {

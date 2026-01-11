@@ -1,0 +1,16 @@
+[package]
+name = "xh-store-local"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xh-engine.workspace = true
+xh-archive.workspace = true
+bytes.workspace = true
+jiff.workspace = true
+thiserror.workspace = true
+log.workspace = true
+derivative.workspace = true
+memmap2.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+rusqlite = { version = "0.37.0", features = ["jiff"] }

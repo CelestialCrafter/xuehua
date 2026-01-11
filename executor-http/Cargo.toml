@@ -1,0 +1,12 @@
+[package]
+name = "xh-executor-http"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ureq = "3.1.2"
+log.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+xh-engine.workspace = true
+tokio = { workspace = true, features = ["rt"] }

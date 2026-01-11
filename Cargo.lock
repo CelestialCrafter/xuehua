@@ -571,16 +571,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "http-serde"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f056c8559e3757392c8d091e796416e4649d8e49e88b8d76df6c002f05027fd"
-dependencies = [
- "http",
- "serde",
-]
-
-[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1583,6 +1573,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "xh-backend-lua"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "mlua",
+ "petgraph",
+ "serde",
+ "thiserror",
+ "xh-engine",
+]
+
+[[package]]
 name = "xh-cli"
 version = "0.1.0"
 dependencies = [
@@ -1595,12 +1597,15 @@ dependencies = [
  "jiff",
  "log",
  "memmap2",
- "mlua",
  "petgraph",
  "tempfile",
  "tokio",
  "xh-archive",
+ "xh-backend-lua",
  "xh-engine",
+ "xh-executor-bubblewrap",
+ "xh-executor-http",
+ "xh-store-local",
 ]
 
 [[package]]
@@ -1613,20 +1618,54 @@ dependencies = [
  "ed25519-dalek",
  "fastrand",
  "futures-util",
- "http-serde",
  "jiff",
  "log",
  "memmap2",
- "mlua",
  "petgraph",
- "rusqlite",
  "serde",
  "serde_json",
  "smol_str",
  "thiserror",
+ "xh-archive",
+]
+
+[[package]]
+name = "xh-executor-bubblewrap"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "thiserror",
+ "tokio",
+ "xh-engine",
+]
+
+[[package]]
+name = "xh-executor-http"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "thiserror",
  "tokio",
  "ureq",
+ "xh-engine",
+]
+
+[[package]]
+name = "xh-store-local"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "derivative",
+ "jiff",
+ "log",
+ "memmap2",
+ "rusqlite",
+ "thiserror",
+ "tokio",
  "xh-archive",
+ "xh-engine",
 ]
 
 [[package]]

@@ -1,5 +1,3 @@
-pub mod lua;
-
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     fmt::{Debug, Display},
