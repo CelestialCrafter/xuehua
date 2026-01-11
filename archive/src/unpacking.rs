@@ -60,10 +60,14 @@ impl<'a> Unpacker<'a> {
     ) -> Result<(), Error> {
         iterator
             .into_iter()
-            .try_for_each(|event| self.unpack(event))
+            .try_for_each(|event| self.process(event.borrow(), write_file_default))
     }
 
     /// Unpacks an iterator of [`Event`]s onto the filesystem.
+    ///
+    /// # Safety
+    ///
+    /// See [`Mmap`] for why this function is unsafe.
     #[cfg(feature = "mmap")]
     #[inline]
     pub unsafe fn unpack_mmap_iter(
@@ -72,7 +76,7 @@ impl<'a> Unpacker<'a> {
     ) -> Result<(), Error> {
         iterator
             .into_iter()
-            .try_for_each(|event| self.process(event.borrow(), write_file_mmap))
+            .try_for_each(|event| unsafe { self.unpack_mmap(event.borrow()) })
     }
 
     /// Unpacks a single [`Event`] onto the filesystem.
@@ -82,6 +86,10 @@ impl<'a> Unpacker<'a> {
     }
 
     /// Unpacks a single [`Event`] onto the filesystem.
+    ///
+    /// # Safety
+    ///
+    /// See [`Mmap`] for why this function is unsafe.
     #[cfg(feature = "mmap")]
     #[inline]
     pub unsafe fn unpack_mmap(&mut self, event: impl Borrow<Event>) -> Result<(), Error> {
