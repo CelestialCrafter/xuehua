@@ -121,6 +121,7 @@ impl Object {
     }
 }
 
+/// The fingerprint of a public key
 pub type Fingerprint = blake3::Hash;
 
 /// An individual archive event.
