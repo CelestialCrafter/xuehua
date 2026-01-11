@@ -22,12 +22,6 @@ pub struct StoreArtifact {
     pub created_at: Timestamp,
 }
 
-// TODO: add examples for store implementation and usage
-/// Content-addressed append-only repository for packages and artifacts
-///
-/// # Implementation Guidelines
-/// - Once something is registered into the store, its contents **must** never change.
-/// - Stores **must** ensure that [`Self::register_package`] and [`Self::register_artifact`] are idempotent.
 pub trait Store {
     type Error: std::error::Error + Send + Sync;
 
