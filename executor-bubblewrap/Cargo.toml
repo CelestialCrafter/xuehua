@@ -1,0 +1,11 @@
+[package]
+name = "xh-executor-bubblewrap"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xh-engine.workspace = true
+log.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+tokio = { workspace = true, features = ["process"] }

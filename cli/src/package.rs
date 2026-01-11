@@ -5,25 +5,26 @@ use std::{
 };
 
 use crate::options::{
-    base::Locations, cli::{PackageAction, ProjectFormat}, get_opts
+    cli::{PackageAction, ProjectFormat},
+    get_opts,
 };
 
 use eyre::OptionExt;
 use log::info;
 use petgraph::{dot, graph::NodeIndex};
 use tokio::task;
+use xh_backend_lua::LuaBackend;
 use xh_engine::{
-    backend::{Backend, lua::LuaBackend},
+    backend::Backend,
     builder::Builder,
-    executor::{
-        bubblewrap::{BubblewrapExecutor, Options as BubblewrapOptions},
-        http::HttpExecutor,
-    },
     package::PackageName,
     planner::{Frozen, Planner},
     scheduler::{Event, Scheduler},
-    store::{LocalStore, Store},
+    store::Store,
 };
+use xh_executor_bubblewrap::{BubblewrapExecutor, Options as BubblewrapOptions};
+use xh_executor_http::HttpExecutor;
+use xh_store_local::LocalStore;
 
 use crate::options::cli::{InspectAction, PackageFormat};
 
@@ -35,15 +36,9 @@ pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), eyre::
 
     match action {
         PackageAction::Build { packages, .. } => {
+            let locations = &get_opts().base.locations;
             let nodes =
                 resolve_many(&planner, packages).ok_or_eyre("could not resolve all package ids")?;
-
-            // let locations = &get_opts().base.locations;
-            let locations = Locations {
-                build: "build".into(),
-                store: "store".into(),
-                options: Default::default(),
-            };
 
             let mut store = LocalStore::new(locations.store.clone())?;
             let builder: Arc<_> = Builder::new(locations.build.clone(), backend.clone())

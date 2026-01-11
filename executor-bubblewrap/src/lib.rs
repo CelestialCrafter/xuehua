@@ -1,14 +1,30 @@
 use std::sync::Arc;
 
 use log::debug;
+use serde::Deserialize;
+use thiserror::Error;
 
-use crate::{
-    builder::InitializeContext,
-    executor::{
-        Executor,
-        runner::{CommandRequest, Error},
-    },
-};
+use xh_engine::{builder::InitializeContext, executor::Executor};
+
+#[derive(Error, Debug)]
+pub enum Error {
+    // TODO: improve this error
+    #[error("command exited with code {0:?}")]
+    CommandFailed(std::process::ExitStatus),
+    #[error(transparent)]
+    IOError(#[from] std::io::Error),
+    #[error(transparent)]
+    Utf8Error(#[from] std::string::FromUtf8Error),
+}
+
+#[derive(Default, Debug, Deserialize)]
+#[serde(default)]
+pub struct CommandRequest {
+    program: String,
+    working_dir: Option<String>,
+    arguments: Vec<String>,
+    environment: Vec<(String, String)>,
+}
 
 #[derive(Debug)]
 pub struct Options {

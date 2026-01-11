@@ -13,7 +13,7 @@ use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use xh_archive::{Event, decoding::{Decoder, Error as DecodingError}};
 
-use crate::{
+use xh_engine::{
     planner::PackageId,
     store::{ArtifactId, Store, StoreArtifact, StorePackage},
     utils::{ensure_dir, random_hash},
@@ -234,7 +234,7 @@ impl LocalStore {
         ensure_dir(&root)?;
 
         let db = Connection::open(root.join("store.db"))?;
-        db.execute_batch(include_str!("local/initialize.sql"))?;
+        db.execute_batch(include_str!("initialize.sql"))?;
 
         let (tx, rx) = mpsc::channel(16);
 

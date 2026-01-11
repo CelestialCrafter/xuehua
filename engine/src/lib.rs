@@ -7,4 +7,4 @@ pub mod planner;
 pub mod scheduler;
 pub mod store;
 pub mod builder;
-pub(crate) mod utils;
+pub mod utils;
