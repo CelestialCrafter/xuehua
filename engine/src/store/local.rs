@@ -1,17 +1,22 @@
-use std::path::PathBuf;
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+    path::PathBuf,
+};
 
+use bytes::Bytes;
 use derivative::Derivative;
 use jiff::Timestamp;
 use log::debug;
 use rusqlite::{Connection, OptionalExtension, named_params};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
-use xh_archive::Event;
+use xh_archive::{Event, decoding::{Decoder, Error as DecodingError}};
 
 use crate::{
     planner::PackageId,
     store::{ArtifactId, Store, StoreArtifact, StorePackage},
-    utils::ensure_dir,
+    utils::{ensure_dir, random_hash},
 };
 
 struct Queries;
@@ -32,6 +37,8 @@ pub enum Error {
     IOError(#[from] std::io::Error),
     #[error(transparent)]
     SQLiteError(#[from] rusqlite::Error),
+    #[error(transparent)]
+    DecodingError(#[from] DecodingError),
     #[error("could not communicate with task channel")]
     TaskError,
 }
@@ -42,24 +49,30 @@ enum Task {
     RegisterPackage {
         package: PackageId,
         artifact: ArtifactId,
+        #[derivative(Debug = "ignore")]
         channel: oneshot::Sender<Result<StorePackage, Error>>,
     },
     GetPackage {
         package: PackageId,
+        #[derivative(Debug = "ignore")]
         channel: oneshot::Sender<Result<Option<StorePackage>, Error>>,
     },
     RegisterArtifact {
-        #[derivative(Debug="ignore")]
+        #[derivative(Debug = "ignore")]
         archive: Vec<Event>,
         root: PathBuf,
+        #[derivative(Debug = "ignore")]
         channel: oneshot::Sender<Result<StoreArtifact, Error>>,
     },
     GetArtifact {
         artifact: ArtifactId,
+        #[derivative(Debug = "ignore")]
         channel: oneshot::Sender<Result<Option<StoreArtifact>, Error>>,
     },
     DecodeArtifact {
         artifact: ArtifactId,
+        root: PathBuf,
+        #[derivative(Debug = "ignore")]
         channel: oneshot::Sender<Result<Option<Vec<Event>>, Error>>,
     },
     Shutdown,
@@ -106,18 +119,46 @@ fn get_package(db: &mut Connection, package: PackageId) -> Result<Option<StorePa
         .map_err(Into::into)
 }
 
+// TODO: reimplement this in a way that cant break in 200 different ways
 fn register_artifact(
     db: &mut Connection,
     root: PathBuf,
     archive: Vec<Event>,
 ) -> Result<StoreArtifact, Error> {
-    todo!()
+    let temp = artifact_path(root.clone(), &random_hash());
+    let file = File::create_new(&temp)?;
+
+    let mut file = BufWriter::new(file);
+    let mut buffer = bytes::BytesMut::with_capacity(1024 * 4);
+    let mut encoder = xh_archive::encoding::Encoder::new();
+
+    for event in &archive {
+        buffer.clear();
+        encoder.encode(&mut buffer, event);
+        file.write_all(&buffer)?;
+    }
+
+    let digest = encoder.digest();
+    std::fs::rename(temp, artifact_path(root, &digest))?;
+
+    db.execute(
+        Queries::REGISTER_ARTIFACT,
+        named_params! {
+            ":id": digest.as_bytes(),
+            ":created_at": Timestamp::now()
+        },
+    )?;
+
+    Ok(StoreArtifact {
+        id: digest,
+        created_at: Timestamp::now(),
+    })
 }
 
 fn get_artifact(db: &mut Connection, artifact: ArtifactId) -> Result<Option<StoreArtifact>, Error> {
     db.query_one(
         Queries::GET_ARTIFACT,
-        named_params! { ":artifact": artifact.as_bytes() },
+        named_params! { ":id": artifact.as_bytes() },
         |row| {
             Ok(StoreArtifact {
                 id: ArtifactId::from_bytes(row.get("id")?),
@@ -129,8 +170,19 @@ fn get_artifact(db: &mut Connection, artifact: ArtifactId) -> Result<Option<Stor
     .map_err(Into::into)
 }
 
-fn decode_artifact(artifact: ArtifactId) -> Result<Option<Vec<Event>>, Error> {
-    todo!()
+fn decode_artifact(root: PathBuf, artifact: ArtifactId) -> Result<Option<Vec<Event>>, Error> {
+    let file = match File::open(artifact_path(root, &artifact)) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+
+    let mut mmap = Bytes::from_owner(unsafe { memmap2::Mmap::map(&file)? });
+    let archive = Decoder::new()
+        .decode_iter(&mut mmap)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(Some(archive))
 }
 
 fn processing_thread(mut db: Connection, mut rx: mpsc::Receiver<Task>) {
@@ -158,8 +210,12 @@ fn processing_thread(mut db: Connection, mut rx: mpsc::Receiver<Task>) {
             Task::GetArtifact { artifact, channel } => {
                 let _ = channel.send(get_artifact(&mut db, artifact));
             }
-            Task::DecodeArtifact { artifact, channel } => {
-                let _ = channel.send(decode_artifact(artifact));
+            Task::DecodeArtifact {
+                artifact,
+                root,
+                channel,
+            } => {
+                let _ = channel.send(decode_artifact(root, artifact));
             }
             Task::Shutdown => break,
         }
@@ -256,6 +312,7 @@ impl Store for LocalStore {
     ) -> impl Future<Output = Result<Option<Vec<Event>>, Self::Error>> {
         self.queue(|channel| Task::DecodeArtifact {
             artifact: *artifact,
+            root: self.root.clone(),
             channel,
         })
     }
@@ -268,6 +325,6 @@ impl Drop for LocalStore {
 }
 
 fn artifact_path(mut root: PathBuf, artifact: &ArtifactId) -> PathBuf {
-    root.push(artifact.to_hex().as_str());
+    root.push(artifact.to_string());
     root
 }
