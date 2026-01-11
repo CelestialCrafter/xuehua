@@ -7,8 +7,7 @@ use ed25519_dalek::Signature;
 
 use crate::{
     Event, Fingerprint, Object, ObjectContent,
-    hashing::Hasher,
-    utils::{MAGIC, Marker, VERSION, debug},
+    utils::{MAGIC, Marker, VERSION, debug, hash_object},
 };
 
 /// Encoder for archive events
@@ -48,6 +47,12 @@ impl Encoder {
         }
     }
 
+    /// Gets the current digest of the archive.
+    #[inline]
+    pub fn digest(&self) -> blake3::Hash {
+        self.hasher.finalize()
+    }
+
     fn process_header(&mut self, buffer: &mut impl BufMut) {
         debug!("encoding header");
         self.hasher.reset();
@@ -78,7 +83,7 @@ impl Encoder {
             }
         };
 
-        let hash = Hasher::hash(object);
+        let hash = hash_object(object);
         let hash = hash.as_bytes();
         self.hasher.update(hash);
         buffer.put_slice(hash);

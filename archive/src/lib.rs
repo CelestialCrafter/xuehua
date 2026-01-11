@@ -18,8 +18,6 @@
 #[doc = include_str!("../specification.md")]
 pub(crate) mod utils;
 
-pub mod hashing;
-
 pub mod decoding;
 pub mod encoding;
 

@@ -186,7 +186,7 @@ pub enum ArchiveAction {
     Pack { path: PathBuf },
     Unpack { path: PathBuf },
     Decode,
-    Hash { each_object: bool },
+    Hash,
 }
 
 impl ArchiveAction {
@@ -221,16 +221,10 @@ impl ArchiveAction {
             .descr("Decode an archive into events")
             .command("decode");
 
-        let hash = {
-            let each_object = long("each-object")
-                .help("Output the hash of each object individually")
-                .switch();
-
-            construct!(Self::Hash { each_object })
-                .to_options()
-                .descr("Hash an archive")
-                .command("hash")
-        };
+        let hash = pure(Self::Hash)
+            .to_options()
+            .descr("Hash an archive")
+            .command("hash");
 
         construct!([pack, unpack, decode, hash])
     }

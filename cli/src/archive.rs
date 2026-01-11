@@ -6,10 +6,7 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use log::warn;
 use tempfile::tempfile;
-use xh_archive::{
-    Event, decoding::Decoder, encoding::Encoder, hashing::Hasher, packing::Packer,
-    unpacking::Unpacker,
-};
+use xh_archive::{decoding::Decoder, encoding::Encoder, packing::Packer, unpacking::Unpacker};
 
 use crate::options::cli::ArchiveAction;
 
@@ -54,29 +51,14 @@ pub fn handle(action: &ArchiveAction) -> Result<(), eyre::Error> {
                 writeln!(stdout, "{:#?}", event?)?;
             }
         }
-        ArchiveAction::Hash { each_object: each_event } => {
+        ArchiveAction::Hash => {
             let mut decoder = Decoder::new();
             let mut mmap = mmapped_stdin()?;
 
-            let hashes = decoder
+            decoder
                 .decode_iter(&mut mmap)
-                .filter_map(|result| match result {
-                    Ok(event) => match event {
-                        Event::Object(object) => Some(Ok(Hasher::hash(object))),
-                        _ => None,
-                    },
-                    Err(err) => Some(Err(err)),
-                });
-
-            if *each_event {
-                let mut stdout = stdout().lock();
-                for hash in hashes {
-                    writeln!(stdout, "{}", hash?)?;
-                }
-            } else {
-                let hash = Hasher::aggregate(hashes.collect::<Result<Vec<_>, _>>()?);
-                println!("{hash}");
-            }
+                .try_for_each(|result| result.map(|_| ()))?;
+            println!("{}", decoder.digest());
         }
     }
 
