@@ -14,7 +14,7 @@ xh-archive.workspace = true
 ed25519-dalek.workspace = true
 bytes.workspace = true
 memmap2.workspace = true
-derivative.workspace = true
+educe.workspace = true
 blake3 = { workspace = true, features = ["std"] }
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
 smol_str = "0.3.4"

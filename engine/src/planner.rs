@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use derivative::Derivative;
+use educe::Educe;
 use log::trace;
 use petgraph::{
     acyclic::Acyclic,
@@ -55,12 +55,12 @@ pub struct DependencyClosure {
     buildtime: PassthruHashSet<NodeIndex>,
 }
 
-#[derive(Derivative)]
-#[derivative(Debug, Clone(bound = ""))]
+#[derive(Educe)]
+#[educe(Debug, Clone(bound()))]
 pub struct Config<B: Backend> {
     name: PackageName,
     pub current: B::Value,
-    #[derivative(Debug = "ignore")]
+    #[educe(Debug(ignore))]
     pub apply: Arc<dyn Fn(B::Value) -> Result<Package<B>, B::Error> + Send + Sync>,
 }
 
@@ -86,8 +86,8 @@ pub type Plan<B> = Acyclic<DiGraph<Package<B>, LinkTime>>;
 
 pub type PackageId = blake3::Hash;
 
-#[derive(Debug, Derivative)]
-#[derivative(Default(bound = ""))]
+#[derive(Debug, Educe)]
+#[educe(Default(bound()))]
 pub struct Unfrozen<B: Backend> {
     configs: Vec<Config<B>>,
     namespace: NamespaceTracker,

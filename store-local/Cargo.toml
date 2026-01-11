@@ -10,7 +10,7 @@ bytes.workspace = true
 jiff.workspace = true
 thiserror.workspace = true
 log.workspace = true
-derivative.workspace = true
+educe.workspace = true
 memmap2.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 rusqlite = { version = "0.37.0", features = ["jiff"] }

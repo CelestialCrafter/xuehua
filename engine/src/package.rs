@@ -2,7 +2,7 @@ pub mod manifest;
 
 use std::{fmt, str::FromStr};
 
-use derivative::Derivative;
+use educe::Educe;
 use petgraph::graph::NodeIndex;
 use smol_str::SmolStr;
 use thiserror::Error;
@@ -79,8 +79,8 @@ impl FromStr for PackageName {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Metadata;
 
-#[derive(Debug, Hash, PartialEq, Derivative)]
-#[derivative(Clone(bound = ""))]
+#[derive(Debug, Hash, PartialEq, Educe)]
+#[educe(Clone(bound()))]
 pub struct DispatchRequest<B: Backend> {
     pub executor: SmolStr,
     pub payload: B::Value,
@@ -92,8 +92,8 @@ pub struct Dependency {
     pub time: LinkTime,
 }
 
-#[derive(Debug, PartialEq, Derivative)]
-#[derivative(Clone(bound = ""))]
+#[derive(Debug, PartialEq, Educe)]
+#[educe(Clone(bound()))]
 pub struct Package<B: Backend> {
     pub name: PackageName,
     pub metadata: Metadata,
