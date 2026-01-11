@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use derivative::Derivative;
+use educe::Educe;
 use jiff::Timestamp;
 use log::debug;
 use rusqlite::{Connection, OptionalExtension, named_params};
@@ -43,36 +43,36 @@ pub enum Error {
     TaskError,
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 enum Task {
     RegisterPackage {
         package: PackageId,
         artifact: ArtifactId,
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         channel: oneshot::Sender<Result<StorePackage, Error>>,
     },
     GetPackage {
         package: PackageId,
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         channel: oneshot::Sender<Result<Option<StorePackage>, Error>>,
     },
     RegisterArtifact {
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         archive: Vec<Event>,
         root: PathBuf,
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         channel: oneshot::Sender<Result<StoreArtifact, Error>>,
     },
     GetArtifact {
         artifact: ArtifactId,
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         channel: oneshot::Sender<Result<Option<StoreArtifact>, Error>>,
     },
     DecodeArtifact {
         artifact: ArtifactId,
         root: PathBuf,
-        #[derivative(Debug = "ignore")]
+        #[educe(Debug(ignore))]
         channel: oneshot::Sender<Result<Option<Vec<Event>>, Error>>,
     },
     Shutdown,
