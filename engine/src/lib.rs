@@ -1,5 +1,3 @@
-//! This crate contains the engine for the Xuehua build system
-
 pub mod backend;
 pub mod executor;
 pub mod package;

@@ -29,9 +29,6 @@ pub enum Event<B: Backend> {
     },
 }
 
-/// Package build scheduler
-///
-/// The builder traverses through a [`Planner`]'s instructions and queues builds of the packages needed to build the target package
 pub struct Scheduler<'a, B: Backend, E> {
     state: PassthruHashMap<NodeIndex, PackageState>,
     planner: &'a Planner<Frozen<'a, B>>,

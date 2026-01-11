@@ -99,56 +99,6 @@ pub struct Frozen<'a, B: Backend> {
     backend: &'a B,
 }
 
-/// Package dependency graph generator
-///
-/// The planner executes the lua source code then generates a DAG of packages and their dependencies.
-///
-/// # Examples
-///
-/// ```lua
-/// local plan = require("xuehua.planner")
-/// local utils = require("xuehua.utils")
-///
-/// local package_2 = plan.package {
-///   id = "package-2",
-///   dependencies = {},
-///   metadata = {},
-///   build = function() end
-/// }
-///
-/// plan.package {
-///   id = "package-1",
-///   dependencies = { utils.runtime(package_2) },
-///   metadata = {},
-///   build = function() end
-/// }
-/// ```
-///
-/// ```rust
-/// use std::path::Path;
-/// use petgraph::dot::Dot;
-/// use mlua::Lua;
-/// use xh_engine::{utils, planner::Planner};
-///
-/// let lua = Lua::new();
-/// utils::inject(&lua)?;
-///
-/// let mut planner = Planner::new();
-/// planner.run(&lua, Path::new("plan.lua"))?;
-///
-/// let simplified_plan = planner
-///     .plan()
-///     .map(|_, weight| &weight.id, |_, weight| weight);
-///
-/// println!("{:?}", Dot::new(&simplified_plan));
-/// // digraph {
-/// //     0 [ label = "\"package-2\"" ]
-/// //     1 [ label = "\"package-1\"" ]
-/// //     1 -> 0 [ label = "Runtime" ]
-/// // }
-///
-/// # Ok::<_, xh_engine::planner::Error>(())
-/// ```
 #[derive(Debug)]
 pub struct Planner<State> {
     state: State,
