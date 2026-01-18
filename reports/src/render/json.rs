@@ -1,3 +1,5 @@
+//! [JSON](https://json.org/) rendering for [`Report`]s.
+
 use alloc::{string::ToString, vec::Vec};
 use core::fmt;
 
@@ -20,8 +22,12 @@ impl fmt::Display for JsonDisplayer<'_> {
     }
 }
 
+/// [JSON](https://json.org/) renderer for [`Report`]s.
+///
+/// [`Report`]s can be rendered via the [`Report`] trait.
 #[derive(Default)]
 pub struct JsonRenderer {
+    /// Whether or not the output is pretty-printed.
     pub pretty: bool,
 }
 
@@ -51,12 +57,7 @@ fn report_to_value<E>(report: &Report<E>) -> Value {
         })
         .collect();
 
-    let children: Vec<_> = report
-        .inner
-        .children
-        .iter()
-        .map(report_to_value)
-        .collect();
+    let children: Vec<_> = report.inner.children.iter().map(report_to_value).collect();
 
     json!({
         "error": report.error().to_string(),

@@ -1,5 +1,6 @@
-// TODO: #![warn(missing_docs)]
+//! Error handling crate designed for use with Xuehua
 
+#![warn(missing_docs)]
 #![no_std]
 
 extern crate alloc;
@@ -25,16 +26,32 @@ use thiserror::Error;
 
 use crate::render::{Render, SimpleRenderer};
 
+/// Utility alias for [`Error`]
 pub type BoxDynError = Box<dyn Error + Send + Sync + 'static>;
 
+/// A single piece of information inside of a [`Report`].
+///
+/// `Frame`s can be created via the [`Self::suggestion`], [`Self::context`], or [`Self::attachment`] methods.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Frame {
+    /// A collection of keys and values.
+    ///
+    /// This can be used to attach additional data such as:
+    /// ids, timestamps, commands, etc.
     Context(Vec<(SmolStr, String)>),
+    /// A long-form piece of information.
+    ///
+    /// This can be used to attach more detailed data such as:
+    /// stderr, build logs, files, etc.
     Attachment(String),
+    /// An inline suggestion
+    ///
+    /// This can be used to suggest actions to users to resolve issues.
     Suggestion(SmolStr),
 }
 
 impl Frame {
+    /// Helper function to create [`Self::Context`]s.
     pub fn context<K, V, I>(context: I) -> Self
     where
         K: Into<SmolStr>,
@@ -48,10 +65,12 @@ impl Frame {
         Self::Context(context)
     }
 
+    /// Helper function to create [`Self::Suggestion`]s.
     pub fn suggestion(suggestion: impl Into<SmolStr>) -> Frame {
         Self::Suggestion(suggestion.into())
     }
 
+    /// Helper function to create [`Self::Attachment`]s.
     pub fn attachment(attachment: impl fmt::Display) -> Frame {
         Self::Attachment(attachment.to_string())
     }
@@ -67,6 +86,10 @@ struct ReportInner {
     level: Level,
 }
 
+/// A tree of errors.
+///
+/// Each report contains [`Frame`]s, child [`Report`]s,
+/// and additional information about the error.
 #[derive(Educe)]
 #[educe(Debug(bound()))]
 pub struct Report<E> {
@@ -79,6 +102,7 @@ pub struct Report<E> {
 struct SourceError(String);
 
 impl<E> Report<E> {
+    /// Constructs a new [`Report`] from an error.
     #[track_caller]
     pub fn new(error: E) -> Self
     where
@@ -121,18 +145,24 @@ impl<E> Report<E> {
         }
     }
 
+    /// Retrieves the error associated with this `Report`.
     pub fn error(&self) -> &(dyn Error + Send + Sync) {
         &*self.inner.error
     }
 
+    /// Retrieves the type name that the `Report` was created with.
+    ///
+    /// This method has the same semantics as [`core::any::type_name`].
     pub fn type_name(&self) -> &'static str {
         self.inner.type_name
     }
 
+    /// Retrieves the location this `Report` was created at.
     pub fn location(&self) -> &'static Location<'static> {
         self.inner.location
     }
 
+    /// Erases the `Report`s type to ().
     pub fn erased(self) -> Report<()> {
         Report {
             inner: self.inner,
@@ -140,45 +170,45 @@ impl<E> Report<E> {
         }
     }
 
+    /// Sets the log level associated with the `Report`.
     pub fn with_level(mut self, level: Level) -> Self {
         self.inner.level = level;
         self
     }
 
+    /// Retrieves the log level associated with this `Report`.
     pub fn level(&self) -> Level {
         self.inner.level
     }
 
+    /// Retrieves the [`Frame`]s associated with this `Report`..
     pub fn frames(&self) -> &[Frame] {
         &self.inner.frames
     }
 
-    pub fn push_frame(&mut self, frame: Frame) {
-        self.inner.frames.push(frame);
-    }
-
+    /// Appends a [`Frame`] to this `Report`.
     pub fn with_frame(mut self, frame: Frame) -> Self {
-        self.push_frame(frame);
+        self.inner.frames.push(frame);
         self
     }
 
+    /// Appends an iterator of [`Frame`]s to this `Report`.
     pub fn with_frames(self, frames: impl IntoIterator<Item = Frame>) -> Self {
         frames.into_iter().fold(self, |acc, x| acc.with_frame(x))
     }
 
+    /// Retrieves the children associated with this `Report`.
     pub fn children(&self) -> &[Report<()>] {
         &self.inner.children
     }
 
-    pub fn push_child<F>(&mut self, child: Report<F>) {
-        self.inner.children.push(child.erased());
-    }
-
+    /// Appends a `Report` as a child to this `Report`.
     pub fn with_child<F>(mut self, child: Report<F>) -> Self {
-        self.push_child(child);
+        self.inner.children.push(child.erased());
         self
     }
 
+    /// Appends an iterator of `Report`s as children of this `Report`.
     pub fn with_children<F>(self, children: impl IntoIterator<Item = Report<F>>) -> Self {
         children.into_iter().fold(self, |acc, x| acc.with_child(x))
     }
@@ -197,13 +227,24 @@ impl<E> Error for Report<E> {
     }
 }
 
+/// Helper trait for [`Result<T, Report<E>>`]
 pub trait ResultReportExt<T> {
+    /// Erases the inner [`Report`]s type to ().
+    ///
+    /// See [`Report::erased`] for more information.
     fn erased(self) -> Result<T, Report<()>>;
 
-    fn wrap<F>(self, error: impl FnOnce() -> Report<F>) -> Result<T, Report<F>>;
+    /// Append a `Report` as a parent of the inner `Report`
+    fn wrap<F>(self, report: impl FnOnce() -> Report<F>) -> Result<T, Report<F>>;
 
+    /// Sets the log level associated with the inner [`Report`].
+    ///
+    /// See [`Report::with_level`] for more information.
     fn with_level(self, level: Level) -> Self;
 
+    /// Appends a [`Frame`] to the inner [`Report`].
+    ///
+    /// See [`Report::with_frame`] for more information.
     fn with_frame(self, frame: impl FnOnce() -> Frame) -> Self;
 }
 
@@ -225,13 +266,27 @@ impl<T, E> ResultReportExt<T> for Result<T, Report<E>> {
     }
 }
 
+/// Trait for converting [`Error`]s into enriched [`Report`]s
+///
+/// This can be implemented via `#[derive(IntoReport)]`.
+/// See [`xh_reports_derive::IntoReport`] for more information.
 pub trait IntoReport: Sized + Error + Send + Sync + 'static {
+    /// Converts this Error into a [`Report`].
+    ///
+    /// Consumers should prefer `into_report` over [`Report::new`]
+    /// to generate pre-enriched reports.
+    ///
+    /// Implementations should modify the [`Report`]
+    /// (by adding frames, children, etc) as they see fit.
     #[track_caller]
     fn into_report(self) -> Report<Self> {
         Report::new(self)
     }
 }
 
+/// Helper struct for converting [`log::Record`]s into [`Report`]s.
+///
+/// This error can be converted into a [`Report`] via the [`IntoReport`] trait.
 #[derive(Error, Debug)]
 #[error("{message}")]
 pub struct LogError {
@@ -246,6 +301,7 @@ pub struct LogError {
 struct LogSubError(String);
 
 impl LogError {
+    /// Constructs a new [`LogError`]
     pub fn new(record: &log::Record) -> Self {
         #[derive(Default)]
         struct FrameVisitor {

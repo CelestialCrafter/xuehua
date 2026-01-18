@@ -1,3 +1,5 @@
+//! Pretty rendering for [`Report`]s.
+
 use core::fmt;
 
 use log::Level;
@@ -5,6 +7,7 @@ use owo_colors::{OwoColorize, Style};
 
 use crate::{Frame, Report, render::Render};
 
+/// Styles for each log level.
 pub struct LogStyles {
     error: Style,
     warn: Style,
@@ -20,11 +23,12 @@ impl Default for LogStyles {
             warn: Style::new().yellow(),
             info: Style::new().blue(),
             debug: Style::new().magenta(),
-            trace: Style::new().white()
+            trace: Style::new().white(),
         }
     }
 }
 
+/// Styles for each component.
 pub struct Styles {
     guides: Style,
     context: Style,
@@ -51,6 +55,7 @@ impl Default for Styles {
     }
 }
 
+/// Display characters for each guide.
 pub struct Guides {
     line: &'static str,
     empty: &'static str,
@@ -69,6 +74,7 @@ impl Default for Guides {
     }
 }
 
+/// Display characters for each log header.
 pub struct LogHeaders {
     error: &'static str,
     warn: &'static str,
@@ -89,6 +95,7 @@ impl Default for LogHeaders {
     }
 }
 
+/// Display characters for each header.
 pub struct Headers {
     context: &'static str,
     suggestion: &'static str,
@@ -111,6 +118,7 @@ impl Default for Headers {
     }
 }
 
+/// Configuration for [`PrettyRenderer`].
 #[derive(Default)]
 pub struct Config {
     guides: Guides,
@@ -118,8 +126,12 @@ pub struct Config {
     styles: Styles,
 }
 
+/// Pretty renderer for [`Report`]s.
+///
+/// [`Report`]s can be rendered via the [`Report`] trait.
 #[derive(Default)]
 pub struct PrettyRenderer {
+    /// Configuration for this renderer
     pub config: Config,
 }
 
