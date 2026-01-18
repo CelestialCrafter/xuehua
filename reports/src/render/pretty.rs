@@ -1,31 +1,52 @@
 use core::fmt;
 
+use log::Level;
 use owo_colors::{OwoColorize, Style};
 
 use crate::{Frame, Report, render::Render};
 
+pub struct LogStyles {
+    error: Style,
+    warn: Style,
+    info: Style,
+    debug: Style,
+    trace: Style,
+}
+
+impl Default for LogStyles {
+    fn default() -> Self {
+        Self {
+            error: Style::new().red(),
+            warn: Style::new().yellow(),
+            info: Style::new().blue(),
+            debug: Style::new().magenta(),
+            trace: Style::new().white()
+        }
+    }
+}
+
 pub struct Styles {
     guides: Style,
-    error: Style,
     context: Style,
     suggestion: Style,
     attachment: Style,
     location: Style,
     type_name: Style,
     distracting: Style,
+    log: LogStyles,
 }
 
 impl Default for Styles {
     fn default() -> Self {
         Self {
             guides: Style::new(),
-            error: Style::new().red(),
-            context: Style::new().cyan(),
             suggestion: Style::new().green(),
-            attachment: Style::new().yellow(),
-            location: Style::new().purple(),
-            type_name: Style::new().blue(),
-            distracting: Style::new(),
+            context: Style::new().cyan().dimmed(),
+            attachment: Style::new().yellow().dimmed(),
+            location: Style::new().purple().dimmed(),
+            type_name: Style::new().blue().dimmed(),
+            distracting: Style::new().dimmed(),
+            log: LogStyles::default(),
         }
     }
 }
@@ -48,24 +69,44 @@ impl Default for Guides {
     }
 }
 
-pub struct Headers {
+pub struct LogHeaders {
     error: &'static str,
+    warn: &'static str,
+    info: &'static str,
+    debug: &'static str,
+    trace: &'static str,
+}
+
+impl Default for LogHeaders {
+    fn default() -> Self {
+        Self {
+            error: "(error)",
+            warn: "(warn)",
+            info: "(info)",
+            debug: "(debug)",
+            trace: "(trace)",
+        }
+    }
+}
+
+pub struct Headers {
     context: &'static str,
     suggestion: &'static str,
     attachment: &'static str,
     type_name: &'static str,
     location: &'static str,
+    log: LogHeaders,
 }
 
 impl Default for Headers {
     fn default() -> Self {
         Self {
-            error: "(error)",
             context: "(context)",
             suggestion: "(suggestion)",
             attachment: "(attachment)",
             type_name: "(type)",
             location: "(location)",
+            log: LogHeaders::default(),
         }
     }
 }
@@ -117,7 +158,13 @@ impl<E> PrettyDisplayer<'_, E> {
         writeln!(
             fmt,
             "{prefix}{} {}",
-            headers.error.style(styles.error),
+            match report.level() {
+                Level::Error => headers.log.error.style(styles.log.error),
+                Level::Warn => headers.log.warn.style(styles.log.warn),
+                Level::Info => headers.log.info.style(styles.log.info),
+                Level::Debug => headers.log.debug.style(styles.log.debug),
+                Level::Trace => headers.log.trace.style(styles.log.trace),
+            },
             report.error().bold()
         )?;
 
@@ -129,8 +176,8 @@ impl<E> PrettyDisplayer<'_, E> {
         };
 
         let sub_prefix = format_args!("{}{}", next_prefix, guide.style(styles.guides));
-        self.render_extra(fmt, report, sub_prefix)?;
         self.render_frames(fmt, report.frames(), sub_prefix)?;
+        self.render_extra(fmt, report, sub_prefix)?;
 
         self.render_children(fmt, children, next_prefix)
     }

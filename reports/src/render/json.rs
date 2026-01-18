@@ -61,6 +61,7 @@ fn report_to_value<E>(report: &Report<E>) -> Value {
     json!({
         "error": report.error().to_string(),
         "location": report.location().to_string(),
+        "level": report.level().to_string(),
         "type": report.type_name(),
         "frames": frames,
         "children": children

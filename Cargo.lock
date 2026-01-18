@@ -1763,6 +1763,7 @@ name = "xh-reports"
 version = "0.1.0"
 dependencies = [
  "educe",
+ "log",
  "owo-colors",
  "serde_json",
  "smallvec",

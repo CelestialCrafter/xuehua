@@ -1,22 +1,27 @@
-// TODO: create panic hook
 // TODO: #![warn(missing_docs)]
 
 #![no_std]
 
 extern crate alloc;
 
-use thiserror::Error;
 pub use xh_reports_derive::IntoReport;
 pub mod render;
+
 use alloc::{
     boxed::Box,
     string::{String, ToString},
     vec::Vec,
 };
-use smol_str::SmolStr;
 use core::{any::type_name, error::Error, fmt, marker::PhantomData, panic::Location};
+
 use educe::Educe;
+use log::{
+    Level,
+    kv::{Key, Value, VisitSource},
+};
 use smallvec::SmallVec;
+use smol_str::{SmolStr, ToSmolStr};
+use thiserror::Error;
 
 use crate::render::{Render, SimpleRenderer};
 
@@ -59,6 +64,7 @@ struct ReportInner {
     error: BoxDynError,
     type_name: &'static str,
     location: &'static Location<'static>,
+    level: Level,
 }
 
 #[derive(Educe)]
@@ -68,6 +74,10 @@ pub struct Report<E> {
     _marker: PhantomData<E>,
 }
 
+#[derive(Error, Debug)]
+#[error("{0}")]
+struct SourceError(String);
+
 impl<E> Report<E> {
     #[track_caller]
     pub fn new(error: E) -> Self
@@ -75,10 +85,6 @@ impl<E> Report<E> {
         E: Error + 'static,
         E: Send + Sync,
     {
-        #[derive(Error, Debug)]
-        #[error("{0}")]
-        struct SourceError(String);
-
         fn walk(
             error: &dyn Error,
             location: &'static Location<'static>,
@@ -92,6 +98,7 @@ impl<E> Report<E> {
                         frames: Default::default(),
                         type_name: type_name::<SourceError>(),
                         location,
+                        level: Level::Error,
                     }),
                     _marker: PhantomData,
                 });
@@ -99,6 +106,7 @@ impl<E> Report<E> {
 
             reports
         }
+
         let location = Location::caller();
         Self {
             inner: Box::new(ReportInner {
@@ -107,6 +115,7 @@ impl<E> Report<E> {
                 frames: Default::default(),
                 type_name: type_name::<E>(),
                 location,
+                level: Level::Error,
             }),
             _marker: PhantomData,
         }
@@ -129,6 +138,15 @@ impl<E> Report<E> {
             inner: self.inner,
             _marker: PhantomData,
         }
+    }
+
+    pub fn with_level(mut self, level: Level) -> Self {
+        self.inner.level = level;
+        self
+    }
+
+    pub fn level(&self) -> Level {
+        self.inner.level
     }
 
     pub fn frames(&self) -> &[Frame] {
@@ -184,6 +202,8 @@ pub trait ResultReportExt<T> {
 
     fn wrap<F>(self, error: impl FnOnce() -> Report<F>) -> Result<T, Report<F>>;
 
+    fn with_level(self, level: Level) -> Self;
+
     fn with_frame(self, frame: impl FnOnce() -> Frame) -> Self;
 }
 
@@ -196,6 +216,10 @@ impl<T, E> ResultReportExt<T> for Result<T, Report<E>> {
         self.map_err(|report| error().with_child(report))
     }
 
+    fn with_level(self, level: Level) -> Self {
+        self.map_err(|report| report.with_level(level))
+    }
+
     fn with_frame(self, frame: impl FnOnce() -> Frame) -> Self {
         self.map_err(|report| report.with_frame(frame()))
     }
@@ -205,5 +229,73 @@ pub trait IntoReport: Sized + Error + Send + Sync + 'static {
     #[track_caller]
     fn into_report(self) -> Report<Self> {
         Report::new(self)
+    }
+}
+
+#[derive(Error, Debug)]
+#[error("{message}")]
+pub struct LogError {
+    message: String,
+    level: Level,
+    children: SmallVec<[Report<()>; 0]>,
+    frames: SmallVec<[Frame; 0]>,
+}
+
+#[derive(Error, Debug)]
+#[error("{0}")]
+struct LogSubError(String);
+
+impl LogError {
+    pub fn new(record: &log::Record) -> Self {
+        #[derive(Default)]
+        struct FrameVisitor {
+            frames: SmallVec<[Frame; 0]>,
+            children: SmallVec<[Report<()>; 0]>,
+            context: SmallVec<[(SmolStr, String); 2]>,
+        }
+
+        impl VisitSource<'_> for FrameVisitor {
+            fn visit_pair(&mut self, key: Key<'_>, value: Value<'_>) -> Result<(), log::kv::Error> {
+                match key.as_str() {
+                    "suggestion" => self.frames.push(Frame::Suggestion(value.to_smolstr())),
+                    "attachment" => self.frames.push(Frame::Attachment(value.to_string())),
+                    "error" => {
+                        let report = Report::new(LogSubError(value.to_string())).erased();
+                        self.children.push(report)
+                    }
+                    key => self.context.push((key.into(), value.to_string())),
+                }
+
+                Ok(())
+            }
+        }
+
+        let mut visitor = FrameVisitor::default();
+        record.key_values().visit(&mut visitor).unwrap();
+
+        visitor
+            .context
+            .push(("target".into(), record.target().to_string()));
+        visitor.frames.push(Frame::context(visitor.context));
+
+        Self {
+            message: record.args().to_string(),
+            level: record.level(),
+            frames: visitor.frames,
+            children: visitor.children,
+        }
+    }
+}
+
+impl IntoReport for LogError {
+    fn into_report(mut self) -> Report<Self> {
+        let frames = core::mem::take(&mut self.frames);
+        let level = self.level;
+        let children = core::mem::take(&mut self.children);
+
+        Report::new(self)
+            .with_frames(frames)
+            .with_level(level)
+            .with_children(children)
     }
 }
