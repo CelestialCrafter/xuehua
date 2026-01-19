@@ -7,6 +7,7 @@ use crate::{Report, render::Render};
 /// Default renderer for [`Report`]s.
 ///
 /// [`Report`]s can be rendered via the [`Report`] trait.
+#[derive(Debug, Copy, Clone)]
 pub struct SimpleRenderer;
 
 impl Render for SimpleRenderer {

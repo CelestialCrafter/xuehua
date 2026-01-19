@@ -7,6 +7,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{Frame, Report, render::Render};
 
+#[derive(Debug, Copy, Clone)]
 struct JsonDisplayer<'a> {
     inner: &'a JsonRenderer,
     value: Value,
@@ -25,7 +26,7 @@ impl fmt::Display for JsonDisplayer<'_> {
 /// [JSON](https://json.org/) renderer for [`Report`]s.
 ///
 /// [`Report`]s can be rendered via the [`Report`] trait.
-#[derive(Default)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct JsonRenderer {
     /// Whether or not the output is pretty-printed.
     pub pretty: bool,

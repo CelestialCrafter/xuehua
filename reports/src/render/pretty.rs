@@ -8,6 +8,7 @@ use owo_colors::{OwoColorize, Style};
 use crate::{Frame, Report, render::Render};
 
 /// Styles for each log level.
+#[derive(Debug, Copy, Clone)]
 pub struct LogStyles {
     error: Style,
     warn: Style,
@@ -29,6 +30,7 @@ impl Default for LogStyles {
 }
 
 /// Styles for each component.
+#[derive(Debug, Copy, Clone)]
 pub struct Styles {
     guides: Style,
     context: Style,
@@ -56,6 +58,7 @@ impl Default for Styles {
 }
 
 /// Display characters for each guide.
+#[derive(Debug, Copy, Clone)]
 pub struct Guides {
     line: &'static str,
     empty: &'static str,
@@ -75,6 +78,7 @@ impl Default for Guides {
 }
 
 /// Display characters for each log header.
+#[derive(Debug, Copy, Clone)]
 pub struct LogHeaders {
     error: &'static str,
     warn: &'static str,
@@ -96,6 +100,7 @@ impl Default for LogHeaders {
 }
 
 /// Display characters for each header.
+#[derive(Debug, Copy, Clone)]
 pub struct Headers {
     context: &'static str,
     suggestion: &'static str,
@@ -119,7 +124,7 @@ impl Default for Headers {
 }
 
 /// Configuration for [`PrettyRenderer`].
-#[derive(Default)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct Config {
     guides: Guides,
     headers: Headers,
@@ -129,7 +134,7 @@ pub struct Config {
 /// Pretty renderer for [`Report`]s.
 ///
 /// [`Report`]s can be rendered via the [`Report`] trait.
-#[derive(Default)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct PrettyRenderer {
     /// Configuration for this renderer
     pub config: Config,
@@ -144,6 +149,7 @@ impl Render for PrettyRenderer {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 struct PrettyDisplayer<'a, E> {
     inner: &'a PrettyRenderer,
     report: &'a Report<E>,
