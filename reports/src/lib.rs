@@ -228,17 +228,6 @@ impl<E> fmt::Display for Report<E> {
     }
 }
 
-#[cfg(feature = "auto-erase")]
-impl<E> From<E> for Report<Erased>
-where
-    E: Error + 'static,
-    E: Send + Sync,
-{
-    fn from(value: E) -> Self {
-        Report::new(value).erased()
-    }
-}
-
 /// Helper trait for [`Result<T, Report<E>>`].
 pub trait ResultReportExt<T, F, E: Into<Report<F>>> {
     /// Erases the inner [`Report`]s type to [`Erased`].
@@ -313,6 +302,49 @@ impl<E: IntoReport> From<E> for Report<E> {
         value.into_report()
     }
 }
+
+#[cfg(not(any(
+    feature = "compat-core",
+    feature = "compat-std",
+    feature = "compat-bytes"
+)))]
+impl IntoReport for Error {}
+
+#[cfg(feature = "compat-core")]
+impl IntoReport for core::num::TryFromIntError {}
+
+#[cfg(feature = "compat-std")]
+extern crate std;
+#[cfg(feature = "compat-std")]
+impl IntoReport for std::io::Error {
+    fn into_report(self) -> Report<Self> {
+        use std::io::ErrorKind;
+
+        let suggestion = match self.kind() {
+            ErrorKind::NotFound => Some(Frame::suggestion("try providing an existing file")),
+            ErrorKind::PermissionDenied => Some(Frame::suggestion(
+                "try modifying the resource's permissions",
+            )),
+            ErrorKind::AlreadyExists => Some(Frame::suggestion("try providing a different file")),
+            ErrorKind::DirectoryNotEmpty => {
+                Some(Frame::suggestion("try providing an empty directory"))
+            }
+            _ => None,
+        };
+
+        let frames = std::iter::once(suggestion).filter_map(|f| f);
+        Report::new(self).with_frames(frames)
+    }
+}
+
+#[cfg(feature = "compat-bytes")]
+impl IntoReport for bytes::TryGetError {
+    fn into_report(self) -> Report<Self> {
+        let frame = Frame::context([("requested", self.requested), ("available", self.available)]);
+        Report::new(self).with_frame(frame)
+    }
+}
+
 /// Helper struct for converting [`log::Record`]s into [`Report`]s.
 ///
 /// This error can be converted into a [`Report`] via the [`IntoReport`] trait.

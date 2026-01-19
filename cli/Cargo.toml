@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 xh-engine.workspace = true
 xh-archive.workspace = true
-xh-reports = { workspace = true, features = ["auto-erase"] }
+xh-reports = { workspace = true, features = ["compat-std"] }
 xh-executor-http = { path = "../executor-http" }
 xh-executor-bubblewrap = { path = "../executor-bubblewrap" }
 xh-store-local = { path = "../store-local" }

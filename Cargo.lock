@@ -1870,11 +1870,11 @@ dependencies = [
 name = "xh-reports"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "educe",
  "log",
  "owo-colors",
  "serde_json",
- "smallvec",
  "smol_str",
  "thiserror",
  "xh-reports-derive",
