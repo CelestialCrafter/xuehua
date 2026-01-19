@@ -1,6 +1,7 @@
 //! Error handling crate designed for use with Xuehua
 
 #![warn(missing_docs)]
+#![no_std]
 
 extern crate alloc;
 
@@ -10,6 +11,7 @@ pub mod render;
 use alloc::{
     boxed::Box,
     string::{String, ToString},
+    vec,
     vec::Vec,
 };
 use core::{any::type_name, error::Error, fmt, marker::PhantomData, panic::Location};
@@ -171,9 +173,9 @@ impl<E> Report<E> {
         }
     }
 
-    /// Converts the `Report` into an impl [`Error`]
-    pub fn into_error(self) -> impl Error {
-        ReportError(self)
+    /// "Wraps" this `Report` with a parent `Report`.
+    pub fn wrap<F: IntoReport>(self, parent: F) -> Report<F> {
+        parent.into_report().with_child(self)
     }
 
     /// Sets the log level associated with the `Report`.
@@ -226,16 +228,6 @@ impl<E> fmt::Display for Report<E> {
     }
 }
 
-#[derive(Error, Educe)]
-#[educe(Debug(bound()))]
-struct ReportError<E>(Report<E>);
-
-impl<E> fmt::Display for ReportError<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
 #[cfg(feature = "auto-erase")]
 impl<E> From<E> for Report<Erased>
 where
@@ -247,42 +239,54 @@ where
     }
 }
 
-/// Helper trait for [`Result<T, Report<E>>`]
-pub trait ResultReportExt<T> {
+/// Helper trait for [`Result<T, Report<E>>`].
+pub trait ResultReportExt<T, F, E: Into<Report<F>>> {
     /// Erases the inner [`Report`]s type to [`Erased`].
     ///
     /// See [`Report::erased`] for more information.
     fn erased(self) -> Result<T, Report<Erased>>;
 
-    /// Append a `Report` as a parent of the inner `Report`
-    fn wrap<F>(self, report: impl FnOnce() -> Report<F>) -> Result<T, Report<F>>;
+    /// Append a `Report` as a parent of the inner `Report`.
+    ///
+    /// See [`Report::wrap`] for more information.
+    fn wrap_fn<G: IntoReport>(self, parent: impl FnOnce() -> G) -> Result<T, Report<G>>;
+
+    /// Append a `Report` as a parent of the inner `Report`.
+    ///
+    /// See [`Report::wrap`] for more information.
+    fn wrap<G: IntoReport>(self, parent: G) -> Result<T, Report<G>>
+    where
+        Self: Sized,
+    {
+        self.wrap_fn(|| parent)
+    }
 
     /// Sets the log level associated with the inner [`Report`].
     ///
     /// See [`Report::with_level`] for more information.
-    fn with_level(self, level: Level) -> Self;
+    fn with_level(self, level: Level) -> Result<T, Report<F>>;
 
     /// Appends a [`Frame`] to the inner [`Report`].
     ///
     /// See [`Report::with_frame`] for more information.
-    fn with_frame(self, frame: impl FnOnce() -> Frame) -> Self;
+    fn with_frame(self, frame: impl FnOnce() -> Frame) -> Result<T, Report<F>>;
 }
 
-impl<T, E> ResultReportExt<T> for Result<T, Report<E>> {
+impl<T, F, E: Into<Report<F>>> ResultReportExt<T, F, E> for Result<T, E> {
     fn erased(self) -> Result<T, Report<Erased>> {
-        self.map_err(|report| report.erased())
+        self.map_err(|report| report.into().erased())
     }
 
-    fn wrap<F>(self, error: impl FnOnce() -> Report<F>) -> Result<T, Report<F>> {
-        self.map_err(|report| error().with_child(report))
+    fn wrap_fn<G: IntoReport>(self, parent: impl FnOnce() -> G) -> Result<T, Report<G>> {
+        self.map_err(|report| parent().into_report().with_child(report.into()))
     }
 
-    fn with_level(self, level: Level) -> Self {
-        self.map_err(|report| report.with_level(level))
+    fn with_level(self, level: Level) -> Result<T, Report<F>> {
+        self.map_err(|report| report.into().with_level(level))
     }
 
-    fn with_frame(self, frame: impl FnOnce() -> Frame) -> Self {
-        self.map_err(|report| report.with_frame(frame()))
+    fn with_frame(self, frame: impl FnOnce() -> Frame) -> Result<T, Report<F>> {
+        self.map_err(|report| report.into().with_frame(frame()))
     }
 }
 
@@ -304,6 +308,11 @@ pub trait IntoReport: Sized + Error + Send + Sync + 'static {
     }
 }
 
+impl<E: IntoReport> From<E> for Report<E> {
+    fn from(value: E) -> Self {
+        value.into_report()
+    }
+}
 /// Helper struct for converting [`log::Record`]s into [`Report`]s.
 ///
 /// This error can be converted into a [`Report`] via the [`IntoReport`] trait.
