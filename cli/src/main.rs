@@ -6,11 +6,12 @@ use std::io::stderr;
 
 use eyre::{Context, ContextCompat, DefaultHandler, Result};
 
-use fern::colors::{Color, ColoredLevelConfig};
-use jiff::Timestamp;
 use log::LevelFilter;
+use thiserror::Error;
+use xh_reports::{IntoReport, LogError, render::{PrettyRenderer, Render}};
 
 use crate::options::{OPTIONS, Options, cli::Action, get_opts};
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -19,23 +20,12 @@ async fn main() -> Result<()> {
         .wrap_err("could not install eyre handler")?;
 
     // init logging
-    let colors = ColoredLevelConfig::new()
-        .info(Color::Blue)
-        .debug(Color::Magenta)
-        .trace(Color::BrightBlack)
-        .warn(Color::Yellow)
-        .error(Color::Red);
-
+    let renderer = PrettyRenderer::new();
     fern::Dispatch::new()
-        .format(move |out, message, record| {
-            out.finish(format_args!(
-                "({}) ({}) {} {}",
-                // TODO: color timestamp as trace
-                Timestamp::now().strftime("%T"),
-                colors.color(record.level()).to_string().to_lowercase(),
-                record.target(),
-                message
-            ))
+        .format(move |out, _, record| {
+            let report = LogError::new(record).into_report();
+            let display = renderer.render(&report);
+            out.finish(format_args!("{display}"))
         })
         .level(LevelFilter::Debug)
         .chain(stderr())

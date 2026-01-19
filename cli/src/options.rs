@@ -21,7 +21,7 @@ impl Options {
         Ok(Options {
             // TODO: use .run_inner() and completely overhaul the display
             cli: cli::Options::options().run(),
-            base: base::BaseOptions::run()?,
+            base: base::BaseOptions::read()?,
         })
     }
 }
