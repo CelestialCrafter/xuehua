@@ -42,10 +42,10 @@ fn build_frames<'a>(input: &DeriveInput) -> TokenStream {
                 quote! { let #escaped  = &self.#member; }
             });
 
-            quote! {
+            quote! {{
                 #(#bindings)*
                 [#(#frames),*]
-            }
+            }}
         }
         Data::Enum(data) => {
             let arms = data.variants.iter().map(|variant| {
@@ -79,11 +79,9 @@ fn build_frames<'a>(input: &DeriveInput) -> TokenStream {
 fn build_impl(ident: &Ident, frames: TokenStream) -> TokenStream {
     quote! {
         impl ::xh_reports::IntoReport for #ident {
-            fn into_report(self) -> Report<Self> {
-                #frames.into_iter().fold(
-                    Report::new(self),
-                    |acc, x| acc.with_frame(x)
-                )
+            fn into_report(self) -> ::xh_reports::Report<Self> {
+                let frames = #frames;
+                ::xh_reports::Report::new(self).with_frames(frames)
             }
         }
     }
