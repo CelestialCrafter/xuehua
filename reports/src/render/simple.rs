@@ -10,6 +10,14 @@ use crate::{Report, render::Render};
 #[derive(Debug, Copy, Clone)]
 pub struct SimpleRenderer;
 
+impl SimpleRenderer {
+    /// Constructs a new `SimpleRenderer`.
+    #[inline]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
 impl Render for SimpleRenderer {
     fn render<E>(&self, report: &Report<E>) -> impl fmt::Display {
         report.error()

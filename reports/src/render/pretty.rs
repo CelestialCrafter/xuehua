@@ -140,6 +140,14 @@ pub struct PrettyRenderer {
     pub config: Config,
 }
 
+impl PrettyRenderer {
+    /// Constructs a new `PrettyRenderer`.
+    #[inline]
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
 impl Render for PrettyRenderer {
     fn render<'a, E>(&'a self, report: &'a Report<E>) -> impl fmt::Display + 'a {
         PrettyDisplayer {

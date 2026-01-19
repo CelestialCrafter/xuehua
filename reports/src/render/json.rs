@@ -32,6 +32,14 @@ pub struct JsonRenderer {
     pub pretty: bool,
 }
 
+impl JsonRenderer {
+    /// Constructs a new `JsonRenderer`.
+    #[inline]
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
 impl Render for JsonRenderer {
     fn render<E>(&self, report: &Report<E>) -> impl fmt::Display {
         JsonDisplayer {
