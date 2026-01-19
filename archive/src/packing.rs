@@ -54,7 +54,7 @@ impl Packer {
     ///
     /// # Safety
     ///
-    /// See [`Mmap`] for why this function is unsafe.
+    /// See [`memmap2::Mmap`] for why this function is unsafe.
     #[cfg(feature = "mmap")]
     #[inline]
     pub unsafe fn pack_mmap_iter(&mut self) -> impl Iterator<Item = Result<Event, Error>> {

@@ -9,7 +9,6 @@
 //! which can be processed by:
 //! - [`decoding::Decoder`]: Decode from bytes
 //! - [`encoding::Encoder`]: Encode into bytes
-//! - [`hashing::Hasher`]: Hashing
 //!
 //! And with the `std` feature on `unix` targets:
 //! - [`packing::Packer`]: Pack from the filesystem

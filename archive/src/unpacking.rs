@@ -67,7 +67,7 @@ impl<'a> Unpacker<'a> {
     ///
     /// # Safety
     ///
-    /// See [`Mmap`] for why this function is unsafe.
+    /// See [`memmap2::Mmap`] for why this function is unsafe.
     #[cfg(feature = "mmap")]
     #[inline]
     pub unsafe fn unpack_mmap_iter(
@@ -89,7 +89,7 @@ impl<'a> Unpacker<'a> {
     ///
     /// # Safety
     ///
-    /// See [`Mmap`] for why this function is unsafe.
+    /// See [`memmap2::Mmap`] for why this function is unsafe.
     #[cfg(feature = "mmap")]
     #[inline]
     pub unsafe fn unpack_mmap(&mut self, event: impl Borrow<Event>) -> Result<(), Error> {
