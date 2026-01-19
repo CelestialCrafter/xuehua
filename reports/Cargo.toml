@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 default = ["std", "pretty"]
 std = []
+auto-erase = []
 pretty = ["dep:owo-colors"]
 json = ["dep:serde_json"]
 

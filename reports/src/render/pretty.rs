@@ -5,7 +5,7 @@ use core::fmt;
 use log::Level;
 use owo_colors::{OwoColorize, Style};
 
-use crate::{Frame, Report, render::Render};
+use crate::{Erased, Frame, Report, render::Render};
 
 /// Styles for each log level.
 #[derive(Debug, Copy, Clone)]
@@ -299,7 +299,7 @@ impl<E> PrettyDisplayer<'_, E> {
     fn render_children(
         &self,
         fmt: &mut fmt::Formatter<'_>,
-        children: &[Report<()>],
+        children: &[Report<Erased>],
         prefix: fmt::Arguments<'_>,
     ) -> fmt::Result {
         let guides = &self.inner.config.guides;

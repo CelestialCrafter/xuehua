@@ -76,10 +76,17 @@ impl Frame {
     }
 }
 
+/// Typestate for an erased report.
+#[derive(Error, Debug)]
+#[error("")]
+pub struct Erased {
+    private: ()
+}
+
 #[derive(Debug)]
 struct ReportInner {
     frames: SmallVec<[Frame; 1]>,
-    children: SmallVec<[Report<()>; 1]>,
+    children: SmallVec<[Report<Erased>; 1]>,
     error: BoxDynError,
     type_name: &'static str,
     location: &'static Location<'static>,
@@ -112,7 +119,7 @@ impl<E> Report<E> {
         fn walk(
             error: &dyn Error,
             location: &'static Location<'static>,
-        ) -> SmallVec<[Report<()>; 1]> {
+        ) -> SmallVec<[Report<Erased>; 1]> {
             let mut reports = SmallVec::new();
             if let Some(source) = error.source() {
                 reports.push(Report {
@@ -162,12 +169,17 @@ impl<E> Report<E> {
         self.inner.location
     }
 
-    /// Erases the `Report`s type to ().
-    pub fn erased(self) -> Report<()> {
+    /// Erases the `Report`s type to `Erased`.
+    pub fn erased(self) -> Report<Erased> {
         Report {
             inner: self.inner,
             _marker: PhantomData,
         }
+    }
+
+    /// Converts the `Report` into an impl [`Error`]
+    pub fn into_error(self) -> impl Error {
+        ReportError(self)
     }
 
     /// Sets the log level associated with the `Report`.
@@ -198,7 +210,7 @@ impl<E> Report<E> {
     }
 
     /// Retrieves the children associated with this `Report`.
-    pub fn children(&self) -> &[Report<()>] {
+    pub fn children(&self) -> &[Report<Erased>] {
         &self.inner.children
     }
 
@@ -220,19 +232,33 @@ impl<E> fmt::Display for Report<E> {
     }
 }
 
-impl<E> Error for Report<E> {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        let children = &self.inner.children;
-        (1 == children.len()).then(|| children.first().unwrap() as _)
+#[derive(Error, Educe)]
+#[educe(Debug(bound()))]
+struct ReportError<E>(Report<E>);
+
+impl<E> fmt::Display for ReportError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[cfg(feature = "auto-erase")]
+impl<E> From<E> for Report<Erased>
+where
+    E: Error + 'static,
+    E: Send + Sync,
+{
+    fn from(value: E) -> Self {
+        Report::new(value).erased()
     }
 }
 
 /// Helper trait for [`Result<T, Report<E>>`]
 pub trait ResultReportExt<T> {
-    /// Erases the inner [`Report`]s type to ().
+    /// Erases the inner [`Report`]s type to [`Erased`].
     ///
     /// See [`Report::erased`] for more information.
-    fn erased(self) -> Result<T, Report<()>>;
+    fn erased(self) -> Result<T, Report<Erased>>;
 
     /// Append a `Report` as a parent of the inner `Report`
     fn wrap<F>(self, report: impl FnOnce() -> Report<F>) -> Result<T, Report<F>>;
@@ -249,7 +275,7 @@ pub trait ResultReportExt<T> {
 }
 
 impl<T, E> ResultReportExt<T> for Result<T, Report<E>> {
-    fn erased(self) -> Result<T, Report<()>> {
+    fn erased(self) -> Result<T, Report<Erased>> {
         self.map_err(|report| report.erased())
     }
 
@@ -292,7 +318,7 @@ pub trait IntoReport: Sized + Error + Send + Sync + 'static {
 pub struct LogError {
     message: String,
     level: Level,
-    children: SmallVec<[Report<()>; 0]>,
+    children: SmallVec<[Report<Erased>; 0]>,
     frames: SmallVec<[Frame; 0]>,
 }
 
@@ -306,7 +332,7 @@ impl LogError {
         #[derive(Default)]
         struct FrameVisitor {
             frames: SmallVec<[Frame; 0]>,
-            children: SmallVec<[Report<()>; 0]>,
+            children: SmallVec<[Report<Erased>; 0]>,
             context: SmallVec<[(SmolStr, String); 2]>,
         }
 
