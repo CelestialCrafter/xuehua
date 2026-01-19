@@ -1,7 +1,6 @@
 //! Error handling crate designed for use with Xuehua
 
 #![warn(missing_docs)]
-#![no_std]
 
 extern crate alloc;
 
@@ -20,7 +19,6 @@ use log::{
     Level,
     kv::{Key, Value, VisitSource},
 };
-use smallvec::SmallVec;
 use smol_str::{SmolStr, ToSmolStr};
 use thiserror::Error;
 
@@ -80,13 +78,13 @@ impl Frame {
 #[derive(Error, Debug)]
 #[error("")]
 pub struct Erased {
-    private: ()
+    private: (),
 }
 
 #[derive(Debug)]
 struct ReportInner {
-    frames: SmallVec<[Frame; 1]>,
-    children: SmallVec<[Report<Erased>; 1]>,
+    frames: Vec<Frame>,
+    children: Vec<Report<Erased>>,
     error: BoxDynError,
     type_name: &'static str,
     location: &'static Location<'static>,
@@ -116,13 +114,9 @@ impl<E> Report<E> {
         E: Error + 'static,
         E: Send + Sync,
     {
-        fn walk(
-            error: &dyn Error,
-            location: &'static Location<'static>,
-        ) -> SmallVec<[Report<Erased>; 1]> {
-            let mut reports = SmallVec::new();
+        fn walk(error: &dyn Error, location: &'static Location<'static>) -> Vec<Report<Erased>> {
             if let Some(source) = error.source() {
-                reports.push(Report {
+                vec![Report {
                     inner: Box::new(ReportInner {
                         children: walk(source, location),
                         error: Box::new(SourceError(source.to_string())),
@@ -132,10 +126,10 @@ impl<E> Report<E> {
                         level: Level::Error,
                     }),
                     _marker: PhantomData,
-                });
+                }]
+            } else {
+                vec![]
             }
-
-            reports
         }
 
         let location = Location::caller();
@@ -318,8 +312,8 @@ pub trait IntoReport: Sized + Error + Send + Sync + 'static {
 pub struct LogError {
     message: String,
     level: Level,
-    children: SmallVec<[Report<Erased>; 0]>,
-    frames: SmallVec<[Frame; 0]>,
+    children: Vec<Report<Erased>>,
+    frames: Vec<Frame>,
 }
 
 #[derive(Error, Debug)]
@@ -331,9 +325,9 @@ impl LogError {
     pub fn new(record: &log::Record) -> Self {
         #[derive(Default)]
         struct FrameVisitor {
-            frames: SmallVec<[Frame; 0]>,
-            children: SmallVec<[Report<Erased>; 0]>,
-            context: SmallVec<[(SmolStr, String); 2]>,
+            frames: Vec<Frame>,
+            children: Vec<Report<Erased>>,
+            context: Vec<(SmolStr, String)>,
         }
 
         impl VisitSource<'_> for FrameVisitor {
