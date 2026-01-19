@@ -67,7 +67,7 @@ fn build_frames<'a>(input: &DeriveInput) -> TokenStream {
                 let variant_ident = &variant.ident;
 
                 let alloc = alloc();
-                quote! { #enum_ident::#variant_ident #bindings => #alloc vec![#(#frames),*]}
+                quote! { #enum_ident::#variant_ident #bindings => #alloc::vec![#(#frames),*]}
             });
 
             quote! { match self { #(#arms),* } }
@@ -191,8 +191,8 @@ fn escape_member(member: Member) -> Ident {
 
 fn alloc() -> TokenStream {
     if cfg!(feature = "std") {
-        quote! { ::std:: }
+        quote! { ::std }
     } else {
-        quote! { ::alloc:: }
+        quote! { ::alloc }
     }
 }

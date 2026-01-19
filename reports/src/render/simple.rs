@@ -20,6 +20,6 @@ impl SimpleRenderer {
 
 impl Render for SimpleRenderer {
     fn render<E>(&self, report: &Report<E>) -> impl fmt::Display {
-        report.error()
+        report.as_ref()
     }
 }

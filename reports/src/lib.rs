@@ -4,16 +4,21 @@
 #![no_std]
 
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std;
+
+
+pub mod prelude;
+pub mod render;
 
 pub use xh_reports_derive::IntoReport;
-pub mod render;
 
 use alloc::{
     boxed::Box,
     string::{String, ToString},
     vec::Vec,
 };
-use core::{error::Error, fmt, marker::PhantomData, panic::Location};
+use core::{error::Error, fmt, marker::PhantomData, panic::Location, result::Result as CoreResult};
 
 use educe::Educe;
 use log::{
@@ -27,6 +32,9 @@ use crate::render::{Render, SimpleRenderer};
 
 /// Utility alias for [`Error`]
 pub type BoxDynError = Box<dyn Error + Send + Sync + 'static>;
+
+/// Utility alias for [`Result`]
+pub type Result<T, E> = CoreResult<T, Report<E>>;
 
 /// A single piece of information inside of a [`Report`].
 ///
@@ -154,27 +162,6 @@ impl<E> Report<E> {
         }
     }
 
-    /// Retrieves the error associated with this `Report`.
-    ///
-    /// To retrieve a typed error, see [`Report::downcast`].
-    pub fn error(&self) -> &(dyn Error + Send + Sync + 'static) {
-        &*self.inner.error
-    }
-
-    /// Retrieves the typed error associated with this `Report`.
-    ///
-    /// # Errors
-    ///
-    /// If the report was erased, this method returns an
-    /// error with the value of [`Report::error`].
-    pub fn downcast(&self) -> Result<&E, &(dyn Error + Send + Sync)>
-    where
-        E: Error + 'static,
-    {
-        let error = self.error();
-        error.downcast_ref().ok_or(error)
-    }
-
     /// Retrieves the type name that the `Report` was created with.
     ///
     /// # Notes
@@ -246,6 +233,18 @@ impl<E> Report<E> {
     }
 }
 
+impl<E> AsRef<dyn Error + Send + Sync> for Report<E> {
+    fn as_ref(&self) -> &(dyn Error + Send + Sync + 'static) {
+        &*self.inner.error
+    }
+}
+
+impl<E> From<Report<E>> for BoxDynError {
+    fn from(value: Report<E>) -> Self {
+        value.inner.error
+    }
+}
+
 impl<E> fmt::Display for Report<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         SimpleRenderer.render(self).fmt(f)
@@ -257,17 +256,17 @@ pub trait ResultReportExt<T, F, E: Into<Report<F>>> {
     /// Erases the inner [`Report`]s type to [`Erased`].
     ///
     /// See [`Report::erased`] for more information.
-    fn erased(self) -> Result<T, Report<Erased>>;
+    fn erased(self) -> Result<T, Erased>;
 
     /// Append a `Report` as a parent of the inner `Report`.
     ///
     /// See [`Report::wrap`] for more information.
-    fn wrap_fn<G: IntoReport>(self, parent: impl FnOnce() -> G) -> Result<T, Report<G>>;
+    fn wrap_fn<G: IntoReport>(self, parent: impl FnOnce() -> G) -> Result<T, G>;
 
     /// Append a `Report` as a parent of the inner `Report`.
     ///
     /// See [`Report::wrap`] for more information.
-    fn wrap<G: IntoReport>(self, parent: G) -> Result<T, Report<G>>
+    fn wrap<G: IntoReport>(self, parent: G) -> Result<T, G>
     where
         Self: Sized,
     {
@@ -277,28 +276,28 @@ pub trait ResultReportExt<T, F, E: Into<Report<F>>> {
     /// Sets the log level associated with the inner [`Report`].
     ///
     /// See [`Report::with_level`] for more information.
-    fn with_level(self, level: Level) -> Result<T, Report<F>>;
+    fn with_level(self, level: Level) -> Result<T, F>;
 
     /// Appends a [`Frame`] to the inner [`Report`].
     ///
     /// See [`Report::with_frame`] for more information.
-    fn with_frame(self, frame: impl FnOnce() -> Frame) -> Result<T, Report<F>>;
+    fn with_frame(self, frame: impl FnOnce() -> Frame) -> Result<T, F>;
 }
 
-impl<T, F, E: Into<Report<F>>> ResultReportExt<T, F, E> for Result<T, E> {
-    fn erased(self) -> Result<T, Report<Erased>> {
+impl<T, F, E: Into<Report<F>>> ResultReportExt<T, F, E> for CoreResult<T, E> {
+    fn erased(self) -> Result<T, Erased> {
         self.map_err(|report| report.into().erased())
     }
 
-    fn wrap_fn<G: IntoReport>(self, parent: impl FnOnce() -> G) -> Result<T, Report<G>> {
+    fn wrap_fn<G: IntoReport>(self, parent: impl FnOnce() -> G) -> Result<T, G> {
         self.map_err(|report| parent().into_report().with_child(report.into()))
     }
 
-    fn with_level(self, level: Level) -> Result<T, Report<F>> {
+    fn with_level(self, level: Level) -> Result<T, F> {
         self.map_err(|report| report.into().with_level(level))
     }
 
-    fn with_frame(self, frame: impl FnOnce() -> Frame) -> Result<T, Report<F>> {
+    fn with_frame(self, frame: impl FnOnce() -> Frame) -> Result<T, F> {
         self.map_err(|report| report.into().with_frame(frame()))
     }
 }
@@ -327,11 +326,8 @@ impl<E: IntoReport> From<E> for Report<E> {
     }
 }
 
-#[cfg(feature = "compat-core")]
 impl IntoReport for core::num::TryFromIntError {}
 
-#[cfg(feature = "compat-std")]
-extern crate std;
 #[cfg(feature = "compat-std")]
 impl IntoReport for std::io::Error {
     fn into_report(self) -> Report<Self> {
@@ -362,7 +358,7 @@ impl IntoReport for bytes::TryGetError {
             Frame::context("available", self.available),
         ];
 
-        Report::new(self).with_frame(frame)
+        Report::new(self).with_frames(frames)
     }
 }
 
@@ -392,7 +388,7 @@ impl LogError {
         }
 
         impl VisitSource<'_> for FrameVisitor {
-            fn visit_pair(&mut self, key: Key<'_>, value: Value<'_>) -> Result<(), log::kv::Error> {
+            fn visit_pair(&mut self, key: Key<'_>, value: Value<'_>) -> CoreResult<(), log::kv::Error> {
                 match key.as_str() {
                     "suggestion" => self.frames.push(Frame::suggestion(value.to_smolstr())),
                     "attachment" => self.frames.push(Frame::attachment(value)),

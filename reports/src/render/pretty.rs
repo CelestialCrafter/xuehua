@@ -191,7 +191,7 @@ impl<E> PrettyDisplayer<'_, E> {
                 Level::Debug => headers.log.debug.style(styles.log.debug),
                 Level::Trace => headers.log.trace.style(styles.log.trace),
             },
-            report.error().bold()
+            report.as_ref().bold()
         )?;
 
         let children = report.children();
