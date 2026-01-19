@@ -21,3 +21,12 @@ pub trait Render {
     /// Renders a [`Report`] into an impl [`fmt::Display`]
     fn render<'a, E>(&'a self, report: &'a Report<E>) -> impl fmt::Display + 'a;
 }
+
+/// Sets a panic hook for rendering [`Report`]s.
+#[cfg(feature = "std")]
+pub fn set_hook(renderer: impl Render + Send + Sync + 'static) {
+    std::panic::set_hook(std::boxed::Box::new(move |info| {
+        let message = info.payload_as_str().unwrap_or("no message");
+        renderer.render(&Report::<&str>::new(message));
+    }));
+}

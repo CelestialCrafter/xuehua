@@ -1,7 +1,5 @@
 pub mod passthru;
 
-pub type BoxDynError = Box<dyn std::error::Error + Send + Sync>;
-
 #[inline]
 pub fn random_hash() -> blake3::Hash {
     let mut buffer = [0; blake3::OUT_LEN];

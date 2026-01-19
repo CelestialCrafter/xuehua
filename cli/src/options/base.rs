@@ -1,14 +1,13 @@
-use std::fmt::Display;
-use std::fs::create_dir_all;
-use std::path::Path;
-use std::{fs, path::PathBuf};
+use std::{
+    fmt::Display,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use dirs::{config_dir, data_dir, runtime_dir};
-use eyre::Result;
 use log::{info, warn};
 use tempfile::env::temp_dir;
-use thiserror::Error;
-use xh_reports::{IntoReport, Report, ResultExt, ResultReportExt};
+use xh_reports::{compat::StdCompat, prelude::*};
 
 const BUILD: &str = "xuehua/builds";
 const STORE: &str = "xuehua/store";
@@ -35,9 +34,9 @@ impl Display for LocationType {
     }
 }
 
-#[derive(Error, Debug, IntoReport)]
-#[error("could not initialize locations")]
-#[context(locations)]
+#[derive(Debug, IntoReport)]
+#[message("could not initialize locations")]
+#[context(debug: locations)]
 pub struct InitializeLocationsError {
     locations: Locations,
 }
@@ -60,7 +59,7 @@ fn system_locations() -> Locations {
     }
 }
 
-fn initialize_locations() -> Result<Locations, Report<InitializeLocationsError>> {
+fn initialize_locations() -> Result<Locations, InitializeLocationsError> {
     let system = system_locations();
     let user = user_locations();
 
@@ -99,7 +98,7 @@ fn initialize_locations() -> Result<Locations, Report<InitializeLocationsError>>
         };
 
         info!(
-            suggestion = format!("try creating a config file at {}", path.display());
+            suggestion = format!("create a config file at {}", path.display());
             "could not find options file, falling back to {name} locations"
         );
 
@@ -111,32 +110,27 @@ fn initialize_locations() -> Result<Locations, Report<InitializeLocationsError>>
         LocationType::System => system,
     };
 
-    let map_result = |result: Result<_, _>| {
-        result.convert().wrap(|| {
-            InitializeLocationsError {
-                locations: preset.clone(),
-            }
-            .into_report()
+    fs::create_dir_all(&preset.build)
+        .and_then(|()| fs::create_dir_all(&preset.store))
+        .compat()
+        .wrap_with_fn(|| InitializeLocationsError {
+            locations: preset.clone(),
         })
-    };
-
-    map_result(create_dir_all(&preset.build))?;
-    map_result(create_dir_all(&preset.store))?;
-    Ok(preset)
+        .map(|()| preset)
 }
 
-#[derive(Error, Debug, IntoReport)]
-#[error("could not create base options")]
-pub struct CreateBaseOptionsError;
+#[derive(Default, Debug, IntoReport)]
+#[message("could not create base options")]
+pub struct Error;
 
 pub struct BaseOptions {
     pub locations: Locations,
 }
 
 impl BaseOptions {
-    pub fn read() -> Result<Self, Report<CreateBaseOptionsError>> {
+    pub fn read() -> Result<Self, Error> {
         Ok(Self {
-            locations: initialize_locations().wrap(|| CreateBaseOptionsError.into_report())?,
+            locations: initialize_locations().wrap()?,
         })
     }
 }

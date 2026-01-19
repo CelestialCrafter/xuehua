@@ -5,7 +5,7 @@ use core::fmt;
 use log::Level;
 use owo_colors::{OwoColorize, Style};
 
-use crate::{Erased, Frame, Report, render::Render};
+use crate::{Frame, Report, render::Render};
 
 /// Styles for each log level.
 #[derive(Debug, Copy, Clone)]
@@ -47,11 +47,11 @@ impl Default for Styles {
         Self {
             guides: Style::new(),
             suggestion: Style::new().green(),
-            context: Style::new().cyan().dimmed(),
-            attachment: Style::new().yellow().dimmed(),
-            location: Style::new().purple().dimmed(),
-            type_name: Style::new().blue().dimmed(),
-            distracting: Style::new().dimmed(),
+            context: Style::new().cyan(),
+            attachment: Style::new().yellow(),
+            location: Style::new().purple(),
+            type_name: Style::new().blue(),
+            distracting: Style::new(),
             log: LogStyles::default(),
         }
     }
@@ -191,7 +191,7 @@ impl<E> PrettyDisplayer<'_, E> {
                 Level::Debug => headers.log.debug.style(styles.log.debug),
                 Level::Trace => headers.log.trace.style(styles.log.trace),
             },
-            report.as_ref().bold()
+            report.message().bold()
         )?;
 
         let children = report.children();
@@ -301,7 +301,7 @@ impl<E> PrettyDisplayer<'_, E> {
     fn render_children(
         &self,
         fmt: &mut fmt::Formatter<'_>,
-        children: &[Report<Erased>],
+        children: &[Report<()>],
         prefix: fmt::Arguments<'_>,
     ) -> fmt::Result {
         let guides = &self.inner.config.guides;

@@ -3,22 +3,24 @@
 use std::{collections::VecDeque, fs, os::unix::fs::PermissionsExt, path::Path};
 
 use bytes::Bytes;
-use thiserror::Error;
+use xh_reports::{compat::StdCompat, prelude::*};
 
 use crate::{Event, Object, ObjectContent, PathBytes, utils::debug};
 
-/// Error type for packing
-#[derive(Error, Debug)]
-pub enum Error {
-    /// A file had a type that could not be packed
-    #[error("unsupported file type at {0:?}")]
-    UnsupportedType(PathBytes),
-    #[allow(missing_docs)]
-    #[error(transparent)]
-    IOError(#[from] std::io::Error),
+/// An unsupported file type was encountered (eg. socket, pipe, etc)
+#[derive(Debug, IntoReport)]
+#[message("unsupported file type")]
+#[context(debug: path)]
+pub struct UnsupportedTypeError {
+    path: PathBytes,
 }
 
-type ReadFileFn = fn(&Path) -> Result<Bytes, Error>;
+/// Error type for packing
+#[derive(Default, Debug, IntoReport)]
+#[message("could not pack archive")]
+pub struct Error;
+
+type ReadFileFn = fn(&Path) -> StdResult<Bytes, std::io::Error>;
 
 enum State {
     Header,
@@ -62,7 +64,7 @@ impl Packer {
     }
 
     fn process(&mut self, read_file: ReadFileFn) -> Option<Result<Event, Error>> {
-        let result = match self.state {
+        Some(match self.state {
             State::Header => build_index(&self.root).map(|index| {
                 self.state = State::Objects(index);
                 Event::Header
@@ -76,9 +78,7 @@ impl Packer {
                 }
             },
             State::Footer => return None,
-        };
-
-        Some(result)
+        })
     }
 }
 
@@ -88,10 +88,10 @@ fn process_object(root: &PathBytes, stub: &mut Object, read_file: ReadFileFn) ->
 
     let content = match stub.content {
         ObjectContent::File { .. } => ObjectContent::File {
-            data: read_file(&location)?,
+            data: read_file(&location).compat().wrap()?,
         },
         ObjectContent::Symlink { .. } => ObjectContent::Symlink {
-            target: fs::read_link(location)?.into(),
+            target: fs::read_link(location).compat().wrap()?.into(),
         },
         ObjectContent::Directory => ObjectContent::Directory,
     };
@@ -108,7 +108,7 @@ fn process_object(root: &PathBytes, stub: &mut Object, read_file: ReadFileFn) ->
 }
 
 fn build_index(root: &PathBytes) -> Result<VecDeque<Object>, Error> {
-    let mut queue = Vec::from([(root.clone(), fs::symlink_metadata(&root)?)]);
+    let mut queue = Vec::from([(root.clone(), fs::symlink_metadata(&root).compat().wrap()?)]);
 
     let mut i = 0;
     while let Some((path, ty)) = queue.get(i) {
@@ -119,15 +119,17 @@ fn build_index(root: &PathBytes) -> Result<VecDeque<Object>, Error> {
         }
 
         queue.extend(
-            fs::read_dir(path)?
+            fs::read_dir(path)
+                .wrap()?
                 .map(|entry| {
                     let entry = entry?;
                     let path = entry.path();
-                    let metadata = fs::symlink_metadata(&path)?;
+                    let metadata = fs::symlink_metadata(&path).compat()?;
 
                     Ok((path.into(), metadata))
                 })
-                .collect::<Result<Vec<_>, Error>>()?,
+                .collect::<Result<Vec<_>, _>>()
+                .wrap()?,
         );
     }
 
@@ -145,7 +147,7 @@ fn build_index(root: &PathBytes) -> Result<VecDeque<Object>, Error> {
             } else if metadata.is_dir() {
                 ObjectContent::Directory
             } else {
-                return Err(Error::UnsupportedType(location));
+                return Err(UnsupportedTypeError { path: location }.wrap());
             };
 
             Ok(Object {
@@ -160,17 +162,14 @@ fn build_index(root: &PathBytes) -> Result<VecDeque<Object>, Error> {
     Ok(index.into())
 }
 
-fn read_file_default(path: &Path) -> Result<Bytes, Error> {
-    match fs::read(path) {
-        Ok(data) => Ok(data.into()),
-        Err(err) => Err(err.into()),
-    }
+fn read_file_default(path: &Path) -> StdResult<Bytes, std::io::Error> {
+    Ok(fs::read(path)?.into())
 }
 
 #[cfg(feature = "mmap")]
-fn read_file_mmap(path: &Path) -> Result<Bytes, Error> {
+fn read_file_mmap(path: &Path) -> StdResult<Bytes, std::io::Error> {
     let file = fs::File::open(path)?;
-    let mmap = unsafe { memmap2::Mmap::map(&file)? };
+    let mmap = unsafe { memmap2::Mmap::map(&file) }?;
     mmap.advise(memmap2::Advice::Sequential)?;
 
     Ok(Bytes::from_owner(mmap))

@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+xh-reports.workspace = true
 xh-engine.workspace = true
 log.workspace = true
-thiserror.workspace = true
 serde.workspace = true
 tokio = { workspace = true, features = ["process"] }

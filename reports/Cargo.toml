@@ -6,17 +6,13 @@ edition = "2024"
 [features]
 default = ["std", "pretty"]
 std = ["xh-reports-derive/std"]
-compat-std = ["std"]
-compat-bytes = ["dep:bytes"]
 pretty = ["dep:owo-colors"]
 json = ["dep:serde_json"]
 
 [dependencies]
 xh-reports-derive = { path = "../reports-derive" }
 educe.workspace = true
-thiserror.workspace = true
 smol_str.workspace = true
-bytes = { workspace = true, optional = true }
 log = { workspace = true, features = ["kv"] }
 serde_json = { workspace = true, optional = true }
 owo-colors = { version = "4.2.3", optional = true }

@@ -1,11 +1,13 @@
-use serde::{Serialize, de::DeserializeOwned};
 use std::{
-    fmt::{Debug, Display},
+    fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
 };
 
+use serde::{Serialize, de::DeserializeOwned};
+use xh_reports::{IntoReport, Result};
+
 pub trait Backend {
-    type Error: std::error::Error + Display + Send + Sync;
+    type Error: IntoReport;
     type Value: Debug + Clone + PartialEq + Send + Sync;
 
     fn serialize<T: Serialize>(&self, value: &T) -> Result<Self::Value, Self::Error>;

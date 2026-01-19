@@ -12,7 +12,7 @@ use petgraph::{
     visit::Dfs,
 };
 use smol_str::SmolStr;
-use thiserror::Error;
+use xh_reports::prelude::*;
 
 use crate::{
     backend::Backend,
@@ -20,15 +20,27 @@ use crate::{
     utils::passthru::PassthruHashSet,
 };
 
-#[derive(Error, Debug)]
-pub enum Error<B: Backend> {
-    #[error("package {package} has conflicting definitions")]
-    Conflict { package: PackageName },
-    #[error("cycle detected from package {from:?} to package {to:?}")]
-    Cycle { from: PackageName, to: PackageName },
-    #[error(transparent)]
-    BackendError(B::Error),
+#[derive(Debug, IntoReport)]
+#[message("package has conflicting definitions")]
+#[suggestion("rename {package} to something different")]
+#[context(package)]
+pub struct ConflictError {
+    #[format(suggestion)]
+    pub package: PackageName,
 }
+
+#[derive(Debug, IntoReport)]
+#[message("package dependencies form a cycle")]
+#[suggestion("remove the dependency creating a cycle")]
+#[context(from, to)]
+pub struct CycleError {
+    from: PackageName,
+    to: PackageName,
+}
+
+#[derive(Default, Debug, IntoReport)]
+#[message("could not evaluate plan")]
+pub struct Error;
 
 #[derive(Clone, Default, Debug)]
 pub struct NamespaceTracker(Arc<RwLock<Vec<SmolStr>>>);
@@ -121,7 +133,7 @@ impl<B: Backend> Planner<Unfrozen<B>> {
     }
 
     #[inline]
-    pub fn freeze(self, backend: &B) -> Result<Planner<Frozen<'_, B>>, Error<B>> {
+    pub fn freeze(self, backend: &B) -> Result<Planner<Frozen<'_, B>>, Error> {
         Planner::<Frozen<B>>::new(self, backend)
     }
 
@@ -141,7 +153,7 @@ impl<B: Backend> Planner<Unfrozen<B>> {
         source: NodeIndex,
         identifier: SmolStr,
         modify: impl FnOnce(B::Value) -> Result<B::Value, B::Error>,
-    ) -> Option<Result<NodeIndex, Error<B>>> {
+    ) -> Option<Result<NodeIndex, B::Error>> {
         let name = PackageName {
             identifier,
             namespace: self.state.namespace.current(),
@@ -155,7 +167,7 @@ impl<B: Backend> Planner<Unfrozen<B>> {
             .cloned()
             .map(|source| {
                 let config = Config {
-                    current: modify(source.current).map_err(Error::BackendError)?,
+                    current: modify(source.current)?,
                     apply: source.apply,
                     name,
                 };
@@ -164,14 +176,15 @@ impl<B: Backend> Planner<Unfrozen<B>> {
             })
     }
 
-    pub fn register(&mut self, mut config: Config<B>) -> Result<NodeIndex, Error<B>> {
+    pub fn register(&mut self, mut config: Config<B>) -> Result<NodeIndex, Error> {
         trace!("registering config {}", config.name);
 
         config.name.namespace = self.state.namespace.current();
         if self.registered.contains_key(&config.name) {
-            return Err(Error::Conflict {
+            return Err(ConflictError {
                 package: config.name,
-            });
+            }
+            .wrap());
         }
 
         let name = config.name.clone();
@@ -183,11 +196,11 @@ impl<B: Backend> Planner<Unfrozen<B>> {
 }
 
 impl<'a, B: Backend> Planner<Frozen<'a, B>> {
-    fn new(unfrozen: Planner<Unfrozen<B>>, backend: &'a B) -> Result<Self, Error<B>> {
+    fn new(unfrozen: Planner<Unfrozen<B>>, backend: &'a B) -> Result<Self, Error> {
         let mut plan: Plan<_> = Plan::new();
 
         for config in unfrozen.state.configs.into_iter() {
-            let mut pkg = (config.apply)(config.current).map_err(Error::BackendError)?;
+            let mut pkg = (config.apply)(config.current).wrap()?;
             pkg.name = config.name;
 
             plan.add_node(pkg);
@@ -203,10 +216,10 @@ impl<'a, B: Backend> Planner<Frozen<'a, B>> {
 
             for dependency in dependencies {
                 plan.try_add_edge(node, dependency.node, dependency.time)
-                    .map_err(|_| Error::Cycle {
+                    .map_err(|_| CycleError {
                         from: plan[node].name.clone(),
                         to: plan[dependency.node].name.clone(),
-                    })?;
+                    }.wrap())?;
             }
         }
 

@@ -26,7 +26,8 @@ smol_str = "0.3.4"
 fern = "0.7.1"
 log = { version = "0.4.27", features = ["std"] }
 serde = { version = "1.0.219", features = ["derive"] }
-thiserror = { version = "2.0.17", default-features = false }
 blake3 = { version = "1.8.2", default-features = false }
 educe = { version = "0.6.0", features = ["Debug", "Clone", "Default"] }
 jiff = { version = "0.2.15", default-features = false, features = ["alloc", "std", "perf-inline"] }
+mlua = { version = "0.11.4", features = ["lua54"] }
+rusqlite = "0.38.0"

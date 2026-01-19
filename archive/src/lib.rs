@@ -31,23 +31,6 @@ use core::fmt::Debug;
 
 use bytes::Bytes;
 use ed25519_dalek::Signature;
-use thiserror::Error;
-
-/// Root error type
-#[derive(Error, Debug)]
-pub enum Error {
-    #[allow(missing_docs)]
-    #[error(transparent)]
-    DecodingError(#[from] decoding::Error),
-    #[allow(missing_docs)]
-    #[cfg(all(feature = "std", unix))]
-    #[error(transparent)]
-    PackingError(#[from] packing::Error),
-    #[allow(missing_docs)]
-    #[cfg(all(feature = "std", unix))]
-    #[error(transparent)]
-    UnpackingError(#[from] unpacking::Error),
-}
 
 /// A path internally represented with [`Bytes`].
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]

@@ -1,21 +1,26 @@
-use std::sync::Arc;
+use std::{
+    process::{ExitStatus, Output},
+    sync::Arc,
+};
 
 use log::debug;
 use serde::Deserialize;
-use thiserror::Error;
 
 use xh_engine::{builder::InitializeContext, executor::Executor};
+use xh_reports::prelude::*;
 
-#[derive(Error, Debug)]
-pub enum Error {
-    // TODO: improve this error
-    #[error("command exited with code {0:?}")]
-    CommandFailed(std::process::ExitStatus),
-    #[error(transparent)]
-    IOError(#[from] std::io::Error),
-    #[error(transparent)]
-    Utf8Error(#[from] std::string::FromUtf8Error),
+#[derive(Debug, IntoReport)]
+#[message("external command failed")]
+#[context(status)]
+#[attachment(stderr)]
+pub struct CommandError {
+    status: ExitStatus,
+    stderr: String,
 }
+
+#[derive(Default, Debug, IntoReport)]
+#[message("could not execute request")]
+pub struct Error;
 
 #[derive(Default, Debug, Deserialize)]
 #[serde(default)]
@@ -66,7 +71,7 @@ pub struct BubblewrapExecutor {
 }
 
 impl BubblewrapExecutor {
-#[inline]
+    #[inline]
     pub fn new(ctx: Arc<InitializeContext>, options: Options) -> Self {
         Self { ctx, options }
     }
@@ -146,10 +151,18 @@ impl Executor for BubblewrapExecutor {
             .arg(request.program)
             .args(request.arguments);
 
-        let status = sandboxed.spawn()?.wait().await?;
+        let Output {
+            status,
+            stderr,
+            stdout: _,
+        } = sandboxed.output().await.wrap()?;
         status
             .success()
             .then_some(())
-            .ok_or(Error::CommandFailed(status))
+            .ok_or(CommandError {
+                status,
+                stderr: String::from_utf8_lossy(&stderr).to_string(),
+            })
+            .wrap()
     }
 }

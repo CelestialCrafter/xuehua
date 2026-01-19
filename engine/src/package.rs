@@ -1,11 +1,11 @@
 pub mod manifest;
 
-use std::{fmt, str::FromStr};
+use std::{fmt, result::Result as StdResult, str::FromStr};
 
 use educe::Educe;
 use petgraph::graph::NodeIndex;
 use smol_str::SmolStr;
-use thiserror::Error;
+use xh_reports::prelude::*;
 
 use crate::backend::Backend;
 
@@ -28,18 +28,22 @@ impl fmt::Display for LinkTime {
     }
 }
 
-#[derive(Error, Debug)]
-#[error("could not parse link time (expected \"buildtime\" or \"runtime\", found: {0:?})")]
-pub struct LinkTimeParseError(String);
+#[derive(Debug, IntoReport)]
+#[message("could not parse link time")]
+#[suggestion("provide \"buildtime\" or \"runtime\"")]
+#[context(found)]
+pub struct LinkTimeParseError {
+    found: SmolStr,
+}
 
 impl FromStr for LinkTime {
-    type Err = LinkTimeParseError;
+    type Err = Report<LinkTimeParseError>;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
         match s {
             "buildtime" => Ok(LinkTime::Buildtime),
             "runtime" => Ok(LinkTime::Runtime),
-            _ => Err(LinkTimeParseError(s.to_string())),
+            _ => Err(LinkTimeParseError { found: s.into() }.into_report()),
         }
     }
 }
@@ -63,7 +67,7 @@ impl fmt::Display for PackageName {
 impl FromStr for PackageName {
     type Err = std::convert::Infallible;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
         let (identifier, namespace) = s.split_once("@").unwrap_or((s, Default::default()));
 
         let identifier = SmolStr::new(identifier);

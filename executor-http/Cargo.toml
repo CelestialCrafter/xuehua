@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ureq = "3.1.2"
+xh-engine.workspace = true
+xh-reports.workspace = true
 log.workspace = true
 serde.workspace = true
-thiserror.workspace = true
-xh-engine.workspace = true
 tokio = { workspace = true, features = ["rt"] }
+ureq = "3.1.2"

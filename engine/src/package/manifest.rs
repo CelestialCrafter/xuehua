@@ -3,7 +3,7 @@ use std::{borrow::Borrow, collections::HashMap, ops::Deref};
 use crate::{
     backend::Backend,
     planner::{PackageId, Plan},
-    store::{ArtifactId, Store},
+    store::{ArtifactId, Error, Store},
 };
 
 #[derive(Default)]
@@ -22,15 +22,15 @@ impl Manifest {
         self,
         iter: impl IntoIterator<Item = impl Borrow<PackageId>>,
         store: &S,
-    ) -> Result<Self, S::Error> {
+    ) -> Result<Self, Error> {
         todo!()
     }
 
-    pub async fn create<B: Backend, S: Store>(plan: &Plan<B>, store: &S) -> Result<Self, S::Error> {
+    pub async fn create<B: Backend, S: Store>(plan: &Plan<B>, store: &S) -> Result<Self, Error> {
         todo!()
     }
 
-    pub async fn update<S: Store>(self, store: &S) -> Result<Self, S::Error> {
+    pub async fn update<S: Store>(self, store: &S) -> Result<Self, Error> {
         todo!()
     }
 }

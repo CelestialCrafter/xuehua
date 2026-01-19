@@ -1,45 +1,43 @@
-use thiserror::Error;
 use xh_archive::Event;
+use xh_reports::prelude::*;
 
 use crate::{
     planner::PackageId,
-    store::{ArtifactId, Store, StoreArtifact, StorePackage},
+    store::{ArtifactId, Error, Store, StoreArtifact, StorePackage},
 };
 
-#[derive(Error, Debug)]
-#[error("registry is unimplemented for EmptyStore")]
+#[derive(Debug, IntoReport)]
+#[message("registry is unimplemented for EmptyStore")]
 pub struct CannotRegister;
 
 #[derive(Default, Clone, Copy)]
 pub struct EmptyStore;
 
 impl Store for EmptyStore {
-    type Error = CannotRegister;
-
     async fn register_package(
         &mut self,
         _package: &PackageId,
         _artifact: &ArtifactId,
-    ) -> Result<StorePackage, Self::Error> {
-        Err(CannotRegister)
+    ) -> Result<StorePackage, Error> {
+        Err(CannotRegister.wrap())
     }
 
-    async fn package(&self, _package: &PackageId) -> Result<Option<StorePackage>, Self::Error> {
+    async fn package(&self, _package: &PackageId) -> Result<Option<StorePackage>, Error> {
         Ok(None)
     }
 
     async fn register_artifact(
         &mut self,
         _archive: Vec<Event>,
-    ) -> Result<StoreArtifact, Self::Error> {
-        Err(CannotRegister)
+    ) -> Result<StoreArtifact, Error> {
+        Err(CannotRegister.wrap())
     }
 
-    async fn artifact(&self, _artifact: &ArtifactId) -> Result<Option<StoreArtifact>, Self::Error> {
+    async fn artifact(&self, _artifact: &ArtifactId) -> Result<Option<StoreArtifact>, Error> {
         Ok(None)
     }
 
-    async fn download(&self, _artifact: &ArtifactId) -> Result<Option<Vec<Event>>, Self::Error> {
+    async fn download(&self, _artifact: &ArtifactId) -> Result<Option<Vec<Event>>, Error> {
         Ok(None)
     }
 }

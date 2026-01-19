@@ -3,33 +3,31 @@ use std::{fs::create_dir, path::PathBuf, sync::Arc};
 use futures_util::{FutureExt, future::BoxFuture};
 use petgraph::graph::NodeIndex;
 use smol_str::SmolStr;
-use thiserror::Error;
-use xh_archive::{
-    Event,
-    packing::{Error as PackingError, Packer},
-};
+use xh_archive::{Event, packing::Packer};
+use xh_reports::{compat::StdCompat, prelude::*};
 
 use crate::{
     backend::Backend,
     executor::Executor,
     package::DispatchRequest,
     planner::{Frozen, Planner},
-    utils::BoxDynError,
 };
 
-#[derive(Error, Debug)]
-pub enum Error<B: Backend> {
-    #[error("executor {0} not found")]
-    UnregisteredExecutor(SmolStr),
-    #[error(transparent)]
-    IOError(#[from] std::io::Error),
-    #[error(transparent)]
-    PackingError(#[from] PackingError),
-    #[error(transparent)]
-    BackendError(B::Error),
-    #[error(transparent)]
-    ExecutorError(#[from] BoxDynError),
+#[derive(Debug, IntoReport)]
+#[message("executor not found")]
+#[suggestion("provide a registered executor")]
+#[context(name)]
+pub struct UnregisteredExecutorError {
+    pub name: SmolStr,
 }
+
+#[derive(Default, Debug, IntoReport)]
+#[message("could not initialize executor")]
+pub struct InitializationError;
+
+#[derive(Default, Debug, IntoReport)]
+#[message("could not build package")]
+pub struct Error;
 
 pub type BuildId = u64;
 
@@ -53,38 +51,41 @@ where
 {
     type Output;
 
-    fn initialize(&self, ctx: Arc<InitializeContext>) -> Result<Self::Output, BoxDynError>;
+    fn initialize(&self, ctx: Arc<InitializeContext>) -> Result<Self::Output, InitializationError>;
 }
 
 impl Initialize for ExecutorPair<()> {
     type Output = ExecutorPair<()>;
 
-    fn initialize(&self, _ctx: Arc<InitializeContext>) -> Result<Self::Output, BoxDynError> {
+    fn initialize(
+        &self,
+        _ctx: Arc<InitializeContext>,
+    ) -> Result<Self::Output, InitializationError> {
         Ok(ExecutorPair(()))
     }
 }
 
 impl<E, F, T> Initialize for ExecutorPair<(F, T)>
 where
-    F: Fn(Arc<InitializeContext>) -> Result<E, BoxDynError>,
+    F: Fn(Arc<InitializeContext>) -> Result<E, InitializationError>,
     T: Initialize,
 {
     type Output = ExecutorPair<(E, T::Output)>;
 
-    fn initialize(&self, ctx: Arc<InitializeContext>) -> Result<Self::Output, BoxDynError> {
+    fn initialize(&self, ctx: Arc<InitializeContext>) -> Result<Self::Output, InitializationError> {
         let (head, tail) = &self.0;
         Ok(ExecutorPair((head(ctx.clone())?, tail.initialize(ctx)?)))
     }
 }
 
-type DispatchResult<'a, B> = Option<BoxFuture<'a, Result<(), Error<B>>>>;
+type DispatchResult<'a> = Option<BoxFuture<'a, Result<(), Error>>>;
 
 pub trait Dispatch<B: Backend> {
     fn dispatch<'a>(
         &'a mut self,
         backend: &'a B,
         request: &DispatchRequest<B>,
-    ) -> DispatchResult<'a, B>;
+    ) -> DispatchResult<'a>;
 }
 
 impl<B: Backend + Send + Sync> Dispatch<B> for ExecutorPair<()> {
@@ -92,7 +93,7 @@ impl<B: Backend + Send + Sync> Dispatch<B> for ExecutorPair<()> {
         &'a mut self,
         _backend: &'a B,
         _request: &DispatchRequest<B>,
-    ) -> DispatchResult<'a, B> {
+    ) -> DispatchResult<'a> {
         None
     }
 }
@@ -107,24 +108,17 @@ where
         &'a mut self,
         backend: &'a B,
         request: &DispatchRequest<B>,
-    ) -> DispatchResult<'a, B> {
+    ) -> DispatchResult<'a> {
         if E::NAME == request.executor {
             let payload = request.payload.clone();
-            let future = (async move || {
-                let payload = match backend.deserialize(payload).map_err(Error::BackendError) {
-                    Ok(v) => v,
-                    Err(err) => return Err(err),
-                };
 
-                let executor = &mut self.0.0;
-                executor
-                    .execute(payload)
-                    .await
-                    .map_err(BoxDynError::from)
-                    .map_err(Into::into)
-            })();
-
-            Some(future.boxed())
+            Some(
+                (async move || {
+                    let payload = backend.deserialize(payload).wrap()?;
+                    self.0.0.execute(payload).await.wrap()
+                })()
+                .boxed(),
+            )
         } else {
             self.0.1.dispatch(backend, request)
         }
@@ -138,7 +132,7 @@ pub struct Builder<B, T> {
 }
 
 impl<B: Backend> Builder<B, ExecutorPair<()>> {
-#[inline]
+    #[inline]
     pub fn new(root: PathBuf, backend: Arc<B>) -> Self {
         Self {
             root,
@@ -157,7 +151,7 @@ where
     pub fn register<E, F>(self, init: F) -> Builder<B, ExecutorPair<(F, T)>>
     where
         E: Executor,
-        F: Fn(Arc<InitializeContext>) -> Result<E, BoxDynError>,
+        F: Fn(Arc<InitializeContext>) -> Result<E, InitializationError>,
     {
         Builder {
             root: self.root,
@@ -170,14 +164,16 @@ where
         self.root.join(id.to_string())
     }
 
-    pub fn fetch(&self, build: &BuildId) -> Result<Option<Vec<Event>>, Error<B>> {
+    pub fn fetch(&self, build: &BuildId) -> Result<Option<Vec<Event>>, Error> {
         let output = self.environment_path(build).join("output");
-        if !std::fs::exists(&output)? {
+        if !std::fs::exists(&output).compat().wrap()? {
             return Ok(None);
         }
 
         let mut packer = Packer::new(output);
-        let archive = unsafe { packer.pack_mmap_iter() }.collect::<Result<Vec<_>, _>>()?;
+        let archive = unsafe { packer.pack_mmap_iter() }
+            .collect::<Result<Vec<_>, _>>()
+            .wrap()?;
 
         Ok(Some(archive))
     }
@@ -186,22 +182,31 @@ where
         &self,
         planner: &Planner<Frozen<'_, B>>,
         request: BuildRequest,
-    ) -> Result<(), Error<B>> {
+    ) -> Result<(), Error> {
         let environment = self.environment_path(&request.id);
-        create_dir(&environment)?;
-        create_dir(environment.join("output"))?;
+
+        create_dir(&environment)
+            .and_then(|()| create_dir(environment.join("output")))
+            .compat()
+            .wrap()?;
 
         // TODO: link closure
         // planner.closure(request.target);
 
         let mut executors = self
             .executors
-            .initialize(InitializeContext { environment }.into())?;
+            .initialize(InitializeContext { environment }.into())
+            .wrap()?;
 
         for request in &planner.graph()[request.target].requests {
             executors
                 .dispatch(&self.backend, request)
-                .ok_or_else(|| Error::UnregisteredExecutor(request.executor.clone()))?
+                .ok_or_else(|| {
+                    UnregisteredExecutorError {
+                        name: request.executor.clone(),
+                    }
+                    .wrap()
+                })?
                 .await?;
         }
 

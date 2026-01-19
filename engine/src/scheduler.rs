@@ -3,6 +3,7 @@ use std::sync::mpsc;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use log::{debug, trace};
 use petgraph::{Direction, graph::NodeIndex, visit::Dfs};
+use xh_reports::Result;
 
 use crate::{
     backend::Backend,
@@ -19,13 +20,13 @@ enum PackageState {
 
 // TODO: add the ability for packages to report custom statuses
 #[derive(Debug)]
-pub enum Event<B: Backend> {
+pub enum Event {
     Started {
         request: BuildRequest,
     },
     Finished {
         request: BuildRequest,
-        result: Result<(), BuilderError<B>>,
+        result: Result<(), BuilderError>,
     },
 }
 
@@ -62,7 +63,7 @@ where
         }
     }
 
-    pub async fn schedule(&mut self, targets: &[NodeIndex], events: mpsc::Sender<Event<B>>) {
+    pub async fn schedule(&mut self, targets: &[NodeIndex], events: mpsc::Sender<Event>) {
         let mut futures = FuturesUnordered::new();
         let plan = self.planner.graph();
 

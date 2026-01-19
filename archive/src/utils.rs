@@ -1,7 +1,28 @@
+pub(crate) use log::*;
+
+use crate::{Object, ObjectContent};
+
 use bytes::{BufMut, Bytes};
+use xh_reports::{Frame, Report, impl_compat};
 
 pub const MAGIC: &str = "xuehua-archive";
 pub const VERSION: u16 = 1;
+
+impl_compat!(
+    ArchiveCompat,
+    (bytes::TryGetError, |error| {
+        let frames = [
+            Frame::context("requested", error.requested),
+            Frame::context("available", error.available),
+            Frame::suggestion(format!(
+                "provide {} more byes",
+                error.requested - error.available
+            )),
+        ];
+
+        Report::from_error(error).with_frames(frames)
+    })
+);
 
 #[derive(Clone, Copy)]
 pub enum Marker {
@@ -85,7 +106,3 @@ mod log {
 
     pub(crate) use {_warn as warn, debug, error, info, trace};
 }
-
-pub(crate) use log::*;
-
-use crate::{Object, ObjectContent};

@@ -22,7 +22,7 @@ pub enum ProjectFormat {
 impl FromStr for ProjectFormat {
     type Err = FormatParseError;
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "dot" => Ok(Self::Dot),
             "json" => Ok(Self::Json),
@@ -40,7 +40,7 @@ pub enum PackageFormat {
 impl FromStr for PackageFormat {
     type Err = FormatParseError;
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "human" => Ok(Self::Human),
             "json" => Ok(Self::Json),

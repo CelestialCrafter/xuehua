@@ -8,19 +8,21 @@ use std::{
 };
 
 use bytes::Bytes;
-use thiserror::Error;
+use xh_reports::{compat::StdCompat, prelude::*};
 
 use crate::{Event, Object, ObjectContent, PathBytes, utils::debug};
 
 /// Error type for unpacking
-#[derive(Error, Debug)]
-pub enum Error {
-    /// An invalid path was in the index
-    #[error("invalid path: {0:?}")]
-    InvalidPath(PathBytes),
-    #[allow(missing_docs)]
-    #[error(transparent)]
-    IOError(#[from] std::io::Error),
+#[derive(Default, Debug, IntoReport)]
+#[message("could not unpack archive")]
+pub struct Error;
+
+/// An invalid path was in the index
+#[derive(Debug, IntoReport)]
+#[message("invalid path")]
+#[context(debug: path)]
+pub struct InvalidPathError {
+    path: PathBytes,
 }
 
 // TODO: impl overwrite option
@@ -31,18 +33,14 @@ pub struct Unpacker<'a> {
     root: &'a Path,
 }
 
-type WriteFileFn = fn(&Path, &Bytes) -> Result<(), Error>;
+type WriteFileFn = fn(&Path, &Bytes) -> StdResult<(), std::io::Error>;
 
-fn verify_path(path: &PathBytes) -> Result<&PathBytes, Error> {
-    if path
-        .as_ref()
+fn verify_path(path: &PathBytes) -> Result<&PathBytes, InvalidPathError> {
+    path.as_ref()
         .components()
         .all(|c| matches!(c, Component::Normal(..)))
-    {
-        Ok(path)
-    } else {
-        Err(Error::InvalidPath(path.clone()))
-    }
+        .then_some(path)
+        .ok_or_else(|| InvalidPathError { path: path.clone() }.into_report())
 }
 
 impl<'a> Unpacker<'a> {
@@ -99,7 +97,7 @@ impl<'a> Unpacker<'a> {
     fn process(&mut self, event: &Event, write_file: WriteFileFn) -> Result<(), Error> {
         if let Event::Object(object) = event {
             debug!("unpacking object: {object:?}");
-            process_object(self.root, object, write_file)
+            process_object(self.root, object, write_file).wrap()
         } else {
             Ok(())
         }
@@ -107,7 +105,7 @@ impl<'a> Unpacker<'a> {
 }
 
 fn process_object(root: &Path, object: &Object, write_file: WriteFileFn) -> Result<(), Error> {
-    let location = root.join(verify_path(&object.location)?);
+    let location = root.join(verify_path(&object.location).wrap()?);
     debug!("unpacking to {}", location.display());
 
     let set_permissions =
@@ -115,25 +113,23 @@ fn process_object(root: &Path, object: &Object, write_file: WriteFileFn) -> Resu
 
     match &object.content {
         ObjectContent::File { data } => {
-            write_file(&location, &data)?;
-            set_permissions()?;
+            write_file(&location, &data).and_then(|()| set_permissions())
         }
-        ObjectContent::Symlink { target } => symlink(target, &location)?,
-        ObjectContent::Directory => {
-            fs::create_dir(&location)?;
-            set_permissions()?;
-        }
-    };
+        ObjectContent::Symlink { target } => symlink(target, &location),
+        ObjectContent::Directory => fs::create_dir(&location).and_then(|()| set_permissions()),
+    }
+    .compat()
+    .wrap()?;
 
     Ok(())
 }
 
-fn write_file_default(path: &Path, contents: &Bytes) -> Result<(), Error> {
+fn write_file_default(path: &Path, contents: &Bytes) -> StdResult<(), std::io::Error> {
     fs::write(path, contents).map_err(Into::into)
 }
 
 #[cfg(feature = "mmap")]
-fn write_file_mmap(path: &Path, contents: &Bytes) -> Result<(), Error> {
+fn write_file_mmap(path: &Path, contents: &Bytes) -> StdResult<(), std::io::Error> {
     let file = fs::OpenOptions::new()
         .create(true)
         .read(true)
@@ -146,8 +142,8 @@ fn write_file_mmap(path: &Path, contents: &Bytes) -> Result<(), Error> {
             .len(contents.len())
             .map_mut(&file)
     }?;
-    map.advise(memmap2::Advice::Sequential)?;
 
+    map.advise(memmap2::Advice::Sequential)?;
     map.copy_from_slice(&contents);
 
     Ok(())
