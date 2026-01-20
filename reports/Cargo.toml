@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["compat-std", "pretty"]
-compat-std = ["compat-core"]
+default = ["std", "pretty"]
+std = ["xh-reports-derive/std"]
+compat-std = ["std", "compat-core"]
 compat-core = []
 compat-bytes = ["dep:bytes"]
 pretty = ["dep:owo-colors"]

@@ -11,10 +11,9 @@ pub mod render;
 use alloc::{
     boxed::Box,
     string::{String, ToString},
-    vec,
     vec::Vec,
 };
-use core::{any::type_name, error::Error, fmt, marker::PhantomData, panic::Location};
+use core::{error::Error, fmt, marker::PhantomData, panic::Location};
 
 use educe::Educe;
 use log::{
@@ -32,13 +31,13 @@ pub type BoxDynError = Box<dyn Error + Send + Sync + 'static>;
 /// A single piece of information inside of a [`Report`].
 ///
 /// `Frame`s can be created via the [`Self::suggestion`], [`Self::context`], or [`Self::attachment`] methods.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frame {
     /// A collection of keys and values.
     ///
     /// This can be used to attach additional data such as:
     /// ids, timestamps, commands, etc.
-    Context(Vec<(SmolStr, String)>),
+    Context((SmolStr, String)),
     /// A long-form piece of information.
     ///
     /// This can be used to attach more detailed data such as:
@@ -52,17 +51,12 @@ pub enum Frame {
 
 impl Frame {
     /// Helper function to create [`Self::Context`]s.
-    pub fn context<K, V, I>(context: I) -> Self
+    pub fn context<K, V>(key: K, value: V) -> Self
     where
         K: Into<SmolStr>,
         V: fmt::Display,
-        I: IntoIterator<Item = (K, V)>,
     {
-        let context = context
-            .into_iter()
-            .map(|(key, value): (K, V)| (key.into(), value.to_string()))
-            .collect();
-        Self::Context(context)
+        Self::Context((key.into(), value.to_string()))
     }
 
     /// Helper function to create [`Self::Suggestion`]s.
@@ -93,6 +87,39 @@ struct ReportInner {
     level: Level,
 }
 
+impl ReportInner {
+    fn new(
+        error: BoxDynError,
+        type_name: &'static str,
+        location: &'static Location<'static>,
+    ) -> Self {
+        fn walk(error: &dyn Error, location: &'static Location<'static>) -> Vec<Report<Erased>> {
+            // I FINALLY GET TO USE <Option<T> as IntoIterator<Item = T>> YAAAAY :3
+            error
+                .source()
+                .map(|source| Report {
+                    inner: ReportInner::new(
+                        SourceError(source.to_string()).into(),
+                        core::any::type_name::<SourceError>(),
+                        location,
+                    )
+                    .into(),
+                    _marker: PhantomData,
+                })
+                .into_iter()
+                .collect()
+        }
+        Self {
+            children: walk(&*error, location),
+            error,
+            frames: Default::default(),
+            type_name,
+            location,
+            level: Level::Error,
+        }
+    }
+}
+
 /// A tree of errors.
 ///
 /// Each report contains [`Frame`]s, child [`Report`]s,
@@ -116,44 +143,41 @@ impl<E> Report<E> {
         E: Error + 'static,
         E: Send + Sync,
     {
-        fn walk(error: &dyn Error, location: &'static Location<'static>) -> Vec<Report<Erased>> {
-            if let Some(source) = error.source() {
-                vec![Report {
-                    inner: Box::new(ReportInner {
-                        children: walk(source, location),
-                        error: Box::new(SourceError(source.to_string())),
-                        frames: Default::default(),
-                        type_name: type_name::<SourceError>(),
-                        location,
-                        level: Level::Error,
-                    }),
-                    _marker: PhantomData,
-                }]
-            } else {
-                vec![]
-            }
-        }
-
-        let location = Location::caller();
         Self {
-            inner: Box::new(ReportInner {
-                children: walk(&error, location),
-                error: Box::new(error),
-                frames: Default::default(),
-                type_name: type_name::<E>(),
-                location,
-                level: Level::Error,
-            }),
+            inner: ReportInner::new(
+                error.into(),
+                core::any::type_name::<E>(),
+                Location::caller(),
+            )
+            .into(),
             _marker: PhantomData,
         }
     }
 
     /// Retrieves the error associated with this `Report`.
-    pub fn error(&self) -> &(dyn Error + Send + Sync) {
+    ///
+    /// To retrieve a typed error, see [`Report::downcast`].
+    pub fn error(&self) -> &(dyn Error + Send + Sync + 'static) {
         &*self.inner.error
     }
 
+    /// Retrieves the typed error associated with this `Report`.
+    ///
+    /// # Errors
+    ///
+    /// If the report was erased, this method returns an
+    /// error with the value of [`Report::error`].
+    pub fn downcast(&self) -> Result<&E, &(dyn Error + Send + Sync)>
+    where
+        E: Error + 'static,
+    {
+        let error = self.error();
+        error.downcast_ref().ok_or(error)
+    }
+
     /// Retrieves the type name that the `Report` was created with.
+    ///
+    /// # Notes
     ///
     /// This method has the same semantics as [`core::any::type_name`].
     pub fn type_name(&self) -> &'static str {
@@ -303,13 +327,6 @@ impl<E: IntoReport> From<E> for Report<E> {
     }
 }
 
-#[cfg(not(any(
-    feature = "compat-core",
-    feature = "compat-std",
-    feature = "compat-bytes"
-)))]
-impl IntoReport for Error {}
-
 #[cfg(feature = "compat-core")]
 impl IntoReport for core::num::TryFromIntError {}
 
@@ -323,7 +340,7 @@ impl IntoReport for std::io::Error {
         let suggestion = match self.kind() {
             ErrorKind::NotFound => Some(Frame::suggestion("try providing an existing file")),
             ErrorKind::PermissionDenied => Some(Frame::suggestion(
-                "try modifying the resource's permissions",
+                "try providing a resource with the appropriate permissions available",
             )),
             ErrorKind::AlreadyExists => Some(Frame::suggestion("try providing a different file")),
             ErrorKind::DirectoryNotEmpty => {
@@ -332,7 +349,7 @@ impl IntoReport for std::io::Error {
             _ => None,
         };
 
-        let frames = std::iter::once(suggestion).filter_map(|f| f);
+        let frames = core::iter::once(suggestion).filter_map(|f| f);
         Report::new(self).with_frames(frames)
     }
 }
@@ -340,7 +357,11 @@ impl IntoReport for std::io::Error {
 #[cfg(feature = "compat-bytes")]
 impl IntoReport for bytes::TryGetError {
     fn into_report(self) -> Report<Self> {
-        let frame = Frame::context([("requested", self.requested), ("available", self.available)]);
+        let frames = [
+            Frame::context("requested", self.requested),
+            Frame::context("available", self.available),
+        ];
+
         Report::new(self).with_frame(frame)
     }
 }
@@ -353,8 +374,8 @@ impl IntoReport for bytes::TryGetError {
 pub struct LogError {
     message: String,
     level: Level,
-    children: Vec<Report<Erased>>,
     frames: Vec<Frame>,
+    children: Vec<Report<LogSubError>>,
 }
 
 #[derive(Error, Debug)]
@@ -367,21 +388,19 @@ impl LogError {
         #[derive(Default)]
         struct FrameVisitor {
             frames: Vec<Frame>,
-            children: Vec<Report<Erased>>,
-            context: Vec<(SmolStr, String)>,
+            children: Vec<Report<LogSubError>>,
         }
 
         impl VisitSource<'_> for FrameVisitor {
             fn visit_pair(&mut self, key: Key<'_>, value: Value<'_>) -> Result<(), log::kv::Error> {
                 match key.as_str() {
-                    "suggestion" => self.frames.push(Frame::Suggestion(value.to_smolstr())),
-                    "attachment" => self.frames.push(Frame::Attachment(value.to_string())),
-                    "error" => {
-                        let report = Report::new(LogSubError(value.to_string())).erased();
-                        self.children.push(report)
-                    }
-                    key => self.context.push((key.into(), value.to_string())),
-                }
+                    "suggestion" => self.frames.push(Frame::suggestion(value.to_smolstr())),
+                    "attachment" => self.frames.push(Frame::attachment(value)),
+                    "error" => self
+                        .children
+                        .push(Report::new(LogSubError(value.to_string()))),
+                    key => self.frames.push(Frame::context(key, value)),
+                };
 
                 Ok(())
             }
@@ -389,17 +408,15 @@ impl LogError {
 
         let mut visitor = FrameVisitor::default();
         record.key_values().visit(&mut visitor).unwrap();
-
         visitor
-            .context
-            .push(("target".into(), record.target().to_string()));
-        visitor.frames.push(Frame::context(visitor.context));
+            .frames
+            .push(Frame::context("target", record.target()));
 
         Self {
             message: record.args().to_string(),
             level: record.level(),
-            frames: visitor.frames,
             children: visitor.children,
+            frames: visitor.frames,
         }
     }
 }
@@ -407,8 +424,8 @@ impl LogError {
 impl IntoReport for LogError {
     fn into_report(mut self) -> Report<Self> {
         let frames = core::mem::take(&mut self.frames);
-        let level = self.level;
         let children = core::mem::take(&mut self.children);
+        let level = self.level;
 
         Report::new(self)
             .with_frames(frames)

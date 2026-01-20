@@ -260,20 +260,22 @@ impl<E> PrettyDisplayer<'_, E> {
         }
 
         // context pass
+        let mut first = true;
         for frame in frames {
-            let Frame::Context(context) = frame else {
+            let Frame::Context((key, value)) = frame else {
                 continue;
             };
 
-            writeln!(fmt, "{prefix}{}", headers.context.style(styles.context))?;
-
-            for (k, v) in context {
-                writeln!(
-                    fmt,
-                    "{prefix}  {}",
-                    format_args!("{k}: {v}").style(styles.distracting)
-                )?;
+            if first {
+                writeln!(fmt, "{prefix}{}", headers.context.style(styles.context))?;
+                first = false;
             }
+
+            writeln!(
+                fmt,
+                "{prefix}  {}",
+                format_args!("{key}: {value}").style(styles.distracting)
+            )?;
         }
 
         // attachment pass

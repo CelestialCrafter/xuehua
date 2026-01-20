@@ -24,13 +24,17 @@ fn build_frames<'a>(input: &DeriveInput) -> TokenStream {
         fields: &Fields,
         instructions: impl Iterator<Item = (FrameType, &'a Attribute)>,
     ) -> impl Iterator<Item = TokenStream> {
-        instructions.map(move |(ty, attr)| {
-            flatten_result(match ty {
-                FrameType::Suggestion => build_suggestion(fields, attr),
-                FrameType::Attachment => build_attachment(attr),
-                FrameType::Context => build_context(attr),
+        instructions
+            .map(move |(ty, attr)| match ty {
+                FrameType::Suggestion => vec![build_suggestion(fields, attr)],
+                FrameType::Attachment => vec![build_attachment(attr)],
+                FrameType::Context => match build_context(attr) {
+                    Ok(iter) => iter.map(Ok).collect(),
+                    Err(err) => vec![Err(err)],
+                },
             })
-        })
+            .flatten()
+            .map(flatten_result)
     }
 
     match &input.data {
@@ -152,8 +156,8 @@ fn build_attachment(attr: &Attribute) -> Result<TokenStream, Error> {
     Ok(quote! { ::xh_reports::Frame::attachment(#member) })
 }
 
-fn build_context(attr: &Attribute) -> Result<TokenStream, Error> {
-    let (keys, values): (Vec<_>, Vec<_>) = attr
+fn build_context(attr: &Attribute) -> Result<impl Iterator<Item = TokenStream>, Error> {
+    let iter = attr
         .parse_args_with(Punctuated::<Member, Token![,]>::parse_terminated)?
         .into_iter()
         .map(|member| {
@@ -162,11 +166,13 @@ fn build_context(attr: &Attribute) -> Result<TokenStream, Error> {
                 Member::Unnamed(index) => (index.index.to_string(), index.span),
             };
 
-            (LitStr::new(&string, span), escape_member(member))
-        })
-        .unzip();
+            let key = LitStr::new(&string, span);
+            let value = escape_member(member);
 
-    Ok(quote! { ::xh_reports::Frame::context([#((#keys, format_args!("{:?}", #values))),*]) })
+            quote! { ::xh_reports::Frame::context(#key, format_args!("{:?}", #value)) }
+        });
+
+    Ok(iter)
 }
 
 fn flatten_result(result: Result<TokenStream, Error>) -> TokenStream {
