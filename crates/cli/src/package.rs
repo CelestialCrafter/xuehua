@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::options::{
-    cli::{PackageAction, ProjectFormat},
+    action::{PackageAction, ProjectFormat},
     get_opts,
 };
 
@@ -29,7 +29,7 @@ use xh_executor_http::{HttpExecutor, Options as HttpExecutorOptions};
 use xh_reports::{partition_results, prelude::*};
 use xh_store_sqlite::SqliteStore;
 
-use crate::options::cli::{InspectAction, PackageFormat};
+use crate::options::action::{InspectAction, PackageFormat};
 
 #[derive(Debug, IntoReport)]
 pub enum PackageActionError {

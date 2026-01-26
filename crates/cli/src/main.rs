@@ -14,7 +14,7 @@ use xh_reports::{
     tracing::ReportLayer,
 };
 
-use crate::options::{OPTIONS, Options, cli::Action, get_opts};
+use crate::options::{OPTIONS, Options, action::Action, get_opts};
 
 fn init() -> Result<(), ()> {
     // TODO: support json rendering via cli arg
@@ -57,7 +57,7 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    if let Err(report) = match &get_opts().cli.action {
+    if let Err(report) = match &get_opts().action {
         Action::Package { project, action } => package::handle(project, action).await.erased(),
         Action::Archive(action) => archive::handle(action).erased(),
     } {

@@ -1,6 +1,7 @@
 pub mod base;
-pub mod cli;
+pub mod action;
 
+use pico_args::Arguments;
 use xh_reports::prelude::*;
 
 use std::sync::OnceLock;
@@ -12,14 +13,14 @@ pub fn get_opts() -> &'static Options {
 }
 
 pub struct Options {
-    pub cli: cli::Options,
+    pub action: action::Action,
     pub base: base::BaseOptions,
 }
 
 impl Options {
     pub fn run() -> Result<Self, ()> {
         Ok(Options {
-            cli: cli::Options::new().run(),
+            action: action::Action::parse(&mut Arguments::from_env(), &mut Vec::new()).erased()?,
             base: base::BaseOptions::read().erased()?,
         })
     }
