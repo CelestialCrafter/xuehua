@@ -7,7 +7,10 @@ use std::process::ExitCode;
 
 use xh_reports::prelude::*;
 
-use crate::{log::{Logger, log_report}, options::{OPTIONS, Options, cli::Action, get_opts}};
+use crate::{
+    log::{Logger, log_report},
+    options::{OPTIONS, Options, cli::Action, get_opts},
+};
 
 fn init() -> Result<(), ()> {
     Logger::init();
@@ -27,7 +30,7 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    if let Err(report) = match &get_opts().cli.action {
+    if let Err(report) = match &get_opts().action {
         Action::Package { project, action } => package::handle(project, action).await.erased(),
         Action::Archive(action) => archive::handle(action).erased(),
     } {
