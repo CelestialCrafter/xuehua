@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     io::Write,
     path::Path,
     sync::{Arc, mpsc},
@@ -13,8 +12,7 @@ use crate::options::{
 use petgraph::{Direction, dot, graph::NodeIndex, visit::EdgeRef};
 use tokio::task;
 use tracing::info;
-// use xh_backend_lua::LuaBackend;
-use xh_backend_arch::ArchBackend;
+use xh_backend_lua::LuaBackend;
 use xh_engine::{
     backend::Backend,
     builder::Builder,
@@ -43,15 +41,11 @@ pub enum PackageActionError {
 
 pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
     let mut planner = Planner::new();
-    ArchBackend::new(xh_backend_arch::Options {
-        mirror: "http://mirrors.acm.wpi.edu/archlinux".to_string(),
-        architecture: "x86_64".into(),
-        repos: Vec::default(),
-        priorities: BTreeMap::default(),
-    })
-    .plan(&mut planner, project)
-    .wrap_with(PackageActionError::Initialize)
-    .erased()?;
+    LuaBackend::new(xh_backend_lua::Options { sandbox: false })
+        .erased()?
+        .plan(&mut planner, project)
+        .wrap_with(PackageActionError::Initialize)
+        .erased()?;
 
     let planner = planner
         .freeze()
