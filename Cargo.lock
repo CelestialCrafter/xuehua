@@ -252,16 +252,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36f64beae40a84da1b4b26ff2761a5b895c12adc41dc25aaee1c4f2bbfe97a6e"
 
 [[package]]
-name = "bpaf"
-version = "0.9.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b86829876e7e200161a5aa6ea688d46c32d64d70ee3100127790dde84688d6e"
-dependencies = [
- "owo-colors",
- "supports-color",
-]
-
-[[package]]
 name = "bs58"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1272,12 +1262,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "is_ci"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7655c9839580ee829dfacba1d1278c2b7883e50a277ff7541299489d6bdfdc45"
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1597,6 +1581,12 @@ dependencies = [
  "indexmap 2.14.0",
  "serde",
 ]
+
+[[package]]
+name = "pico-args"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
 
 [[package]]
 name = "pin-project-lite"
@@ -2175,15 +2165,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "supports-color"
-version = "3.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c64fc7232dd8d2e4ac5ce4ef302b1d81e0b80d055b9d77c7c4f51f6aa4c867d6"
-dependencies = [
- "is_ci",
-]
 
 [[package]]
 name = "syn"
@@ -3001,13 +2982,15 @@ dependencies = [
 name = "xh-cli"
 version = "0.1.0"
 dependencies = [
- "bpaf",
  "bytes",
  "dirs",
  "ed25519-dalek",
+ "educe",
  "jiff",
  "memmap2",
+ "owo-colors",
  "petgraph",
+ "pico-args",
  "smol_str",
  "tempfile",
  "tokio",

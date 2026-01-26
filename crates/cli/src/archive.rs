@@ -9,7 +9,7 @@ use tempfile::tempfile;
 use xh_archive::{decoding::Decoder, encoding::Encoder, packing::Packer, unpacking::Unpacker};
 use xh_reports::prelude::*;
 
-use crate::options::cli::ArchiveAction;
+use crate::options::action::ArchiveAction;
 
 #[derive(Debug, IntoReport)]
 pub enum ArchiveActionError {

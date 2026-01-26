@@ -21,6 +21,7 @@ memmap2.workspace = true
 smol_str.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+educe.workspace = true
 petgraph.workspace = true
 jiff.workspace = true
 tempfile.workspace = true
@@ -28,4 +29,5 @@ bytes.workspace = true
 ed25519-dalek.workspace = true
 tokio.workspace = true
 dirs = "6.0.0"
-bpaf = { version = "0.9.22", features = ["bright-color"] }
+pico-args = "0.5.0"
+owo-colors = "4.3.0"

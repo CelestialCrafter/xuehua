@@ -1,9 +1,9 @@
+pub mod action;
 pub mod base;
-pub mod cli;
-
-use xh_reports::prelude::*;
 
 use std::sync::OnceLock;
+
+use crate::options::{action::Action, base::BaseOptions};
 
 pub static OPTIONS: OnceLock<Options> = OnceLock::new();
 
@@ -12,15 +12,12 @@ pub fn get_opts() -> &'static Options {
 }
 
 pub struct Options {
-    pub cli: cli::Options,
+    pub action: action::Action,
     pub base: base::BaseOptions,
 }
 
 impl Options {
-    pub fn run() -> Result<Self, ()> {
-        Ok(Options {
-            cli: cli::Options::new().run(),
-            base: base::BaseOptions::read().erased()?,
-        })
+    pub fn apply(base: BaseOptions, action: Action) -> Self {
+        Options { action, base }
     }
 }
