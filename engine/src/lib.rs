@@ -1,3 +1,5 @@
+pub type Value = serde_json::Value;
+
 pub mod backend;
 pub mod executor;
 pub mod package;

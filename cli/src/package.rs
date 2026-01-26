@@ -17,7 +17,7 @@ use xh_engine::{
     backend::Backend,
     builder::Builder,
     package::PackageName,
-    planner::{Frozen, Planner},
+    planner::Planner,
     scheduler::{Event, Scheduler},
     store::Store,
 };
@@ -39,25 +39,14 @@ pub enum PackageActionError {
 }
 
 pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
-    let backend = Arc::new(
-        LuaBackend::new()
-            .wrap_with(PackageActionError::Initialize)
-            .erased()?,
-    );
     let mut planner = Planner::new();
-    backend
-        .plan(&mut planner, project)
-        .wrap_with(PackageActionError::Initialize)
-        .erased()?;
-    let planner = planner
-        .freeze(backend.as_ref())
+    LuaBackend::new()
+        .and_then(|backend| backend.plan(&mut planner, project))
         .wrap_with(PackageActionError::Initialize)
         .erased()?;
 
     match action {
-        PackageAction::Build { packages, .. } => {
-            build(backend.clone(), &planner, packages).await.erased()?
-        }
+        PackageAction::Build { packages, .. } => build(&planner, packages).await.erased()?,
         PackageAction::Link { .. } => todo!("link action not implemented"),
         PackageAction::Inspect(action) => match action {
             InspectAction::Project { format } => inspect_project(&planner, format),
@@ -73,7 +62,7 @@ pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
 }
 
 fn inspect_packages(
-    planner: Planner<Frozen<'_, LuaBackend>>,
+    planner: Planner,
     packages: &Vec<PackageName>,
     format: &PackageFormat,
 ) -> Result<(), ()> {
@@ -112,7 +101,7 @@ fn inspect_packages(
     Ok(())
 }
 
-fn inspect_project(planner: &Planner<Frozen<'_, LuaBackend>>, format: &ProjectFormat) {
+fn inspect_project(planner: &Planner, format: &ProjectFormat) {
     match format {
         ProjectFormat::Dot => println!(
             "{:?}",
@@ -132,14 +121,13 @@ fn inspect_project(planner: &Planner<Frozen<'_, LuaBackend>>, format: &ProjectFo
 struct BuildActionError;
 
 async fn build(
-    backend: Arc<LuaBackend>,
-    planner: &Planner<Frozen<'_, LuaBackend>>,
+    planner: &Planner,
     packages: &Vec<PackageName>,
 ) -> StdResult<(), Report<BuildActionError>> {
     let locations = &get_opts().base.locations;
     let nodes = resolve_many(planner, packages).wrap()?;
     let mut store = LocalStore::new(locations.store.clone()).wrap()?;
-    let builder: Arc<_> = Builder::new(locations.build.clone(), backend.clone())
+    let builder: Arc<_> = Builder::new(locations.build.clone())
         .register(|ctx| Ok(BubblewrapExecutor::new(ctx, BubblewrapOptions::default())))
         .register(|ctx| Ok(HttpExecutor::new(ctx)))
         .into();
@@ -203,8 +191,8 @@ pub struct PackageResolveError {
     packages: Vec<PackageName>,
 }
 
-fn resolve_many<B: Backend>(
-    planner: &Planner<Frozen<'_, B>>,
+fn resolve_many(
+    planner: &Planner,
     packages: &Vec<PackageName>,
 ) -> Result<Vec<NodeIndex>, PackageResolveError> {
     let result = partition_result(

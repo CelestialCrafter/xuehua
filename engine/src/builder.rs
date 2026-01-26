@@ -1,17 +1,14 @@
 use std::{fs::create_dir, path::PathBuf, sync::Arc};
 
-use futures_util::{FutureExt, future::BoxFuture};
+use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 use petgraph::graph::NodeIndex;
+use serde::Deserialize;
 use smol_str::SmolStr;
 use xh_archive::{Event, packing::Packer};
 use xh_reports::{compat::StdCompat, prelude::*};
 
-use crate::{
-    backend::Backend,
-    executor::Executor,
-    package::DispatchRequest,
-    planner::{Frozen, Planner},
-};
+use crate::{executor::Executor, package::DispatchRequest, planner::Planner};
 
 #[derive(Debug, IntoReport)]
 #[message("executor not found")]
@@ -80,82 +77,59 @@ where
 
 type DispatchResult<'a> = Option<BoxFuture<'a, Result<(), Error>>>;
 
-pub trait Dispatch<B: Backend> {
-    fn dispatch<'a>(
-        &'a mut self,
-        backend: &'a B,
-        request: &DispatchRequest<B>,
-    ) -> DispatchResult<'a>;
+pub trait Dispatch {
+    fn dispatch(&mut self, request: &DispatchRequest) -> DispatchResult<'_>;
 }
 
-impl<B: Backend + Send + Sync> Dispatch<B> for ExecutorPair<()> {
-    fn dispatch<'a>(
-        &'a mut self,
-        _backend: &'a B,
-        _request: &DispatchRequest<B>,
-    ) -> DispatchResult<'a> {
+impl Dispatch for ExecutorPair<()> {
+    fn dispatch(&mut self, _request: &DispatchRequest) -> DispatchResult<'_> {
         None
     }
 }
 
-impl<E, T, B> Dispatch<B> for ExecutorPair<(E, T)>
+impl<E, T> Dispatch for ExecutorPair<(E, T)>
 where
-    B: Backend + Send + Sync,
-    T: Dispatch<B> + Send,
+    T: Dispatch + Send,
     E: Executor,
+    E::Request: Send,
 {
-    fn dispatch<'a>(
-        &'a mut self,
-        backend: &'a B,
-        request: &DispatchRequest<B>,
-    ) -> DispatchResult<'a> {
+    fn dispatch(&mut self, request: &DispatchRequest) -> DispatchResult<'_> {
         if E::NAME == request.executor {
-            let payload = request.payload.clone();
-
-            Some(
-                (async move || {
-                    let payload = backend.deserialize(payload).wrap()?;
-                    self.0.0.execute(payload).await.wrap()
-                })()
-                .boxed(),
-            )
+            let payload = E::Request::deserialize(request.payload.clone());
+            Some(async { self.0.0.execute(payload.wrap()?).await.wrap() }.boxed())
         } else {
-            self.0.1.dispatch(backend, request)
+            self.0.1.dispatch(request)
         }
     }
 }
 
-pub struct Builder<B, T> {
+pub struct Builder<T> {
     pub root: PathBuf,
-    pub backend: Arc<B>,
     pub executors: T,
 }
 
-impl<B: Backend> Builder<B, ExecutorPair<()>> {
+impl Builder<ExecutorPair<()>> {
     #[inline]
-    pub fn new(root: PathBuf, backend: Arc<B>) -> Self {
+    pub fn new(root: PathBuf) -> Self {
         Self {
             root,
-            backend,
             executors: ExecutorPair(()),
         }
     }
 }
 
-impl<B, T> Builder<B, T>
+impl<T> Builder<T>
 where
-    B: Backend,
     T: Initialize,
-    T::Output: Dispatch<B>,
+    T::Output: Dispatch,
 {
-    pub fn register<E, F>(self, init: F) -> Builder<B, ExecutorPair<(F, T)>>
+    pub fn register<E, F>(self, init: F) -> Builder<ExecutorPair<(F, T)>>
     where
         E: Executor,
         F: Fn(Arc<InitializeContext>) -> Result<E, InitializationError>,
     {
         Builder {
             root: self.root,
-            backend: self.backend,
             executors: ExecutorPair((init, self.executors)),
         }
     }
@@ -178,11 +152,7 @@ where
         Ok(Some(archive))
     }
 
-    pub async fn build(
-        &self,
-        planner: &Planner<Frozen<'_, B>>,
-        request: BuildRequest,
-    ) -> Result<(), Error> {
+    pub async fn build(&self, planner: &Planner, request: BuildRequest) -> Result<(), Error> {
         let environment = self.environment_path(&request.id);
 
         create_dir(&environment)
@@ -200,7 +170,7 @@ where
 
         for request in &planner.graph()[request.target].requests {
             executors
-                .dispatch(&self.backend, request)
+                .dispatch(request)
                 .ok_or_else(|| {
                     UnregisteredExecutorError {
                         name: request.executor.clone(),

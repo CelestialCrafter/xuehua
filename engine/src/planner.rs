@@ -1,13 +1,15 @@
+pub mod config;
+
 use std::{
     collections::HashMap,
+    hash::{Hash, Hasher},
     sync::{Arc, RwLock},
 };
 
-use educe::Educe;
 use log::trace;
 use petgraph::{
     acyclic::Acyclic,
-    data::{Build, DataMapMut},
+    data::Build,
     graph::{DiGraph, NodeIndex},
     visit::Dfs,
 };
@@ -15,7 +17,6 @@ use smol_str::SmolStr;
 use xh_reports::prelude::*;
 
 use crate::{
-    backend::Backend,
     package::{Dependency, LinkTime, Package, PackageName},
     utils::passthru::PassthruHashSet,
 };
@@ -47,6 +48,11 @@ pub struct NamespaceTracker(Arc<RwLock<Vec<SmolStr>>>);
 
 impl NamespaceTracker {
     #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[inline]
     pub fn current(&self) -> Vec<SmolStr> {
         self.0.read().unwrap().clone()
     }
@@ -67,184 +73,72 @@ pub struct DependencyClosure {
     buildtime: PassthruHashSet<NodeIndex>,
 }
 
-#[derive(Educe)]
-#[educe(Debug, Clone(bound()))]
-pub struct Config<B: Backend> {
-    name: PackageName,
-    pub current: B::Value,
-    #[educe(Debug(ignore))]
-    pub apply: Arc<dyn Fn(B::Value) -> Result<Package<B>, B::Error> + Send + Sync>,
-}
-
-impl<B: Backend> Config<B> {
-    #[inline]
-    pub fn new<F>(identifier: impl Into<SmolStr>, defaults: B::Value, apply: F) -> Self
-    where
-        F: Fn(B::Value) -> Result<Package<B>, B::Error>,
-        F: Send + Sync + 'static,
-    {
-        Config {
-            name: PackageName {
-                identifier: identifier.into(),
-                namespace: Default::default(),
-            },
-            current: defaults,
-            apply: Arc::new(apply),
-        }
-    }
-}
-
-pub type Plan<B> = Acyclic<DiGraph<Package<B>, LinkTime>>;
-
+pub type Plan = Acyclic<DiGraph<Package, LinkTime>>;
 pub type PackageId = blake3::Hash;
 
-#[derive(Debug, Educe)]
-#[educe(Default(bound()))]
-pub struct Unfrozen<B: Backend> {
-    configs: Vec<Config<B>>,
-    namespace: NamespaceTracker,
+#[derive(Default, Debug)]
+pub struct Planner {
+    graph: Plan,
+    packages: HashMap<PackageName, NodeIndex>,
 }
 
-#[derive(Debug)]
-pub struct Frozen<'a, B: Backend> {
-    plan: Plan<B>,
-    backend: &'a B,
-}
-
-#[derive(Debug)]
-pub struct Planner<State> {
-    state: State,
-    registered: HashMap<PackageName, NodeIndex>,
-}
-
-impl<B: Backend> Default for Planner<Unfrozen<B>> {
-    fn default() -> Self {
-        Self {
-            state: Default::default(),
-            registered: Default::default(),
-        }
-    }
-}
-
-impl<B: Backend> Planner<Unfrozen<B>> {
+impl Planner {
     #[inline]
     pub fn new() -> Self {
-        Default::default()
+        Self::default()
     }
 
-    #[inline]
-    pub fn freeze(self, backend: &B) -> Result<Planner<Frozen<'_, B>>, Error> {
-        Planner::<Frozen<B>>::new(self, backend)
-    }
+    pub fn register(&mut self, package: Package) -> Result<NodeIndex, Error> {
+        trace!("registering package {}", package.name);
 
-    #[inline]
-    pub fn namespace(&self) -> NamespaceTracker {
-        self.state.namespace.clone()
-    }
-
-    fn add_config(&mut self, config: Config<B>) -> NodeIndex {
-        let node = NodeIndex::new(self.state.configs.len());
-        self.state.configs.push(config);
-        node
-    }
-
-    pub fn configure(
-        &mut self,
-        source: NodeIndex,
-        identifier: SmolStr,
-        modify: impl FnOnce(B::Value) -> Result<B::Value, B::Error>,
-    ) -> Option<Result<NodeIndex, B::Error>> {
-        let name = PackageName {
-            identifier,
-            namespace: self.state.namespace.current(),
-        };
-
-        trace!("configuring from {source:?} into {name}");
-
-        self.state
-            .configs
-            .get(source.index())
-            .cloned()
-            .map(|source| {
-                let config = Config {
-                    current: modify(source.current)?,
-                    apply: source.apply,
-                    name,
-                };
-
-                Ok(self.add_config(config))
-            })
-    }
-
-    pub fn register(&mut self, mut config: Config<B>) -> Result<NodeIndex, Error> {
-        trace!("registering config {}", config.name);
-
-        config.name.namespace = self.state.namespace.current();
-        if self.registered.contains_key(&config.name) {
+        if self.packages.contains_key(&package.name) {
             return Err(ConflictError {
-                package: config.name,
+                package: package.name,
             }
             .wrap());
         }
 
-        let name = config.name.clone();
-        let node = self.add_config(config);
-        self.registered.insert(name, node);
+        let name = package.name.clone();
+        let dependencies = package.dependencies.clone();
+        let node = self.graph.add_node(package);
 
+        for dependency in dependencies.clone() {
+            self.graph
+                .try_add_edge(node, dependency.node, dependency.time)
+                .map_err(|_| {
+                    CycleError {
+                        from: name.clone(),
+                        to: self.graph[dependency.node].name.clone(),
+                    }
+                    .wrap()
+                })?;
+        }
+
+        self.packages.insert(name, node);
         Ok(node)
-    }
-}
-
-impl<'a, B: Backend> Planner<Frozen<'a, B>> {
-    fn new(unfrozen: Planner<Unfrozen<B>>, backend: &'a B) -> Result<Self, Error> {
-        let mut plan: Plan<_> = Plan::new();
-
-        for config in unfrozen.state.configs.into_iter() {
-            let mut pkg = (config.apply)(config.current).wrap()?;
-            pkg.name = config.name;
-
-            plan.add_node(pkg);
-        }
-
-        for node in plan.node_indices() {
-            let dependencies = std::mem::take(
-                &mut plan
-                    .node_weight_mut(node)
-                    .expect("node should be in graph")
-                    .dependencies,
-            );
-
-            for dependency in dependencies {
-                plan.try_add_edge(node, dependency.node, dependency.time)
-                    .map_err(|_| CycleError {
-                        from: plan[node].name.clone(),
-                        to: plan[dependency.node].name.clone(),
-                    }.wrap())?;
-            }
-        }
-
-        Ok(Self {
-            state: Frozen { plan, backend },
-            registered: unfrozen.registered,
-        })
     }
 
     #[inline]
-    pub fn graph(&self) -> &Plan<B> {
-        &self.state.plan
+    pub fn graph(&self) -> &Plan {
+        &self.graph
+    }
+
+    #[inline]
+    pub fn resolve(&self, id: &PackageName) -> Option<NodeIndex> {
+        self.packages.get(id).copied()
     }
 
     // TODO: cache closure
     pub fn closure(&self, node: NodeIndex) -> Option<DependencyClosure> {
         let compute_closure = |dependencies: Vec<Dependency>| {
             let mut runtime = PassthruHashSet::default();
-            let mut visitor = Dfs::empty(&self.state.plan);
+            let mut visitor = Dfs::empty(&self.graph);
 
             for node in dependencies.into_iter().map(|d| d.node) {
                 visitor.move_to(node);
-                while let Some(node) = visitor.next(&self.state.plan) {
+                while let Some(node) = visitor.next(&self.graph) {
                     runtime.extend(
-                        self.state.plan[node]
+                        self.graph[node]
                             .dependencies
                             .iter()
                             .filter_map(|d| (d.time == LinkTime::Runtime).then_some(d.node)),
@@ -255,7 +149,7 @@ impl<'a, B: Backend> Planner<Frozen<'a, B>> {
             runtime
         };
 
-        let (runtime, buildtime) = self.state.plan[node]
+        let (runtime, buildtime) = self.graph[node]
             .dependencies
             .iter()
             .partition(|dependency| dependency.time == LinkTime::Runtime);
@@ -267,9 +161,9 @@ impl<'a, B: Backend> Planner<Frozen<'a, B>> {
     }
 
     // TODO: cache identity
-    pub fn identity(&self, node: NodeIndex) -> Option<Result<PackageId, B::Error>> {
+    pub fn identity(&self, node: NodeIndex) -> Option<PackageId> {
         let mut hasher = blake3::Hasher::new();
-        let mut hash_pkg = |pkg: &Package<B>| {
+        let mut hash_pkg = |pkg: &Package| {
             hasher.update(pkg.name.identifier.as_bytes());
             for segment in &pkg.name.namespace {
                 hasher.update(segment.as_bytes());
@@ -277,28 +171,19 @@ impl<'a, B: Backend> Planner<Frozen<'a, B>> {
 
             for request in &pkg.requests {
                 hasher.update(request.executor.as_bytes());
-                self.state.backend.hash(&mut hasher, &request.payload)?;
-            }
 
-            Ok(())
+                let mut payload_hasher = std::hash::DefaultHasher::new();
+                request.payload.hash(&mut payload_hasher);
+                hasher.update(&payload_hasher.finish().to_le_bytes());
+            }
         };
 
         let closure = self.closure(node)?;
-        let result = std::iter::once(&node)
+        std::iter::once(&node)
             .chain(closure.runtime.iter())
             .chain(closure.buildtime.iter())
-            .try_for_each(|node| hash_pkg(&self.state.plan[*node]));
+            .for_each(|node| hash_pkg(&self.graph[*node]));
 
-        Some(match result {
-            Ok(()) => Ok(hasher.finalize()),
-            Err(err) => Err(err),
-        })
-    }
-}
-
-impl<State> Planner<State> {
-    #[inline]
-    pub fn resolve(&self, id: &PackageName) -> Option<NodeIndex> {
-        self.registered.get(id).copied()
+        Some(hasher.finalize())
     }
 }

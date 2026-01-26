@@ -2,12 +2,11 @@ pub mod manifest;
 
 use std::{fmt, result::Result as StdResult, str::FromStr};
 
-use educe::Educe;
 use petgraph::graph::NodeIndex;
 use smol_str::SmolStr;
 use xh_reports::prelude::*;
 
-use crate::backend::Backend;
+use crate::Value;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum LinkTime {
@@ -83,11 +82,10 @@ impl FromStr for PackageName {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Metadata;
 
-#[derive(Debug, Hash, PartialEq, Educe)]
-#[educe(Clone(bound()))]
-pub struct DispatchRequest<B: Backend> {
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+pub struct DispatchRequest {
     pub executor: SmolStr,
-    pub payload: B::Value,
+    pub payload: Value,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -96,11 +94,10 @@ pub struct Dependency {
     pub time: LinkTime,
 }
 
-#[derive(Debug, PartialEq, Educe)]
-#[educe(Clone(bound()))]
-pub struct Package<B: Backend> {
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct Package {
     pub name: PackageName,
     pub metadata: Metadata,
-    pub requests: Vec<DispatchRequest<B>>,
+    pub requests: Vec<DispatchRequest>,
     pub dependencies: Vec<Dependency>,
 }

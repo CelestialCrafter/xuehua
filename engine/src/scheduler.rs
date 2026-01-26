@@ -6,9 +6,8 @@ use petgraph::{Direction, graph::NodeIndex, visit::Dfs};
 use xh_reports::Result;
 
 use crate::{
-    backend::Backend,
     builder::{BuildRequest, Builder, Dispatch, Error as BuilderError, Initialize},
-    planner::{Frozen, Planner},
+    planner::Planner,
     utils::passthru::{PassthruHashMap, PassthruHashSet},
 };
 
@@ -30,19 +29,18 @@ pub enum Event {
     },
 }
 
-pub struct Scheduler<'a, B: Backend, E> {
+pub struct Scheduler<'a, E> {
     state: PassthruHashMap<NodeIndex, PackageState>,
-    planner: &'a Planner<Frozen<'a, B>>,
-    builder: &'a Builder<B, E>,
+    planner: &'a Planner,
+    builder: &'a Builder<E>,
 }
 
-impl<'a, B, E> Scheduler<'a, B, E>
+impl<'a, E> Scheduler<'a, E>
 where
-    B: Backend,
     E: Initialize,
-    E::Output: Dispatch<B>
+    E::Output: Dispatch,
 {
-    pub fn new(planner: &'a Planner<Frozen<B>>, builder: &'a Builder<B, E>) -> Self {
+    pub fn new(planner: &'a Planner, builder: &'a Builder<E>) -> Self {
         let plan = planner.graph();
         let state = plan
             .node_indices()
@@ -67,12 +65,13 @@ where
         let mut futures = FuturesUnordered::new();
         let plan = self.planner.graph();
 
-        let build = async |node: NodeIndex| {
+        let build = async |events: &mpsc::Sender<_>, node| {
             let request = BuildRequest {
                 id: fastrand::u64(..),
                 target: node,
             };
 
+            let _ = events.send(Event::Started { request });
             (request, self.builder.build(self.planner, request).await)
         };
 
@@ -85,7 +84,7 @@ where
                 subset.insert(node);
                 if let PackageState::Unbuilt { remaining: 0, .. } = self.state[&target] {
                     trace!("adding node {:?} as a leaf", node);
-                    futures.push(build(node));
+                    futures.push(build(&events, node));
                 }
             }
         }
@@ -94,7 +93,6 @@ where
         while let Some((request, result)) = futures.next().await {
             let errored = result.is_err();
             let _ = events.send(Event::Finished { request, result });
-
             if errored {
                 continue;
             }
@@ -111,7 +109,7 @@ where
                 *remaining -= 1;
                 debug!("{:?} has {} dependencies remaining", parent, remaining);
                 if *remaining == 0 && subset.contains(&parent) {
-                    futures.push(build(parent));
+                    futures.push(build(&events, parent));
                 }
             }
         }

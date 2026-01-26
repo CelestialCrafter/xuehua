@@ -3,7 +3,7 @@ local ns = planner.namespace
 
 ns:scope("alpine", function()
   local minirootfs = planner:package {
-    name = "minirootfs",
+    identifier = "minirootfs",
     defaults = { release = "3.22", version = "3.22.2", arch = "aarch64" },
     apply = function(opts)
       local requests = {}

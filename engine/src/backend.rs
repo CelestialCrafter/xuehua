@@ -1,24 +1,15 @@
-use std::{
-    fmt::Debug,
-    hash::{DefaultHasher, Hash, Hasher},
-};
+use std::{fmt::Debug, path::Path};
 
-use serde::{Serialize, de::DeserializeOwned};
 use xh_reports::{IntoReport, Result};
+
+use crate::{Value, planner::Planner};
 
 pub trait Backend {
     type Error: IntoReport;
     type Value: Debug + Clone + PartialEq + Send + Sync;
 
-    fn serialize<T: Serialize>(&self, value: &T) -> Result<Self::Value, Self::Error>;
-    fn deserialize<T: DeserializeOwned>(&self, value: Self::Value) -> Result<T, Self::Error>;
+    fn serialize(&self, value: &Value) -> Result<Self::Value, Self::Error>;
+    fn deserialize(&self, value: Self::Value) -> Result<Value, Self::Error>;
 
-    fn hash(&self, hasher: &mut blake3::Hasher, value: &Self::Value) -> Result<(), Self::Error> {
-        let root: serde_json::Value = self.deserialize(value.clone())?;
-        let mut std_hasher = DefaultHasher::new();
-        root.hash(&mut std_hasher);
-        hasher.update(&std_hasher.finish().to_le_bytes());
-
-        Ok(())
-    }
+    fn plan(&self, planner: &mut Planner, project: &Path) -> Result<(), Self::Error>;
 }

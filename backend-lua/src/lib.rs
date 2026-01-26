@@ -1,87 +1,28 @@
 mod logger;
 
-use std::{
-    fmt::{self, Debug},
-    path::Path,
-    str::FromStr,
-};
+use std::{path::Path, str::FromStr};
 
 use log::warn;
 use mlua::{
     AnyUserData, ExternalResult, Function, Lua, LuaSerdeExt, Table, UserData, UserDataRegistry,
-    Value,
+    Value as LuaValue, serde::Deserializer,
 };
 use petgraph::graph::{DefaultIx, NodeIndex};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Deserialize;
 use xh_engine::{
+    Value,
     backend::Backend,
     package::{Dependency, DispatchRequest, LinkTime, Metadata, Package, PackageName},
-    planner::{Config, NamespaceTracker, Planner, Unfrozen},
+    planner::{
+        NamespaceTracker, Planner,
+        config::{Config, ConfigManager},
+    },
 };
-use xh_reports::{compat::StdCompat, impl_compat, prelude::*};
-
-#[derive(Debug, IntoReport)]
-#[message("node was not registered in the builder")]
-#[context(debug: 0 = node)]
-pub struct UnregisteredNodeError(NodeIndex);
+use xh_reports::prelude::*;
 
 #[derive(Default, Debug, IntoReport)]
 #[message("could not run lua backend")]
 pub struct Error;
-
-impl_compat!(
-    LuaCompat,
-    (mlua::Error, |error| {
-        let mut frames = vec![];
-
-        fn conversion_error(
-            from: impl fmt::Display,
-            to: impl fmt::Display,
-            frames: &mut Vec<Frame>,
-        ) {
-            frames.extend([
-                Frame::context("from", from),
-                Frame::context("to", to),
-                Frame::suggestion("provide the correct types during conversion"),
-            ]);
-        }
-
-        match &error {
-            mlua::Error::BadArgument {
-                to,
-                pos,
-                name,
-                cause: _,
-            } => {
-                if let Some(func) = to {
-                    frames.push(Frame::context("function", func))
-                }
-
-                if let Some(arg) = name {
-                    frames.push(Frame::context("argument", arg));
-                }
-
-                frames.extend([
-                    Frame::context("position", pos),
-                    Frame::suggestion("provide the correct function arguments"),
-                ]);
-            }
-            mlua::Error::ToLuaConversionError {
-                from,
-                to,
-                message: _,
-            } => conversion_error(from, to, &mut frames),
-            mlua::Error::FromLuaConversionError {
-                from,
-                to,
-                message: _,
-            } => conversion_error(from, to, &mut frames),
-            _ => (),
-        }
-
-        Report::from_error(error).with_frames(frames)
-    })
-);
 
 fn conv_dependency(table: Table) -> StdResult<Dependency, mlua::Error> {
     Ok(Dependency {
@@ -92,40 +33,48 @@ fn conv_dependency(table: Table) -> StdResult<Dependency, mlua::Error> {
     })
 }
 
-fn conv_request(table: Table) -> StdResult<DispatchRequest<LuaBackend>, mlua::Error> {
+fn conv_request(table: Table) -> Result<DispatchRequest, Error> {
+    let payload = table.get("payload").wrap()?;
+    let deserializer = Deserializer::new(payload);
+    let payload = Value::deserialize(deserializer).wrap()?;
+
     Ok(DispatchRequest {
-        executor: table.get::<String>("executor")?.into(),
-        payload: table.get("payload")?,
+        executor: table.get::<String>("executor").wrap()?.into(),
+        payload,
     })
 }
 
-fn conv_package(table: Table) -> StdResult<Package<LuaBackend>, mlua::Error> {
+fn conv_package(table: Table) -> Result<Package, Error> {
     Ok(Package {
         name: Default::default(),
         metadata: Metadata,
         requests: table
-            .get::<Option<Vec<Table>>>("requests")?
+            .get::<Option<Vec<Table>>>("requests")
+            .wrap()?
             .unwrap_or_default()
             .into_iter()
             .map(conv_request)
-            .collect::<StdResult<_, _>>()?,
+            .collect::<Result<_, _>>()?,
         dependencies: table
-            .get::<Option<Vec<Table>>>("dependencies")?
+            .get::<Option<Vec<Table>>>("dependencies")
+            .wrap()?
             .unwrap_or_default()
             .into_iter()
             .map(conv_dependency)
-            .collect::<StdResult<_, _>>()?,
+            .collect::<StdResult<_, _>>()
+            .wrap()?,
     })
 }
 
 fn conv_config(table: Table) -> StdResult<Config<LuaBackend>, mlua::Error> {
-    let identifier = table.get::<String>("name")?;
-    let defaults = table.get::<Option<Value>>("defaults")?.unwrap_or_default();
+    let defaults = table
+        .get::<Option<LuaValue>>("defaults")?
+        .unwrap_or_default();
 
     let apply = table.get::<Function>("apply")?;
-    let apply = move |value: Value| apply.call(value).and_then(conv_package).compat().wrap();
+    let apply = move |value: LuaValue| apply.call(value).wrap().and_then(conv_package);
 
-    Ok(Config::new(identifier, defaults, apply))
+    Ok(Config::new(defaults, apply))
 }
 
 struct LuaNamespaceTracker(NamespaceTracker);
@@ -144,7 +93,7 @@ impl UserData for LuaNamespaceTracker {
 
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("scope", |_, this, (segment, func): (String, Function)| {
-            this.0.scope(segment, || func.call::<Value>(()))
+            this.0.scope(segment, || func.call::<LuaValue>(()))
         });
     }
 
@@ -154,31 +103,48 @@ impl UserData for LuaNamespaceTracker {
     }
 }
 
-fn planner_userdata(registry: &mut UserDataRegistry<Planner<Unfrozen<LuaBackend>>>) {
-    fn add_fields<F: mlua::UserDataFields<Planner<Unfrozen<LuaBackend>>>>(fields: &mut F) {
+struct LuaConfigManager<'a> {
+    inner: ConfigManager<'a, LuaBackend>,
+    namespace: NamespaceTracker,
+}
+
+impl UserData for LuaConfigManager<'_> {
+    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("namespace", |_, this| {
-            Ok(LuaNamespaceTracker(this.namespace()))
+            Ok(LuaNamespaceTracker(this.namespace.clone()))
         });
     }
 
-    fn add_methods<M: mlua::UserDataMethods<Planner<Unfrozen<LuaBackend>>>>(methods: &mut M) {
+    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method_mut("configure", |_, this, table: Table| {
-            this.configure(
-                table.get::<DefaultIx>("source")?.into(),
-                table.get::<String>("identifier")?.into(),
-                {
-                    let func: Function = table.get("modify")?;
-                    move |value| func.call(value).wrap()
-                },
-            )
-            .expect("source should be a registered node")
-            .map(AnyUserData::wrap)
-            .into_error()
-            .into_lua_err()
+            let source = NodeIndex::from(table.get::<DefaultIx>("source")?);
+            let dest = PackageName {
+                identifier: table.get::<String>("identifier")?.into(),
+                namespace: this.namespace.current(),
+            };
+
+            let modify = {
+                let func: Function = table.get("modify")?;
+                move |value| func.call(value).wrap()
+            };
+
+            this.inner
+                .configure(&source, dest, modify)
+                .expect("source should be a registered node")
+                .map(AnyUserData::wrap)
+                .into_error()
+                .into_lua_err()
         });
 
         methods.add_method_mut("package", |_, this, table: Table| {
-            this.register(conv_config(table).into_lua_err()?)
+            let name = PackageName {
+                identifier: table.get::<String>("identifier")?.into(),
+                namespace: this.namespace.current(),
+            };
+            let config = conv_config(table).into_lua_err()?;
+
+            this.inner
+                .register(name, config)
                 .map(AnyUserData::wrap)
                 .into_error()
                 .into_lua_err()
@@ -186,12 +152,14 @@ fn planner_userdata(registry: &mut UserDataRegistry<Planner<Unfrozen<LuaBackend>
 
         methods.add_method("resolve", |_, this, id: String| {
             let id = PackageName::from_str(&id).into_lua_err()?;
-            Ok(this.resolve(&id).map(AnyUserData::wrap))
+            Ok(this.inner.planner.resolve(&id).map(AnyUserData::wrap))
         });
     }
 
-    add_fields(registry);
-    add_methods(registry);
+    fn register(registry: &mut UserDataRegistry<Self>) {
+        Self::add_fields(registry);
+        Self::add_methods(registry);
+    }
 }
 
 #[derive(Debug)]
@@ -203,21 +171,35 @@ impl LuaBackend {
     #[inline]
     pub fn new() -> Result<Self, Error> {
         let lua = Lua::new();
-        logger::register_module(&lua).compat().wrap()?;
-        lua.register_userdata_type(planner_userdata)
-            .compat()
-            .wrap()?;
+        logger::register_module(&lua).wrap()?;
 
         Ok(Self { lua })
     }
+}
 
-    pub fn plan(&self, planner: &mut Planner<Unfrozen<Self>>, project: &Path) -> Result<(), Error> {
+impl Backend for LuaBackend {
+    type Error = Error;
+    type Value = LuaValue;
+
+    fn serialize(&self, value: &Value) -> Result<Self::Value, Self::Error> {
+        self.lua.to_value(value).wrap()
+    }
+
+    fn deserialize(&self, value: Self::Value) -> Result<Value, Self::Error> {
+        self.lua.from_value(value).wrap()
+    }
+
+    fn plan(&self, planner: &mut Planner, project: &Path) -> Result<(), Error> {
         let chunk = self
             .lua
-            .load(std::fs::read(project.join("main.lua")).compat().wrap()?)
+            .load(std::fs::read(project.join("main.lua")).wrap()?)
             .into_function()
-            .compat()
             .wrap()?;
+
+        let manager = LuaConfigManager {
+            inner: ConfigManager::new(planner),
+            namespace: NamespaceTracker::default(),
+        };
 
         self.lua
             .scope(|scope| {
@@ -225,26 +207,14 @@ impl LuaBackend {
                     &self.lua,
                     &scope,
                     "xuehua.planner",
-                    scope.create_any_userdata_ref_mut(planner)?,
+                    scope.create_userdata(manager)?,
                 )?;
 
                 chunk.call::<()>(())
             })
-            .compat()
-            .wrap()
-    }
-}
+            .wrap()?;
 
-impl Backend for LuaBackend {
-    type Error = Error;
-    type Value = mlua::Value;
-
-    fn serialize<T: Serialize>(&self, value: &T) -> Result<Self::Value, Self::Error> {
-        self.lua.to_value(value).compat().wrap()
-    }
-
-    fn deserialize<T: DeserializeOwned>(&self, value: Self::Value) -> Result<T, Self::Error> {
-        self.lua.from_value(value).compat().wrap()
+        Ok(())
     }
 }
 

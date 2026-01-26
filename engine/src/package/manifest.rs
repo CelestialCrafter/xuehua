@@ -26,7 +26,7 @@ impl Manifest {
         todo!()
     }
 
-    pub async fn create<B: Backend, S: Store>(plan: &Plan<B>, store: &S) -> Result<Self, Error> {
+    pub async fn create<B: Backend, S: Store>(plan: &Plan, store: &S) -> Result<Self, Error> {
         todo!()
     }
 

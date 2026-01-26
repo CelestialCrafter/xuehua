@@ -9,4 +9,4 @@ xh-reports.workspace = true
 log.workspace = true
 petgraph.workspace = true
 serde.workspace = true
-mlua = { workspace = true, features = ["serde", "macros", "async", "send"] }
+mlua = { workspace = true, features = ["serde", "send"] }
