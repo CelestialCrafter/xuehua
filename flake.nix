@@ -10,6 +10,7 @@
         packages = with pkgs; [
           rustc
           cargo
+          clippy
           clang
           pkg-config
           bubblewrap
