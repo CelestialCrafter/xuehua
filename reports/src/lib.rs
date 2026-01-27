@@ -448,12 +448,9 @@ impl LogError {
 
         let mut visitor = FrameVisitor::default();
         record.key_values().visit(&mut visitor).unwrap();
-        visitor
-            .frames
-            .push(Frame::context("target", record.target()));
 
         Self {
-            message: record.args().to_smolstr(),
+            message: format_args!("({}) {}", record.target(), record.args()).to_smolstr(),
             level: record.level(),
             children: visitor.children,
             frames: visitor.frames,

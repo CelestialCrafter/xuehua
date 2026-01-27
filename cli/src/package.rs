@@ -141,7 +141,8 @@ async fn build(
         while let Ok(event) = results_rx.recv() {
             match event {
                 Event::Started { request } => info!(
-                    request:? = request; "started package build"
+                    request:? = request;
+                    "started package build"
                 ),
                 Event::Finished { request, result } => {
                     info!(
