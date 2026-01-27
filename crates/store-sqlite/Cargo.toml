@@ -1,0 +1,16 @@
+[package]
+name = "xh-store-sqlite"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xh-engine.workspace = true
+xh-archive.workspace = true
+xh-reports.workspace = true
+bytes.workspace = true
+jiff.workspace = true
+log.workspace = true
+educe.workspace = true
+memmap2.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+rusqlite = { version = "0.38.0", features = ["jiff"] }
