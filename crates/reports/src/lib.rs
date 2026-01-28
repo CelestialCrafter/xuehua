@@ -295,6 +295,7 @@ impl<T, U: Into<Report<T>>> ReportExt<T> for U {
         V::default().into_report().with_child(self.into())
     }
 
+    #[track_caller]
     fn wrap_with<V>(self, parent: impl Into<Report<V>>) -> Report<V> {
         parent.into().with_child(self.into())
     }
@@ -344,30 +345,46 @@ pub trait ResultReportExt<T, E>: Sized {
     fn with_frame(self, frame: impl FnOnce() -> Frame) -> Result<T, E>;
 }
 
+// we can't use [`Result::map_err`] in any of these since `#[track_caller]` on closures is unstable
 impl<T, E, D: Into<Report<E>>> ResultReportExt<T, E> for CoreResult<T, D> {
+    #[track_caller]
     fn into_error(self) -> CoreResult<T, impl Error + Send + Sync + 'static> {
-        self.map_err(|report| report.into().into_error())
+        match self {
+            Ok(t) => Ok(t),
+            Err(report) => Err(report.into().into_error()),
+        }
     }
 
+    #[track_caller]
     fn erased(self) -> Result<T, ()> {
-        self.map_err(|report| report.into().erased())
+        match self {
+            Ok(t) => Ok(t),
+            Err(report) => Err(report.into().erased()),
+        }
     }
 
     #[track_caller]
     fn wrap_with_fn<F: IntoReport>(self, parent: impl FnOnce() -> F) -> Result<T, F> {
-        // we can't use [`Result::map_err`] since `#[track_caller]` on closures is unstable
         match self {
             Ok(t) => Ok(t),
             Err(report) => Err(parent().into_report().with_child(report.into())),
         }
     }
 
+    #[track_caller]
     fn with_level(self, level: Level) -> Result<T, E> {
-        self.map_err(|report| report.into().with_level(level))
+        match self {
+            Ok(t) => Ok(t),
+            Err(report) => Err(report.into().with_level(level)),
+        }
     }
 
+    #[track_caller]
     fn with_frame(self, frame: impl FnOnce() -> Frame) -> Result<T, E> {
-        self.map_err(|report| report.into().with_frame(frame()))
+        match self {
+            Ok(t) => Ok(t),
+            Err(report) => Err(report.into().with_frame(frame())),
+        }
     }
 }
 
