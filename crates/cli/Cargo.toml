@@ -15,6 +15,7 @@ xh-executor-http = { path = "../executor-http" }
 xh-executor-bubblewrap = { path = "../executor-bubblewrap" }
 xh-store-sqlite = { path = "../store-sqlite" }
 xh-backend-lua = { path = "../backend-lua" }
+xh-backend-arch = { path = "../backend-arch" }
 memmap2.workspace = true
 log.workspace = true
 petgraph.workspace = true

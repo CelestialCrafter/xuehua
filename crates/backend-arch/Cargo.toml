@@ -1,0 +1,13 @@
+[package]
+name = "xh-backend-arch"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xh-engine.workspace = true
+xh-reports.workspace = true
+xh-executor-http.workspace = true
+xh-executor-bubblewrap.workspace = true
+smol_str.workspace = true
+alpm-repo-db = "0.1.1"
+alpm-types = "0.11.1"

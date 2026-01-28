@@ -12,7 +12,8 @@ use crate::options::{
 use log::info;
 use petgraph::{Direction, dot, graph::NodeIndex, visit::EdgeRef};
 use tokio::task;
-use xh_backend_lua::LuaBackend;
+// use xh_backend_lua::LuaBackend;
+use xh_backend_arch::ArchBackend;
 use xh_engine::{
     backend::Backend,
     builder::Builder,
@@ -40,8 +41,8 @@ pub enum PackageActionError {
 
 pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
     let mut planner = Planner::new();
-    LuaBackend::new()
-        .and_then(|backend| backend.plan(&mut planner, project))
+    ArchBackend::new("http://mirrors.acm.wpi.edu/archlinux".to_string(), "x86_64")
+        .plan(&mut planner, project)
         .wrap_with(PackageActionError::Initialize)
         .erased()?;
 
