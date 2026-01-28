@@ -10,7 +10,7 @@ use crate::options::{
 };
 
 use log::info;
-use petgraph::{dot, graph::NodeIndex};
+use petgraph::{Direction, dot, graph::NodeIndex, visit::EdgeRef};
 use tokio::task;
 use xh_backend_lua::LuaBackend;
 use xh_engine::{
@@ -23,7 +23,7 @@ use xh_engine::{
 };
 use xh_executor_bubblewrap::{BubblewrapExecutor, Options as BubblewrapOptions};
 use xh_executor_http::HttpExecutor;
-use xh_reports::{partition_result, prelude::*};
+use xh_reports::{partition_results, prelude::*};
 use xh_store_sqlite::SqliteStore;
 
 use crate::options::cli::{InspectAction, PackageFormat};
@@ -85,13 +85,10 @@ fn inspect_packages(
                 let pkg = &plan[node];
 
                 writeln!(stdout, "# {}\n", pkg.name).erased()?;
-                for dependency in &pkg.dependencies {
-                    writeln!(
-                        stdout,
-                        "**Dependency**: {} at {}",
-                        dependency.name, dependency.time
-                    )
-                    .erased()?;
+                for edge in plan.edges_directed(node, Direction::Outgoing) {
+                    let name = &plan[edge.target()].name;
+                    let target = edge.weight();
+                    writeln!(stdout, "**Dependency**: {} at {}", name, target).erased()?;
                 }
 
                 // .join would be less efficient here
@@ -201,14 +198,10 @@ fn resolve_many(
     planner: &Planner<Frozen>,
     packages: &Vec<PackageName>,
 ) -> Result<Vec<NodeIndex>, PackageResolveError> {
-    let result = partition_result(
+    partition_results(
         packages
             .iter()
             .map(|name| planner.resolve(name).ok_or_else(|| name.clone())),
-    );
-
-    match result {
-        Ok(nodes) => Ok(nodes),
-        Err(packages) => Err(PackageResolveError { packages }.into()),
-    }
+    )
+    .map_err(|packages| PackageResolveError { packages }.into())
 }

@@ -11,8 +11,8 @@ use xh_reports::prelude::*;
 
 #[derive(Debug, IntoReport)]
 #[message("external command failed")]
-#[context(status)]
-#[attachment(stderr)]
+#[context(display: status)]
+#[attachment(display: stderr)]
 pub struct CommandError {
     status: ExitStatus,
     stderr: String,
