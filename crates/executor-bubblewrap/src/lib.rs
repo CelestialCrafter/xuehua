@@ -1,5 +1,5 @@
 use std::{
-    process::{ExitStatus, Output},
+    process::{ExitStatus, Output, Stdio},
     sync::{Arc, LazyLock},
 };
 
@@ -96,6 +96,9 @@ impl Executor for BubblewrapExecutor {
         );
 
         let mut sandboxed = tokio::process::Command::new("bwrap");
+        sandboxed.stdin(Stdio::null());
+        sandboxed.stdout(Stdio::null());
+        sandboxed.stderr(Stdio::piped());
 
         // essentials
         sandboxed
