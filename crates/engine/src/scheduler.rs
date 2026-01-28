@@ -7,6 +7,7 @@ use xh_reports::Result;
 
 use crate::{
     builder::{BuildRequest, Builder, Dispatch, Error as BuilderError, Initialize},
+    name::PackageName,
     planner::{Frozen, Planner},
     utils::passthru::{PassthruHashMap, PassthruHashSet},
 };
@@ -21,9 +22,11 @@ enum PackageState {
 #[derive(Debug)]
 pub enum Event {
     Started {
+        name: PackageName,
         request: BuildRequest,
     },
     Finished {
+        name: PackageName,
         request: BuildRequest,
         result: Result<(), BuilderError>,
     },
@@ -71,7 +74,10 @@ where
                 target: node,
             };
 
-            let _ = events.send(Event::Started { request });
+            let _ = events.send(Event::Started {
+                request,
+                name: plan[request.target].name.clone(),
+            });
             (request, self.builder.build(self.planner, request).await)
         };
 
@@ -82,8 +88,8 @@ where
             visitor.move_to(*target);
             while let Some(node) = visitor.next(plan) {
                 subset.insert(node);
-                if let PackageState::Unbuilt { remaining: 0, .. } = self.state[&target] {
-                    trace!("adding node {:?} as a leaf", node);
+                if let PackageState::Unbuilt { remaining: 0, .. } = self.state[&node] {
+                    trace!("adding node {:?} as a leaf", plan[node].name);
                     futures.push(build(&events, node));
                 }
             }
@@ -92,7 +98,11 @@ where
         // main build loop
         while let Some((request, result)) = futures.next().await {
             let errored = result.is_err();
-            let _ = events.send(Event::Finished { request, result });
+            let _ = events.send(Event::Finished {
+                request,
+                result,
+                name: plan[request.target].name.clone(),
+            });
             if errored {
                 continue;
             }
@@ -107,7 +117,10 @@ where
                 };
 
                 *remaining -= 1;
-                debug!("{:?} has {} dependencies remaining", parent, remaining);
+                debug!(
+                    "{} has {} dependencies remaining",
+                    plan[parent].name, remaining
+                );
                 if *remaining == 0 && subset.contains(&parent) {
                     futures.push(build(&events, parent));
                 }

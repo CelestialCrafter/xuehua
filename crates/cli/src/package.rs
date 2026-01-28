@@ -142,24 +142,24 @@ async fn build(
         let mut failures = Vec::new();
         while let Ok(event) = results_rx.recv() {
             match event {
-                Event::Started { request } => info!(
+                Event::Started { name, request } => info!(
                     request:? = request;
-                    "started package build"
+                    "started building package {name}"
                 ),
-                Event::Finished { request, result } => {
+                Event::Finished { name, request, result } => {
                     info!(
                         request:? = request,
                         status = if result.is_ok() { "succeeded" } else { "failed" };
-                        "package build finished"
+                        "package finished building {name}"
                     );
 
                     match result {
                         Ok(()) => {
+                            eprintln!("{:?} {name}", request);
                             let archive = builder
                                 .fetch(&request.id)
-                                .ok()
-                                .flatten()
-                                .expect("could not fetch package output");
+                                .expect("should be able to fetch package output")
+                                .expect("package should exist");
 
                             store
                                 .register_artifact(archive)
