@@ -16,7 +16,7 @@ use petgraph::{
     visit::{Dfs, EdgeRef},
 };
 use smol_str::SmolStr;
-use xh_reports::prelude::*;
+use xh_reports::{partition_results, prelude::*};
 
 use crate::{
     name::PackageName,
@@ -27,7 +27,7 @@ use crate::{
 #[derive(Debug, IntoReport)]
 #[message("package has conflicting definitions")]
 #[suggestion("rename {package} to something different")]
-#[context(package)]
+#[context(display: package)]
 pub struct ConflictError {
     #[format(suggestion)]
     pub package: PackageName,
@@ -36,18 +36,18 @@ pub struct ConflictError {
 #[derive(Debug, IntoReport)]
 #[message("package dependencies form a cycle")]
 #[suggestion("remove the dependency creating a cycle")]
-#[context(from, to)]
+#[context(display: from, to)]
 pub struct CycleError {
     from: PackageName,
     to: PackageName,
 }
 
 #[derive(Debug, IntoReport)]
-#[message("unregistered dependency on {package}")]
-#[suggestion("register the dependency as a package")]
-#[context(package)]
+#[message("package has unregistered dependencies")]
+#[suggestion("register the dependency within the planner")]
+#[context(display: dependency)]
 pub struct UnregisteredDependency {
-    package: PackageName,
+    dependency: PackageName,
 }
 
 #[derive(Default, Debug, IntoReport)]
@@ -87,7 +87,10 @@ pub struct DependencyClosure {
 pub type Plan = Acyclic<DiGraph<Package, LinkTime>>;
 pub type PackageId = blake3::Hash;
 
+#[derive(Debug)]
 pub struct Frozen;
+
+#[derive(Debug)]
 pub struct Unfrozen;
 
 #[derive(Debug)]
@@ -138,9 +141,7 @@ impl Planner<Frozen> {
             _marker: PhantomData,
         };
 
-        // .collect so we don't hold a reference to the graph
-        let order = planner.graph.nodes_iter().collect::<Vec<_>>();
-        for node in order {
+        let results = planner.graph.node_indices().flat_map(|node| {
             // take dependencies so we don't hold a reference to the graph
             let dependencies = std::mem::take(
                 &mut planner
@@ -150,28 +151,34 @@ impl Planner<Frozen> {
                     .dependencies,
             );
 
-            for dependency in dependencies {
-                planner
-                    .graph
-                    .try_add_edge(
-                        node,
-                        planner
-                            .resolve(&dependency.name)
-                            .ok_or_else(|| UnregisteredDependency {
-                                package: dependency.name.clone(),
-                            })
-                            .wrap()?,
-                        dependency.time,
-                    )
-                    .map_err(|_| CycleError {
-                        from: planner.graph[node].name.clone(),
-                        to: dependency.name.clone(),
-                    })
-                    .wrap()?;
-            }
-        }
+            dependencies
+                .into_iter()
+                .map(|dependency| {
+                    let dependency_node = planner
+                        .resolve(&dependency.name)
+                        .ok_or_else(|| UnregisteredDependency {
+                            dependency: dependency.name.clone(),
+                        })
+                        .erased()?;
 
-        Ok(planner)
+                    planner
+                        .graph
+                        .try_add_edge(node, dependency_node, dependency.time)
+                        .map_err(|_| CycleError {
+                            from: planner.graph[node].name.clone(),
+                            to: dependency.name.clone(),
+                        })
+                        .erased()?;
+
+                    Ok(())
+                })
+                .collect::<Vec<_>>()
+        });
+
+        match partition_results::<_, _, _, Vec<_>>(results) {
+            Ok(()) => Ok(planner),
+            Err(reports) => Err(Error.into_report().with_children(reports)),
+        }
     }
 
     #[inline]

@@ -484,16 +484,24 @@ impl IntoReport for LogError {
 }
 
 /// Helper function to partition an [`Iterator`] based on its [`Result`]
-pub fn partition_result<T, E>(
+pub fn partition_results<T, U, E, F>(
     iterator: impl Iterator<Item = CoreResult<T, E>>,
-) -> CoreResult<Vec<T>, Vec<E>> {
-    let mut ok = Vec::new();
-    let mut err = Vec::new();
+) -> CoreResult<U, F>
+where
+    U: Extend<T> + Default,
+    F: Extend<E> + Default,
+{
+    let mut ok = U::default();
+    let mut err = F::default();
 
+    let mut has_error = false;
     iterator.for_each(|result| match result {
         Ok(v) => ok.extend(core::iter::once(v)),
-        Err(v) => err.extend(core::iter::once(v)),
+        Err(v) => {
+            has_error = true;
+            err.extend(core::iter::once(v))
+        }
     });
 
-    if err.is_empty() { Ok(ok) } else { Err(err) }
+    if has_error { Err(err) } else { Ok(ok) }
 }
