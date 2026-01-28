@@ -7,7 +7,8 @@ use xh_reports::prelude::*;
 
 use crate::{
     backend::Backend,
-    package::{Package, PackageName},
+    name::PackageName,
+    package::Package,
     planner::{Planner, Unfrozen},
     utils::passthru::PassthruHashMap,
 };

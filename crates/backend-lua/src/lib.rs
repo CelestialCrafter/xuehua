@@ -1,6 +1,6 @@
 mod logger;
 
-use std::{path::Path, str::FromStr};
+use std::{path::Path, str::FromStr, sync::LazyLock};
 
 use log::warn;
 use mlua::{
@@ -8,13 +8,16 @@ use mlua::{
     Value as LuaValue,
 };
 use petgraph::graph::{DefaultIx, NodeIndex};
+use smol_str::SmolStr;
 use xh_engine::{
     backend::Backend,
     encoding::to_value,
-    package::{Dependency, DispatchRequest, LinkTime, Metadata, Package, PackageName},
+    gen_name,
+    name::{BackendName, ExecutorName, PackageName},
+    package::{Dependency, DispatchRequest, LinkTime, Metadata, Package},
     planner::{
-        NamespaceTracker, Planner, Unfrozen,
         config::{Config, ConfigManager},
+        NamespaceTracker, Planner, Unfrozen,
     },
 };
 use xh_reports::prelude::*;
@@ -34,8 +37,8 @@ fn conv_dependency(table: Table) -> StdResult<Dependency, mlua::Error> {
 
 fn conv_request(table: Table) -> Result<DispatchRequest, Error> {
     Ok(DispatchRequest {
-        executor: table.get::<String>("executor").wrap()?.into(),
         payload: to_value(table.get::<LuaValue>("payload").wrap()?).wrap()?,
+        executor: ExecutorName::from_str(&table.get::<String>("executor").wrap()?).wrap()?,
     })
 }
 
@@ -103,6 +106,16 @@ struct LuaConfigManager<'a> {
     namespace: NamespaceTracker,
 }
 
+impl LuaConfigManager<'_> {
+    fn package_name(&self, identifier: impl Into<SmolStr>) -> PackageName {
+        PackageName {
+            identifier: identifier.into(),
+            namespace: self.namespace.current().into(),
+            ty: Default::default(),
+        }
+    }
+}
+
 impl UserData for LuaConfigManager<'_> {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("namespace", |_, this| {
@@ -113,10 +126,7 @@ impl UserData for LuaConfigManager<'_> {
     fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method_mut("configure", |_, this, table: Table| {
             let source = NodeIndex::from(table.get::<DefaultIx>("source")?);
-            let dest = PackageName {
-                identifier: table.get::<String>("identifier")?.into(),
-                namespace: this.namespace.current(),
-            };
+            let dest = this.package_name(table.get::<String>("identifier")?);
 
             let modify = {
                 let func: Function = table.get("modify")?;
@@ -132,10 +142,7 @@ impl UserData for LuaConfigManager<'_> {
         });
 
         methods.add_method_mut("package", |_, this, table: Table| {
-            let name = PackageName {
-                identifier: table.get::<String>("identifier")?.into(),
-                namespace: this.namespace.current(),
-            };
+            let name = this.package_name(table.get::<String>("identifier")?);
             let config = conv_config(table).into_lua_err()?;
 
             this.inner
@@ -169,6 +176,11 @@ impl LuaBackend {
 impl Backend for LuaBackend {
     type Error = Error;
     type Value = LuaValue;
+
+    fn name() -> &'static BackendName {
+        static NAME: LazyLock<BackendName> = LazyLock::new(|| gen_name!(lua@xuehua));
+        &*NAME
+    }
 
     fn plan(&self, planner: &mut Planner<Unfrozen>, project: &Path) -> Result<(), Error> {
         let chunk = self

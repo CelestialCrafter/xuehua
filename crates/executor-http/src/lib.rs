@@ -1,6 +1,6 @@
 use std::{
     path::{Component, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use log::debug;
@@ -10,7 +10,7 @@ use ureq::{
     config::Config,
     http::{Method, Request, Uri},
 };
-use xh_engine::{builder::InitializeContext, executor::Executor};
+use xh_engine::{builder::InitializeContext, executor::Executor, gen_name, name::ExecutorName};
 use xh_reports::prelude::*;
 
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
@@ -88,9 +88,13 @@ pub struct InvalidPathError;
 pub struct Error;
 
 impl Executor for HttpExecutor {
-    const NAME: &'static str = "http@xuehua/executors";
     type Request = HttpRequest;
     type Error = Error;
+
+    fn name() -> &'static ExecutorName {
+        static NAME: LazyLock<ExecutorName> = LazyLock::new(|| gen_name!(http@xuehua));
+        &*NAME
+    }
 
     async fn execute(&mut self, request: Self::Request) -> Result<(), Error> {
         debug!("making request to {}", request.url);

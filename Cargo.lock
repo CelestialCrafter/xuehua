@@ -1707,6 +1707,7 @@ dependencies = [
  "mlua",
  "petgraph",
  "serde",
+ "smol_str",
  "xh-engine",
  "xh-reports",
 ]

@@ -5,7 +5,7 @@ use std::{fmt, result::Result as StdResult, str::FromStr};
 use smol_str::SmolStr;
 use xh_reports::prelude::*;
 
-use crate::encoding::Value;
+use crate::{encoding::Value, name::{ExecutorName, PackageName}};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum LinkTime {
@@ -46,44 +46,12 @@ impl FromStr for LinkTime {
     }
 }
 
-#[derive(Default, Debug, Clone, Hash, PartialEq, Eq)]
-pub struct PackageName {
-    pub identifier: SmolStr,
-    pub namespace: Vec<SmolStr>,
-}
-
-impl fmt::Display for PackageName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.namespace.is_empty() {
-            self.identifier.fmt(f)
-        } else {
-            write!(f, "{}@{}", self.identifier, self.namespace.join("/"))
-        }
-    }
-}
-
-impl FromStr for PackageName {
-    type Err = std::convert::Infallible;
-
-    fn from_str(s: &str) -> StdResult<Self, Self::Err> {
-        let (identifier, namespace) = s.split_once("@").unwrap_or((s, Default::default()));
-
-        let identifier = SmolStr::new(identifier);
-        let namespace = namespace.split('/').map(Into::into).collect::<Vec<_>>();
-
-        Ok(Self {
-            identifier,
-            namespace,
-        })
-    }
-}
-
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Metadata;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub struct DispatchRequest {
-    pub executor: SmolStr,
+    pub executor: ExecutorName,
     pub payload: Value,
 }
 

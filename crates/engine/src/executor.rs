@@ -1,9 +1,12 @@
 use xh_reports::prelude::*;
 
+use crate::name::ExecutorName;
+
 pub trait Executor: Send + Sized {
-    const NAME: &'static str;
     type Request: serde::de::DeserializeOwned;
     type Error: IntoReport;
+
+    fn name() -> &'static ExecutorName;
 
     fn execute(
         &mut self,

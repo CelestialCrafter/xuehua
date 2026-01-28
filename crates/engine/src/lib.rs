@@ -7,3 +7,4 @@ pub mod scheduler;
 pub mod store;
 pub mod builder;
 pub mod utils;
+pub mod name;

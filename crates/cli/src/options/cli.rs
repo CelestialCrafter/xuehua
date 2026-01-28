@@ -2,7 +2,7 @@ use std::{env, fmt, path::PathBuf, str::FromStr};
 
 use bpaf::{OptionParser, Parser, construct, long, positional, pure};
 
-use xh_engine::package::PackageName;
+use xh_engine::name::PackageName;
 
 #[derive(Debug, Clone, Copy)]
 pub struct FormatParseError;

@@ -4,18 +4,22 @@ use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use petgraph::graph::NodeIndex;
 use serde::Deserialize;
-use smol_str::SmolStr;
 use xh_archive::{Event, packing::Packer};
 use xh_reports::{compat::StdCompat, prelude::*};
 
-use crate::{executor::Executor, package::DispatchRequest, planner::{Frozen, Planner}};
+use crate::{
+    executor::Executor,
+    name::ExecutorName,
+    package::DispatchRequest,
+    planner::{Frozen, Planner},
+};
 
 #[derive(Debug, IntoReport)]
 #[message("executor not found")]
 #[suggestion("provide a registered executor")]
 #[context(name)]
 pub struct UnregisteredExecutorError {
-    pub name: SmolStr,
+    pub name: ExecutorName,
 }
 
 #[derive(Default, Debug, IntoReport)]
@@ -94,7 +98,7 @@ where
     E::Request: Send,
 {
     fn dispatch(&mut self, request: &DispatchRequest) -> DispatchResult<'_> {
-        if E::NAME == request.executor {
+        if *E::name() == request.executor {
             let payload = E::Request::deserialize(request.payload.clone());
             Some(async { self.0.0.execute(payload.wrap()?).await.wrap() }.boxed())
         } else {
@@ -152,7 +156,11 @@ where
         Ok(Some(archive))
     }
 
-    pub async fn build(&self, planner: &Planner<Frozen>, request: BuildRequest) -> Result<(), Error> {
+    pub async fn build(
+        &self,
+        planner: &Planner<Frozen>,
+        request: BuildRequest,
+    ) -> Result<(), Error> {
         let environment = self.environment_path(&request.id);
 
         create_dir(&environment)

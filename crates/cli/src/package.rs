@@ -16,7 +16,7 @@ use xh_backend_lua::LuaBackend;
 use xh_engine::{
     backend::Backend,
     builder::Builder,
-    package::PackageName,
+    name::PackageName,
     planner::{Frozen, Planner},
     scheduler::{Event, Scheduler},
     store::Store,
