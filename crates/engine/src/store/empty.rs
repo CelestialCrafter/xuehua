@@ -1,7 +1,11 @@
+use std::sync::LazyLock;
+
 use xh_archive::Event;
 use xh_reports::prelude::*;
 
 use crate::{
+    gen_name,
+    name::StoreName,
     planner::PackageId,
     store::{ArtifactId, Error, Store, StoreArtifact, StorePackage},
 };
@@ -14,6 +18,11 @@ pub struct CannotRegister;
 pub struct EmptyStore;
 
 impl Store for EmptyStore {
+    fn name() -> &'static StoreName {
+        static NAME: LazyLock<StoreName> = LazyLock::new(|| gen_name!(empty@xuehua));
+        &*NAME
+    }
+
     async fn register_package(
         &mut self,
         _package: &PackageId,
@@ -26,10 +35,7 @@ impl Store for EmptyStore {
         Ok(None)
     }
 
-    async fn register_artifact(
-        &mut self,
-        _archive: Vec<Event>,
-    ) -> Result<StoreArtifact, Error> {
+    async fn register_artifact(&mut self, _archive: Vec<Event>) -> Result<StoreArtifact, Error> {
         Err(CannotRegister.wrap())
     }
 

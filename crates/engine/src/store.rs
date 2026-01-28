@@ -6,7 +6,7 @@ use jiff::Timestamp;
 use xh_archive::Event;
 use xh_reports::prelude::*;
 
-use crate::planner::PackageId;
+use crate::{name::StoreName, planner::PackageId};
 
 #[derive(Default, Debug, IntoReport)]
 #[message("could not execute store action")]
@@ -28,6 +28,8 @@ pub struct StoreArtifact {
 }
 
 pub trait Store {
+    fn name() -> &'static StoreName;
+
     fn register_package(
         &mut self,
         package: &PackageId,

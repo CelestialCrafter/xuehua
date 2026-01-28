@@ -2,6 +2,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
+    sync::LazyLock,
 };
 
 use bytes::Bytes;
@@ -12,6 +13,8 @@ use rusqlite::{Connection, OptionalExtension, named_params};
 use tokio::sync::{mpsc, oneshot};
 use xh_archive::{Event, decoding::Decoder};
 use xh_engine::{
+    gen_name,
+    name::StoreName,
     planner::PackageId,
     store::{ArtifactId, Error, Store, StoreArtifact, StorePackage},
     utils::{ensure_dir, random_hash},
@@ -253,6 +256,11 @@ impl SqliteStore {
 }
 
 impl Store for SqliteStore {
+    fn name() -> &'static StoreName {
+        static NAME: LazyLock<StoreName> = LazyLock::new(|| gen_name!(sqlite@xuehua));
+        &*NAME
+    }
+
     fn register_package(
         &mut self,
         package: &PackageId,

@@ -1,13 +1,12 @@
 use std::{
     process::{ExitStatus, Output},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use log::debug;
 use serde::{Deserialize, Serialize};
-
 use smol_str::SmolStr;
-use xh_engine::{builder::InitializeContext, executor::Executor};
+use xh_engine::{builder::InitializeContext, executor::Executor, gen_name, name::ExecutorName};
 use xh_reports::prelude::*;
 
 #[derive(Debug, IntoReport)]
@@ -79,9 +78,13 @@ impl BubblewrapExecutor {
 }
 
 impl Executor for BubblewrapExecutor {
-    const NAME: &'static str = "bubblewrap@xuehua/executors";
     type Request = CommandRequest;
     type Error = Error;
+
+    fn name() -> &'static ExecutorName {
+        static NAME: LazyLock<ExecutorName> = LazyLock::new(|| gen_name!(bubblewrap@xuehua));
+        &*NAME
+    }
 
     async fn execute(&mut self, request: Self::Request) -> Result<(), Self::Error> {
         debug!(

@@ -19,7 +19,8 @@ use smol_str::SmolStr;
 use xh_reports::prelude::*;
 
 use crate::{
-    package::{LinkTime, Package, PackageName},
+    name::PackageName,
+    package::{LinkTime, Package},
     utils::passthru::PassthruHashSet,
 };
 
@@ -216,12 +217,12 @@ impl Planner<Frozen> {
         let mut hasher = blake3::Hasher::new();
         let mut hash_pkg = |pkg: &Package| {
             hasher.update(pkg.name.identifier.as_bytes());
-            for segment in &pkg.name.namespace {
+            for segment in pkg.name.namespace.iter() {
                 hasher.update(segment.as_bytes());
             }
 
             for request in &pkg.requests {
-                hasher.update(request.executor.as_bytes());
+                hasher.update(request.executor.to_string().as_bytes());
 
                 let mut payload_hasher = std::hash::DefaultHasher::new();
                 request.payload.hash(&mut payload_hasher);
