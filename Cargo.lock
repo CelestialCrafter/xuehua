@@ -2717,6 +2717,7 @@ dependencies = [
  "log",
  "memmap2",
  "tempfile",
+ "xh-common",
  "xh-reports",
 ]
 
@@ -2772,6 +2773,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "xh-common"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "serde",
+ "xh-reports",
+]
+
+[[package]]
 name = "xh-engine"
 version = "0.1.0"
 dependencies = [
@@ -2812,6 +2822,7 @@ dependencies = [
  "serde",
  "tokio",
  "ureq",
+ "xh-common",
  "xh-engine",
  "xh-reports",
 ]
