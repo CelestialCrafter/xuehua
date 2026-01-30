@@ -24,7 +24,7 @@ pub struct Error;
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct CommandRequest {
+pub struct Request {
     pub program: SmolStr,
     pub working_dir: Option<SmolStr>,
     pub arguments: Vec<SmolStr>,
@@ -78,7 +78,7 @@ impl BubblewrapExecutor {
 }
 
 impl Executor for BubblewrapExecutor {
-    type Request = CommandRequest;
+    type Request = Request;
     type Error = Error;
 
     fn name() -> &'static ExecutorName {

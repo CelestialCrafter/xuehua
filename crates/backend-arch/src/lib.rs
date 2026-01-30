@@ -17,8 +17,8 @@ use xh_engine::{
     package::{Dependency, DispatchRequest, LinkTime, Metadata, Package},
     planner::{Planner, Unfrozen},
 };
-use xh_executor_bubblewrap::{BubblewrapExecutor, CommandRequest};
-use xh_executor_http::{HttpExecutor, HttpRequest};
+use xh_executor_bubblewrap::{BubblewrapExecutor, Request as BubblewrapRequest};
+use xh_executor_http::{HttpExecutor, Request as HttpRequest};
 use xh_reports::{partition_results, prelude::*};
 
 #[derive(Default, Debug, IntoReport)]
@@ -101,7 +101,7 @@ impl ArchBackend {
                     },
                     DispatchRequest {
                         executor: BubblewrapExecutor::name().clone(),
-                        payload: to_value(CommandRequest {
+                        payload: to_value(BubblewrapRequest {
                             program: "/zstd".into(),
                             working_dir: None,
                             arguments: vec![
@@ -115,7 +115,7 @@ impl ArchBackend {
                     },
                     DispatchRequest {
                         executor: BubblewrapExecutor::name().clone(),
-                        payload: to_value(CommandRequest {
+                        payload: to_value(BubblewrapRequest {
                             program: "/busybox".into(),
                             working_dir: None,
                             arguments: ["tar", "x", "-f", "download.pkg.tar", "-C", "output"]
