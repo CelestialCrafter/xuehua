@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 xh-engine.workspace = true
 xh-reports.workspace = true
+xh-common.workspace = true
 log.workspace = true
 serde.workspace = true
 tokio = { workspace = true, features = ["rt"] }

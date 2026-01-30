@@ -4,26 +4,18 @@ use std::{
     borrow::Borrow,
     fs,
     os::unix::fs::{PermissionsExt, symlink},
-    path::{Component, Path},
+    path::Path,
 };
 
 use bytes::Bytes;
 use xh_reports::{compat::StdCompat, prelude::*};
 
-use crate::{Event, Object, ObjectContent, PathBytes, utils::debug};
+use crate::{Event, Object, ObjectContent, utils::debug};
 
 /// Error type for unpacking
 #[derive(Default, Debug, IntoReport)]
 #[message("could not unpack archive")]
 pub struct Error;
-
-/// An invalid path was in the index
-#[derive(Debug, IntoReport)]
-#[message("invalid path")]
-#[context(path)]
-pub struct InvalidPathError {
-    path: PathBytes,
-}
 
 // TODO: impl overwrite option
 /// Packer for archive events.
@@ -34,14 +26,6 @@ pub struct Unpacker<'a> {
 }
 
 type WriteFileFn = fn(&Path, &Bytes) -> StdResult<(), std::io::Error>;
-
-fn verify_path(path: &PathBytes) -> Result<&PathBytes, InvalidPathError> {
-    path.as_ref()
-        .components()
-        .all(|c| matches!(c, Component::Normal(..)))
-        .then_some(path)
-        .ok_or_else(|| InvalidPathError { path: path.clone() }.into_report())
-}
 
 impl<'a> Unpacker<'a> {
     /// Constructs a new unpacker.
@@ -105,7 +89,7 @@ impl<'a> Unpacker<'a> {
 }
 
 fn process_object(root: &Path, object: &Object, write_file: WriteFileFn) -> Result<(), Error> {
-    let location = root.join(verify_path(&object.location).wrap()?);
+    let location = xh_common::safe_path(root, object.location.as_ref()).wrap()?;
     debug!("unpacking to {}", location.display());
 
     let set_permissions =

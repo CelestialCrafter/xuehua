@@ -10,12 +10,13 @@ members = [
   "crates/reports",
   "crates/reports-derive",
   "crates/store-sqlite"
-]
+, "crates/common"]
 
 [workspace.dependencies]
 xh-archive = { path = "crates/archive", features = ["mmap"] }
 xh-engine = { path = "crates/engine" }
 xh-reports = { path = "crates/reports", default-features = false }
+xh-common = { path = "crates/common" }
 xh-executor-http = { path = "crates/executor-http" }
 xh-executor-bubblewrap = { path = "crates/executor-bubblewrap" }
 tempfile = "3.24.0"
