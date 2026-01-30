@@ -18,8 +18,9 @@ use xh_engine::{
     package::{Dependency, DispatchRequest, LinkTime, Metadata, Package},
     planner::{Planner, Unfrozen},
 };
-use xh_executor_bubblewrap::{BubblewrapExecutor, Request as BubblewrapRequest};
-use xh_executor_http::{HttpExecutor, Request as HttpRequest};
+use xh_executor_bubblewrap::BubblewrapExecutor;
+use xh_executor_compression::CompressionExecutor;
+use xh_executor_http::HttpExecutor;
 use xh_reports::{partition_results, prelude::*};
 
 #[derive(Default, Debug, IntoReport)]
@@ -66,7 +67,7 @@ impl ArchBackend {
                 requests: vec![
                     DispatchRequest {
                         executor: HttpExecutor::name().clone(),
-                        payload: to_value(HttpRequest {
+                        payload: to_value(xh_executor_http::Request {
                             path: "download.pkg.tar.zst".into(),
                             url: FromStr::from_str(&format!(
                                 "{}/{repo}/os/{}/{file}",
@@ -78,22 +79,18 @@ impl ArchBackend {
                         .erased()?,
                     },
                     DispatchRequest {
-                        executor: BubblewrapExecutor::name().clone(),
-                        payload: to_value(BubblewrapRequest {
-                            program: "/zstd".into(),
-                            working_dir: None,
-                            arguments: vec![
-                                "--decompress".into(),
-                                "--rm".into(),
-                                "download.pkg.tar.zst".into(),
-                            ],
-                            environment: Vec::new(),
+                        executor: CompressionExecutor::name().clone(),
+                        payload: to_value(xh_executor_compression::Request {
+                            algorithm: xh_executor_compression::Algorithm::Zstd,
+                            action: xh_executor_compression::Action::Decompress,
+                            input: "download.pkg.tar.zst".into(),
+                            output: "download.pkg.tar".into(),
                         })
                         .erased()?,
                     },
                     DispatchRequest {
                         executor: BubblewrapExecutor::name().clone(),
-                        payload: to_value(BubblewrapRequest {
+                        payload: to_value(xh_executor_bubblewrap::Request {
                             program: "/busybox".into(),
                             working_dir: None,
                             arguments: ["tar", "x", "-f", "download.pkg.tar", "-C", "output"]

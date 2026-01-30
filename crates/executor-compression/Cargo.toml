@@ -1,0 +1,18 @@
+[package]
+name = "xh-executor-compression"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+zstd = ["dep:zstd-safe"]
+
+[dependencies]
+xh-engine.workspace = true
+xh-reports.workspace = true
+xh-common.workspace = true
+serde.workspace = true
+smol_str.workspace = true
+tokio.workspace = true
+log.workspace = true
+memmap2.workspace = true
+zstd-safe = { version = "7.2.4", optional = true }

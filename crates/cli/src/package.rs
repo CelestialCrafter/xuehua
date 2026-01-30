@@ -22,8 +22,9 @@ use xh_engine::{
     scheduler::{Event, Scheduler},
     store::Store,
 };
-use xh_executor_bubblewrap::{BubblewrapExecutor, Options as BubblewrapOptions};
-use xh_executor_http::{HttpExecutor, Options as HttpOptions};
+use xh_executor_bubblewrap::BubblewrapExecutor;
+use xh_executor_compression::CompressionExecutor;
+use xh_executor_http::HttpExecutor;
 use xh_reports::{partition_results, prelude::*};
 use xh_store_sqlite::SqliteStore;
 
@@ -136,8 +137,9 @@ async fn build(
     let nodes = resolve_many(planner, packages).wrap()?;
     let mut store = SqliteStore::new(locations.store.clone()).wrap()?;
     let builder: Arc<_> = Builder::new(locations.build.clone())
-        .register(|ctx| Ok(BubblewrapExecutor::new(ctx, BubblewrapOptions::default())))
-        .register(|ctx| Ok(HttpExecutor::new(ctx, HttpOptions::default())))
+        .register(|ctx| Ok(BubblewrapExecutor::new(ctx, Default::default())))
+        .register(|ctx| Ok(HttpExecutor::new(ctx, Default::default())))
+        .register(|ctx| Ok(CompressionExecutor::new(ctx, Default::default())))
         .into();
 
     let mut scheduler = Scheduler::new(planner, builder.as_ref());
@@ -165,7 +167,6 @@ async fn build(
 
                     match result {
                         Ok(()) => {
-                            eprintln!("{:?} {name}", request);
                             let archive = builder
                                 .fetch(&request.id)
                                 .expect("should be able to fetch package output")

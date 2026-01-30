@@ -11,8 +11,9 @@ path = "src/main.rs"
 xh-engine.workspace = true
 xh-archive.workspace = true
 xh-reports = { workspace = true, features = ["pretty"] }
-xh-executor-http = { path = "../executor-http" }
-xh-executor-bubblewrap = { path = "../executor-bubblewrap" }
+xh-executor-http.workspace = true
+xh-executor-bubblewrap.workspace = true
+xh-executor-compression.workspace = true
 xh-store-sqlite = { path = "../store-sqlite" }
 xh-backend-lua = { path = "../backend-lua" }
 xh-backend-arch = { path = "../backend-arch" }
