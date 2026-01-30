@@ -23,7 +23,7 @@ use xh_engine::{
     store::Store,
 };
 use xh_executor_bubblewrap::{BubblewrapExecutor, Options as BubblewrapOptions};
-use xh_executor_http::HttpExecutor;
+use xh_executor_http::{HttpExecutor, Options as HttpOptions};
 use xh_reports::{partition_results, prelude::*};
 use xh_store_sqlite::SqliteStore;
 
@@ -41,10 +41,15 @@ pub enum PackageActionError {
 
 pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
     let mut planner = Planner::new();
-    ArchBackend::new("http://mirrors.acm.wpi.edu/archlinux".to_string(), "x86_64")
-        .plan(&mut planner, project)
-        .wrap_with(PackageActionError::Initialize)
-        .erased()?;
+    ArchBackend::new(xh_backend_arch::Options {
+        mirror: "http://mirrors.acm.wpi.edu/archlinux".to_string(),
+        architecture: "x86_64".into(),
+        repos: Default::default(),
+        priorities: Default::default(),
+    })
+    .plan(&mut planner, project)
+    .wrap_with(PackageActionError::Initialize)
+    .erased()?;
 
     let planner = planner
         .freeze()
@@ -132,7 +137,7 @@ async fn build(
     let mut store = SqliteStore::new(locations.store.clone()).wrap()?;
     let builder: Arc<_> = Builder::new(locations.build.clone())
         .register(|ctx| Ok(BubblewrapExecutor::new(ctx, BubblewrapOptions::default())))
-        .register(|ctx| Ok(HttpExecutor::new(ctx)))
+        .register(|ctx| Ok(HttpExecutor::new(ctx, HttpOptions::default())))
         .into();
 
     let mut scheduler = Scheduler::new(planner, builder.as_ref());
@@ -147,7 +152,11 @@ async fn build(
                     request:? = request;
                     "started building package {name}"
                 ),
-                Event::Finished { name, request, result } => {
+                Event::Finished {
+                    name,
+                    request,
+                    result,
+                } => {
                     info!(
                         request:? = request,
                         status = if result.is_ok() { "succeeded" } else { "failed" };

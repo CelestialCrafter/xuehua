@@ -7,6 +7,7 @@ use std::{
 };
 
 use alpm_repo_db::desc::RepoDescFile;
+use serde::Deserialize;
 use smol_str::{SmolStr, ToSmolStr};
 use xh_engine::{
     backend::Backend,
@@ -25,48 +26,25 @@ use xh_reports::{partition_results, prelude::*};
 #[message("could not run arch backend")]
 pub struct Error;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct Options {
+    pub mirror: String,
+    pub architecture: SmolStr,
+    #[serde(default)]
+    pub repos: Vec<SmolStr>,
+    #[serde(default)]
+    pub priorities: BTreeMap<SmolStr, usize>,
+}
+
 pub struct ArchBackend {
-    mirror: String,
-    arch: SmolStr,
-    priorities: BTreeMap<SmolStr, usize>,
+    options: Options,
 }
 
 impl ArchBackend {
-    pub fn new(mirror: String, arch: impl Into<SmolStr>) -> Self {
-        Self {
-            mirror,
-            arch: arch.into(),
-            priorities: Default::default(),
-        }
+    pub fn new(options: Options) -> Self {
+        Self { options }
     }
 
-    pub fn with_priority(mut self, package: impl Into<SmolStr>, priority: usize) -> Self {
-        self.priorities.insert(package.into(), priority);
-        self
-    }
-}
-
-impl Backend for ArchBackend {
-    type Error = Error;
-    type Value = ();
-
-    fn name() -> &'static xh_engine::name::BackendName {
-        static NAME: LazyLock<BackendName> = LazyLock::new(|| gen_name!(arch@xuehua));
-        &*NAME
-    }
-
-    fn plan(&self, planner: &mut Planner<Unfrozen>, project: &Path) -> Result<(), Self::Error> {
-        let entries = scan_project(project).wrap()?;
-        let index = resolve_index(&self.priorities, entries);
-        let packages = self.index_to_packages(index);
-        let planner = packages.map(|result| planner.register(result?).erased().map(|_| ()));
-
-        partition_results::<_, (), _, Vec<_>>(planner)
-            .map_err(|reports| Error.into_report().with_children(reports))
-    }
-}
-
-impl ArchBackend {
     fn index_to_packages(
         &self,
         index: HashMap<SmolStr, IndexEntry>,
@@ -92,7 +70,7 @@ impl ArchBackend {
                             path: "download.pkg.tar.zst".into(),
                             url: FromStr::from_str(&format!(
                                 "{}/{repo}/os/{}/{file}",
-                                self.mirror, self.arch
+                                self.options.mirror, self.options.architecture
                             ))
                             .erased()?,
                             method: FromStr::from_str("GET").expect("GET should be a valid method"),
@@ -147,6 +125,93 @@ impl ArchBackend {
             } => transform_pkg(key, dependencies, repo, file),
             IndexEntryType::Reference { origin } => Ok(transform_ref(key, origin)),
         })
+    }
+
+    fn resolve_index(&self, descriptions: Vec<Description>) -> HashMap<SmolStr, IndexEntry> {
+        fn attempt_replacement(
+            name: SmolStr,
+            priority: usize,
+            create_index_entry: impl FnOnce() -> IndexEntry,
+            index: &mut HashMap<SmolStr, IndexEntry>,
+        ) {
+            match index.entry(name) {
+                Entry::Occupied(mut occupied) => {
+                    if priority > occupied.get().priority {
+                        occupied.insert(create_index_entry());
+                    }
+                }
+                Entry::Vacant(vacant) => {
+                    vacant.insert(create_index_entry());
+                }
+            }
+        }
+
+        let mut index = HashMap::with_capacity(descriptions.len());
+        for description in descriptions {
+            let Description {
+                name,
+                dependencies,
+                provides,
+                file,
+                repo,
+            } = description;
+            let priority = self
+                .options
+                .priorities
+                .get(&name)
+                .copied()
+                .unwrap_or_default();
+
+            attempt_replacement(
+                name.clone(),
+                priority,
+                || IndexEntry {
+                    priority,
+                    ty: IndexEntryType::Package {
+                        dependencies,
+                        file,
+                        repo,
+                    },
+                },
+                &mut index,
+            );
+
+            for provided in provides {
+                attempt_replacement(
+                    provided,
+                    priority,
+                    || IndexEntry {
+                        priority,
+                        ty: IndexEntryType::Reference {
+                            origin: name.clone(),
+                        },
+                    },
+                    &mut index,
+                );
+            }
+        }
+
+        index
+    }
+}
+
+impl Backend for ArchBackend {
+    type Error = Error;
+    type Value = ();
+
+    fn name() -> &'static xh_engine::name::BackendName {
+        static NAME: LazyLock<BackendName> = LazyLock::new(|| gen_name!(arch@xuehua));
+        &*NAME
+    }
+
+    fn plan(&self, planner: &mut Planner<Unfrozen>, project: &Path) -> Result<(), Self::Error> {
+        let entries = scan_project(project).wrap()?;
+        let index = self.resolve_index(entries);
+        let packages = self.index_to_packages(index);
+        let planner = packages.map(|result| planner.register(result?).erased().map(|_| ()));
+
+        partition_results::<_, (), _, Vec<_>>(planner)
+            .map_err(|reports| Error.into_report().with_children(reports))
     }
 }
 
@@ -226,71 +291,6 @@ struct IndexEntry {
     ty: IndexEntryType,
 }
 
-fn resolve_index(
-    priorities: &BTreeMap<SmolStr, usize>,
-    descriptions: Vec<Description>,
-) -> HashMap<SmolStr, IndexEntry> {
-    fn attempt_replacement(
-        name: SmolStr,
-        priority: usize,
-        create_index_entry: impl FnOnce() -> IndexEntry,
-        index: &mut HashMap<SmolStr, IndexEntry>,
-    ) {
-        match index.entry(name) {
-            Entry::Occupied(mut occupied) => {
-                if priority > occupied.get().priority {
-                    occupied.insert(create_index_entry());
-                }
-            }
-            Entry::Vacant(vacant) => {
-                vacant.insert(create_index_entry());
-            }
-        }
-    }
-
-    let mut index = HashMap::with_capacity(descriptions.len());
-    for description in descriptions {
-        let Description {
-            name,
-            dependencies,
-            provides,
-            file,
-            repo,
-        } = description;
-        let priority = priorities.get(&name).copied().unwrap_or_default();
-
-        attempt_replacement(
-            name.clone(),
-            priority,
-            || IndexEntry {
-                priority,
-                ty: IndexEntryType::Package {
-                    dependencies,
-                    file,
-                    repo,
-                },
-            },
-            &mut index,
-        );
-
-        for provided in provides {
-            attempt_replacement(
-                provided,
-                priority,
-                || IndexEntry {
-                    priority,
-                    ty: IndexEntryType::Reference {
-                        origin: name.clone(),
-                    },
-                },
-                &mut index,
-            );
-        }
-    }
-
-    index
-}
-
 fn package_name(identifier: impl Into<SmolStr>) -> PackageName {
     PackageName {
         identifier: identifier.into(),
@@ -303,11 +303,18 @@ fn package_name(identifier: impl Into<SmolStr>) -> PackageName {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::{Description, IndexEntry, IndexEntryType, resolve_index};
+    use crate::{ArchBackend, Description, IndexEntry, IndexEntryType, Options};
 
     #[test]
     fn test_index_resolution() {
-        let priorities = BTreeMap::from([("my-other-pkg".into(), 1), ("my-next-pkg".into(), 2)]);
+        let backend = ArchBackend {
+            options: Options {
+                mirror: Default::default(),
+                architecture: Default::default(),
+                repos: Default::default(),
+                priorities: BTreeMap::from([("my-other-pkg".into(), 1), ("my-next-pkg".into(), 2)]),
+            },
+        };
 
         let entries = vec![
             Description {
@@ -327,7 +334,7 @@ mod tests {
             },
         ];
 
-        let index = resolve_index(&priorities, entries);
+        let index = backend.resolve_index(entries);
 
         match index.get("my-other-pkg") {
             Some(IndexEntry {

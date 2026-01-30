@@ -13,8 +13,6 @@ use ureq::{
 use xh_engine::{builder::InitializeContext, executor::Executor, gen_name, name::ExecutorName};
 use xh_reports::prelude::*;
 
-const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
-
 mod serde_display {
     use std::{fmt, marker::PhantomData, str::FromStr};
 
@@ -64,6 +62,25 @@ pub struct Request {
     pub method: Method,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct Options {
+    #[serde(default = "default_user_agent")]
+    pub user_agent: String,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            user_agent: default_user_agent(),
+        }
+    }
+}
+
+fn default_user_agent() -> String {
+    concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")).to_string()
+}
+
+#[derive(Debug)]
 pub struct HttpExecutor {
     ctx: Arc<InitializeContext>,
     agent: Agent,
@@ -71,10 +88,13 @@ pub struct HttpExecutor {
 
 impl HttpExecutor {
     #[inline]
-    pub fn new(ctx: Arc<InitializeContext>) -> Self {
+    pub fn new(ctx: Arc<InitializeContext>, options: Options) -> Self {
         Self {
             ctx,
-            agent: Config::builder().user_agent(USER_AGENT).build().new_agent(),
+            agent: Config::builder()
+                .user_agent(options.user_agent)
+                .build()
+                .new_agent(),
         }
     }
 }

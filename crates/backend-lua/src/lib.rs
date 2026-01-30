@@ -8,6 +8,7 @@ use mlua::{
     Value as LuaValue,
 };
 use petgraph::graph::{DefaultIx, NodeIndex};
+use serde::Deserialize;
 use smol_str::SmolStr;
 use xh_engine::{
     backend::Backend,
@@ -16,8 +17,8 @@ use xh_engine::{
     name::{BackendName, ExecutorName, PackageName},
     package::{Dependency, DispatchRequest, LinkTime, Metadata, Package},
     planner::{
-        config::{Config, ConfigManager},
         NamespaceTracker, Planner, Unfrozen,
+        config::{Config, ConfigManager},
     },
 };
 use xh_reports::prelude::*;
@@ -158,18 +159,33 @@ impl UserData for LuaConfigManager<'_> {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct Options {
+    #[serde(default = "default_sandbox")]
+    pub sandbox: bool,
+}
+
+fn default_sandbox() -> bool {
+    true
+}
+
 #[derive(Debug)]
 pub struct LuaBackend {
     lua: Lua,
+    options: Options,
 }
 
 impl LuaBackend {
     #[inline]
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(options: Options) -> Result<Self, Error> {
+        if options.sandbox {
+            todo!("lua backend sandboxing");
+        }
+
         let lua = Lua::new();
         logger::register_module(&lua).wrap()?;
 
-        Ok(Self { lua })
+        Ok(Self { lua, options })
     }
 }
 
