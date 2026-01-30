@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ureq::{
     Agent,
     config::Config,
-    http::{Method, Request, Uri},
+    http::{Method, Request as HttpRequest, Uri},
 };
 use xh_engine::{builder::InitializeContext, executor::Executor, gen_name, name::ExecutorName};
 use xh_reports::prelude::*;
@@ -56,7 +56,7 @@ mod serde_display {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HttpRequest {
+pub struct Request {
     pub path: PathBuf,
     #[serde(with = "serde_display")]
     pub url: Uri,
@@ -88,7 +88,7 @@ pub struct InvalidPathError;
 pub struct Error;
 
 impl Executor for HttpExecutor {
-    type Request = HttpRequest;
+    type Request = Request;
     type Error = Error;
 
     fn name() -> &'static ExecutorName {
@@ -115,7 +115,7 @@ impl Executor for HttpExecutor {
 
         tokio::task::spawn_blocking(move || {
             let mut file = std::fs::File::create(path).wrap()?;
-            let request = Request::builder()
+            let request = HttpRequest::builder()
                 .method(request.method)
                 .uri(request.url)
                 .body(())
