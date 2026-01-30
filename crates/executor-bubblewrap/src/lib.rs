@@ -31,11 +31,11 @@ pub struct Request {
     pub environment: Vec<(SmolStr, SmolStr)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Options {
-    network: bool,
-    add_capabilities: Vec<String>,
-    drop_capabilities: Vec<String>,
+    pub network: bool,
+    pub add_capabilities: Vec<String>,
+    pub drop_capabilities: Vec<String>,
 }
 
 impl Default for Options {

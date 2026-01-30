@@ -2726,6 +2726,7 @@ version = "0.1.0"
 dependencies = [
  "alpm-repo-db",
  "alpm-types",
+ "serde",
  "smol_str",
  "xh-engine",
  "xh-executor-bubblewrap",
