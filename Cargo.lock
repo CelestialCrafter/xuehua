@@ -277,6 +277,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6354c81bbfd62d9cfa9cb3c773c2b7b2a3a482d569de977fd0e961f6e7c00583"
 dependencies = [
  "find-msvc-tools",
+ "jobserver",
+ "libc",
  "shlex",
 ]
 
@@ -1240,6 +1242,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "jobserver"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9afb3de4395d6b3e67a780b6de64b51c978ecf11cb9a462c66be7d4ca9039d33"
+dependencies = [
+ "getrandom 0.3.4",
+ "libc",
 ]
 
 [[package]]
@@ -2731,6 +2743,7 @@ dependencies = [
  "smol_str",
  "xh-engine",
  "xh-executor-bubblewrap",
+ "xh-executor-compression",
  "xh-executor-http",
  "xh-reports",
 ]
@@ -2767,6 +2780,7 @@ dependencies = [
  "xh-backend-lua",
  "xh-engine",
  "xh-executor-bubblewrap",
+ "xh-executor-compression",
  "xh-executor-http",
  "xh-reports",
  "xh-store-sqlite",
@@ -2812,6 +2826,21 @@ dependencies = [
  "tokio",
  "xh-engine",
  "xh-reports",
+]
+
+[[package]]
+name = "xh-executor-compression"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "memmap2",
+ "serde",
+ "smol_str",
+ "tokio",
+ "xh-common",
+ "xh-engine",
+ "xh-reports",
+ "zstd-safe",
 ]
 
 [[package]]
@@ -2953,3 +2982,22 @@ name = "zmij"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94f63c051f4fe3c1509da62131a678643c5b6fbdc9273b2b79d4378ebda003d2"
+
+[[package]]
+name = "zstd-safe"
+version = "7.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f49c4d5f0abb602a93fb8736af2a4f4dd9512e36f7f570d66e65ff867ed3b9d"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.0.16+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
+dependencies = [
+ "cc",
+ "pkg-config",
+]

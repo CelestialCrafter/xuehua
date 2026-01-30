@@ -8,6 +8,7 @@ xh-engine.workspace = true
 xh-reports.workspace = true
 xh-executor-http.workspace = true
 xh-executor-bubblewrap.workspace = true
+xh-executor-compression = { workspace = true, features = ["zstd"] }
 smol_str.workspace = true
 serde.workspace = true
 alpm-repo-db = "0.1.1"

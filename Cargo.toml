@@ -9,8 +9,10 @@ members = [
   "crates/executor-http",
   "crates/reports",
   "crates/reports-derive",
-  "crates/store-sqlite"
-, "crates/common"]
+  "crates/store-sqlite",
+  "crates/common",
+  "crates/executor-compression"
+]
 
 [workspace.dependencies]
 xh-archive = { path = "crates/archive", features = ["mmap"] }
@@ -19,6 +21,7 @@ xh-reports = { path = "crates/reports", default-features = false }
 xh-common = { path = "crates/common" }
 xh-executor-http = { path = "crates/executor-http" }
 xh-executor-bubblewrap = { path = "crates/executor-bubblewrap" }
+xh-executor-compression = { path = "crates/executor-compression" }
 tempfile = "3.24.0"
 tokio = "1.49.0"
 petgraph = "0.8.3"
