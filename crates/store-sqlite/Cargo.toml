@@ -13,4 +13,4 @@ log.workspace = true
 educe.workspace = true
 memmap2.workspace = true
 tokio = { workspace = true, features = ["sync"] }
-rusqlite = { version = "0.38.0", features = ["jiff"] }
+rusqlite = { version = "0.38.0", features = ["jiff", "bundled"] }
