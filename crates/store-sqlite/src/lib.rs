@@ -25,9 +25,9 @@ struct Queries;
 
 impl Queries {
     const REGISTER_ARTIFACT: &'static str =
-        "INSERT INTO artifacts (id, created_at) VALUES (:id, :created_at)";
+        "INSERT OR REPLACE INTO artifacts (id, created_at) VALUES (:id, :created_at)";
     const REGISTER_PACKAGE: &'static str =
-        "INSERT INTO packages (id, artifact, created_at) VALUES (:id, :artifact, :created_at)";
+        "INSERT OR REPLACE INTO packages (id, artifact, created_at) VALUES (:id, :artifact, :created_at)";
     const GET_PACKAGE: &'static str =
         "SELECT 1 FROM packages WHERE id IS :id ORDER BY created_at DESC";
     const GET_ARTIFACT: &'static str = "SELECT 1 FROM artifacts WHERE id IS :id";
