@@ -6,7 +6,12 @@ use std::{
 use log::debug;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
-use xh_engine::{builder::InitializeContext, executor::Executor, gen_name, name::ExecutorName};
+use xh_engine::{
+    builder::InitializeContext,
+    executor::{Error, Executor},
+    gen_name,
+    name::ExecutorName,
+};
 use xh_reports::prelude::*;
 
 #[derive(Debug, IntoReport)]
@@ -17,10 +22,6 @@ pub struct CommandError {
     status: ExitStatus,
     stderr: String,
 }
-
-#[derive(Default, Debug, IntoReport)]
-#[message("could not execute request")]
-pub struct Error;
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -79,14 +80,13 @@ impl BubblewrapExecutor {
 
 impl Executor for BubblewrapExecutor {
     type Request = Request;
-    type Error = Error;
 
     fn name() -> &'static ExecutorName {
         static NAME: LazyLock<ExecutorName> = LazyLock::new(|| gen_name!(bubblewrap@xuehua));
         &*NAME
     }
 
-    async fn execute(&mut self, request: Self::Request) -> Result<(), Self::Error> {
+    async fn execute(&mut self, request: Self::Request) -> Result<(), Error> {
         debug!(
             "running command {:?}",
             std::iter::once(request.program.clone())
