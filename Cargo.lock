@@ -2791,7 +2791,9 @@ dependencies = [
 name = "xh-common"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "bytes",
+ "fastrand",
  "serde",
  "xh-reports",
 ]
@@ -2804,7 +2806,6 @@ dependencies = [
  "bytes",
  "ed25519-dalek",
  "educe",
- "fastrand",
  "futures-util",
  "jiff",
  "log",
@@ -2814,6 +2815,7 @@ dependencies = [
  "serde_json",
  "smol_str",
  "xh-archive",
+ "xh-common",
  "xh-reports",
 ]
 
@@ -2890,6 +2892,7 @@ dependencies = [
  "rusqlite",
  "tokio",
  "xh-archive",
+ "xh-common",
  "xh-engine",
  "xh-reports",
 ]

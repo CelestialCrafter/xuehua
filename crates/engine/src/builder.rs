@@ -30,7 +30,7 @@ pub struct InitializationError;
 #[message("could not build package")]
 pub struct Error;
 
-pub type BuildId = u64;
+pub type BuildId = blake3::Hash;
 
 #[derive(Debug, Clone, Copy)]
 pub struct BuildRequest {
