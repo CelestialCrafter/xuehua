@@ -70,7 +70,7 @@ where
 
         let build = async |events: &mpsc::Sender<_>, node| {
             let request = BuildRequest {
-                id: fastrand::u64(..),
+                id: xh_common::random_hash(),
                 target: node,
             };
 

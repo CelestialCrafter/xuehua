@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 xh-reports.workspace = true
+xh-common.workspace = true
 petgraph.workspace = true
 log.workspace = true
 serde.workspace = true
@@ -18,4 +19,3 @@ educe.workspace = true
 smol_str.workspace = true
 blake3 = { workspace = true, features = ["std"] }
 futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
-fastrand = "2.3.0"

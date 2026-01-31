@@ -17,7 +17,7 @@ use xh_engine::{
     name::StoreName,
     planner::PackageId,
     store::{ArtifactId, Error, Store, StoreArtifact, StorePackage},
-    utils::{ensure_dir, random_hash},
+    utils::ensure_dir,
 };
 use xh_reports::{compat::StdCompat, prelude::*};
 
@@ -26,8 +26,7 @@ struct Queries;
 impl Queries {
     const REGISTER_ARTIFACT: &'static str =
         "INSERT OR REPLACE INTO artifacts (id, created_at) VALUES (:id, :created_at)";
-    const REGISTER_PACKAGE: &'static str =
-        "INSERT OR REPLACE INTO packages (id, artifact, created_at) VALUES (:id, :artifact, :created_at)";
+    const REGISTER_PACKAGE: &'static str = "INSERT OR REPLACE INTO packages (id, artifact, created_at) VALUES (:id, :artifact, :created_at)";
     const GET_PACKAGE: &'static str =
         "SELECT 1 FROM packages WHERE id IS :id ORDER BY created_at DESC";
     const GET_ARTIFACT: &'static str = "SELECT 1 FROM artifacts WHERE id IS :id";
@@ -119,7 +118,7 @@ fn register_artifact(
     root: PathBuf,
     archive: Vec<Event>,
 ) -> Result<StoreArtifact, Error> {
-    let temp = artifact_path(root.clone(), &random_hash());
+    let temp = artifact_path(root.clone(), &xh_common::random_hash());
     let file = File::create_new(&temp).compat().wrap()?;
 
     let mut file = BufWriter::new(file);
