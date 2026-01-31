@@ -7,7 +7,6 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-pub mod compat;
 pub mod prelude;
 pub mod render;
 
@@ -481,6 +480,34 @@ impl IntoReport for LogError {
             .with_level(self.level)
             .with_children(self.children)
     }
+}
+
+/// Defines a Compat trait for populating common error types.
+#[macro_export]
+macro_rules! impl_compat {
+    ($name:ident, $(($error:path, |$argument:ident| $block:expr)),*) => {
+        /// Helper trait for populating common error types.
+        pub trait $name<T, E>: Sized {
+            /// Converts this error into a pre-populated [`Report`]($crate::Report).
+            fn compat(self) -> ::core::result::Result<T, $crate::Report<E>>;
+        }
+
+        $(impl<T> $name<T, $error> for ::core::result::Result<T, $error> {
+            #[track_caller]
+            fn compat(self) -> ::core::result::Result<T, $crate::Report<$error>> {
+                #[track_caller]
+                fn convert($argument: $error) -> $crate::Report<$error> {
+                    $block
+                }
+
+                // we can't use [`Result::map_err`] since `#[track_caller]` doesn't work with it
+                match self {
+                    Ok(t) => Ok(t),
+                    Err(e) => Err(convert(e))
+                }
+            }
+        })*
+    };
 }
 
 /// Helper function to partition an [`Iterator`] based on its [`Result`]

@@ -5,7 +5,7 @@ use futures_util::future::BoxFuture;
 use petgraph::graph::NodeIndex;
 use serde::Deserialize;
 use xh_archive::{Event, packing::Packer};
-use xh_reports::{compat::StdCompat, prelude::*};
+use xh_reports::prelude::*;
 
 use crate::{
     executor::Executor,
@@ -144,7 +144,7 @@ where
 
     pub fn fetch(&self, build: &BuildId) -> Result<Option<Vec<Event>>, Error> {
         let output = self.environment_path(build).join("output");
-        if !std::fs::exists(&output).compat().wrap()? {
+        if !std::fs::exists(&output).wrap()? {
             return Ok(None);
         }
 
@@ -165,7 +165,6 @@ where
 
         create_dir(&environment)
             .and_then(|()| create_dir(environment.join("output")))
-            .compat()
             .wrap()?;
 
         // TODO: link closure

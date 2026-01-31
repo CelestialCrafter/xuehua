@@ -4,10 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dirs::{config_dir, data_dir, cache_dir};
+use dirs::{cache_dir, config_dir, data_dir};
 use log::{info, warn};
 use tempfile::env::temp_dir;
-use xh_reports::{compat::StdCompat, prelude::*};
+use xh_reports::prelude::*;
 
 const BUILD: &str = "xuehua/builds";
 const STORE: &str = "xuehua/store";
@@ -112,7 +112,6 @@ fn initialize_locations() -> Result<Locations, InitializeLocationsError> {
 
     fs::create_dir_all(&preset.build)
         .and_then(|()| fs::create_dir_all(&preset.store))
-        .compat()
         .wrap_with_fn(|| InitializeLocationsError {
             locations: preset.clone(),
         })

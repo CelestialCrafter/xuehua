@@ -19,7 +19,7 @@ use xh_engine::{
     store::{ArtifactId, Error, Store, StoreArtifact, StorePackage},
     utils::ensure_dir,
 };
-use xh_reports::{compat::StdCompat, prelude::*};
+use xh_reports::prelude::*;
 
 struct Queries;
 
@@ -119,7 +119,7 @@ fn register_artifact(
     archive: Vec<Event>,
 ) -> Result<StoreArtifact, Error> {
     let temp = artifact_path(root.clone(), &xh_common::random_hash());
-    let file = File::create_new(&temp).compat().wrap()?;
+    let file = File::create_new(&temp).wrap()?;
 
     let mut file = BufWriter::new(file);
     let mut buffer = bytes::BytesMut::with_capacity(1024 * 4);
@@ -128,13 +128,11 @@ fn register_artifact(
     for event in &archive {
         buffer.clear();
         encoder.encode(&mut buffer, event);
-        file.write_all(&buffer).compat().wrap()?;
+        file.write_all(&buffer).wrap()?;
     }
 
     let digest = encoder.digest();
-    std::fs::rename(temp, artifact_path(root, &digest))
-        .compat()
-        .wrap()?;
+    std::fs::rename(temp, artifact_path(root, &digest)).wrap()?;
 
     db.execute(
         Queries::REGISTER_ARTIFACT,
@@ -170,10 +168,10 @@ fn decode_artifact(root: PathBuf, artifact: ArtifactId) -> Result<Option<Vec<Eve
     let file = match File::open(artifact_path(root, &artifact)) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err).compat().wrap(),
+        Err(err) => return Err(err).wrap(),
     };
 
-    let mut mmap = Bytes::from_owner(unsafe { memmap2::Mmap::map(&file).compat().wrap()? });
+    let mut mmap = Bytes::from_owner(unsafe { memmap2::Mmap::map(&file).wrap()? });
     let archive = Decoder::new()
         .decode_iter(&mut mmap)
         .collect::<Result<Vec<_>, _>>()
@@ -228,7 +226,7 @@ pub struct SqliteStore {
 impl SqliteStore {
     pub fn new(root: PathBuf) -> Result<Self, Error> {
         let root = root.join("artifacts");
-        ensure_dir(&root).compat().wrap()?;
+        ensure_dir(&root).wrap()?;
 
         let db = Connection::open(root.join("store.db")).wrap()?;
         db.execute_batch(include_str!("initialize.sql")).wrap()?;
