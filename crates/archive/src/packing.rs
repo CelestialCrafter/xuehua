@@ -3,7 +3,7 @@
 use std::{collections::VecDeque, fs, os::unix::fs::PermissionsExt, path::Path};
 
 use bytes::Bytes;
-use xh_reports::{compat::StdCompat, prelude::*};
+use xh_reports::prelude::*;
 
 use crate::{Event, Object, ObjectContent, PathBytes, utils::debug};
 
@@ -88,10 +88,10 @@ fn process_object(root: &PathBytes, stub: &mut Object, read_file: ReadFileFn) ->
 
     let content = match stub.content {
         ObjectContent::File { .. } => ObjectContent::File {
-            data: read_file(&location).compat().wrap()?,
+            data: read_file(&location).wrap()?,
         },
         ObjectContent::Symlink { .. } => ObjectContent::Symlink {
-            target: fs::read_link(location).compat().wrap()?.into(),
+            target: fs::read_link(location).wrap()?.into(),
         },
         ObjectContent::Directory => ObjectContent::Directory,
     };
@@ -108,7 +108,7 @@ fn process_object(root: &PathBytes, stub: &mut Object, read_file: ReadFileFn) ->
 }
 
 fn build_index(root: &PathBytes) -> Result<VecDeque<Object>, Error> {
-    let mut queue = Vec::from([(root.clone(), fs::symlink_metadata(&root).compat().wrap()?)]);
+    let mut queue = Vec::from([(root.clone(), fs::symlink_metadata(&root).wrap()?)]);
 
     let mut i = 0;
     while let Some((path, ty)) = queue.get(i) {
@@ -124,7 +124,7 @@ fn build_index(root: &PathBytes) -> Result<VecDeque<Object>, Error> {
                 .map(|entry| {
                     let entry = entry?;
                     let path = entry.path();
-                    let metadata = fs::symlink_metadata(&path).compat()?;
+                    let metadata = fs::symlink_metadata(&path)?;
 
                     Ok((path.into(), metadata))
                 })

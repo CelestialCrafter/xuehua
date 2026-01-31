@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use xh_reports::{compat::StdCompat, prelude::*};
+use xh_reports::prelude::*;
 
 use crate::{Event, Object, ObjectContent, utils::debug};
 
@@ -102,7 +102,6 @@ fn process_object(root: &Path, object: &Object, write_file: WriteFileFn) -> Resu
         ObjectContent::Symlink { target } => symlink(target, &location),
         ObjectContent::Directory => fs::create_dir(&location).and_then(|()| set_permissions()),
     }
-    .compat()
     .wrap()?;
 
     Ok(())

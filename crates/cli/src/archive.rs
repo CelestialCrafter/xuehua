@@ -8,7 +8,7 @@ use bytes::{Bytes, BytesMut};
 use log::warn;
 use tempfile::tempfile;
 use xh_archive::{decoding::Decoder, encoding::Encoder, packing::Packer, unpacking::Unpacker};
-use xh_reports::{compat::StdCompat, prelude::*};
+use xh_reports::prelude::*;
 
 use crate::options::cli::ArchiveAction;
 
@@ -54,7 +54,7 @@ fn mmapped_stdin() -> StdResult<Bytes, std::io::Error> {
 
 fn hash() -> Result<(), ()> {
     let mut decoder = Decoder::new();
-    let mut mmap = mmapped_stdin().compat().erased()?;
+    let mut mmap = mmapped_stdin().erased()?;
 
     decoder
         .decode_iter(&mut mmap)
@@ -67,10 +67,8 @@ fn hash() -> Result<(), ()> {
 
 fn decode() -> Result<(), ()> {
     let mut stdout = stdout().lock();
-    for event in Decoder::new().decode_iter(&mut mmapped_stdin().compat().erased()?) {
-        writeln!(stdout, "{:#?}", event.erased()?)
-            .compat()
-            .erased()?;
+    for event in Decoder::new().decode_iter(&mut mmapped_stdin().erased()?) {
+        writeln!(stdout, "{:#?}", event.erased()?).erased()?;
     }
 
     Ok(())
@@ -78,7 +76,7 @@ fn decode() -> Result<(), ()> {
 
 fn unpack(path: &Path) -> Result<(), ()> {
     let mut unpacker = Unpacker::new(path);
-    for event in Decoder::new().decode_iter(&mut mmapped_stdin().compat().erased()?) {
+    for event in Decoder::new().decode_iter(&mut mmapped_stdin().erased()?) {
         unpacker.unpack(event.erased()?).erased()?;
     }
 
@@ -93,7 +91,7 @@ fn pack(path: &Path) -> Result<(), ()> {
     for event in Packer::new(path.to_path_buf()).pack_iter() {
         buffer.clear();
         encoder.encode(&mut buffer, event.erased()?);
-        stdout.write_all(&buffer).compat().erased()?
+        stdout.write_all(&buffer).erased()?
     }
 
     Ok(())
