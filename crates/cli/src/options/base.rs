@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dirs::{config_dir, data_dir, runtime_dir};
+use dirs::{config_dir, data_dir, cache_dir};
 use log::{info, warn};
 use tempfile::env::temp_dir;
 use xh_reports::{compat::StdCompat, prelude::*};
@@ -43,7 +43,7 @@ pub struct InitializeLocationsError {
 
 fn user_locations() -> Option<Locations> {
     Some(Locations {
-        build: runtime_dir()?.join(BUILD),
+        build: cache_dir()?.join(BUILD),
         store: data_dir()?.join(STORE),
         options: config_dir()?.join(OPTIONS),
     })
