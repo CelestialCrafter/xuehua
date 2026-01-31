@@ -11,7 +11,7 @@ use petgraph::graph::{DefaultIx, NodeIndex};
 use serde::Deserialize;
 use smol_str::SmolStr;
 use xh_engine::{
-    backend::Backend,
+    backend::{Backend, Error},
     encoding::to_value,
     gen_name,
     name::{BackendName, ExecutorName, PackageName},
@@ -22,10 +22,6 @@ use xh_engine::{
     },
 };
 use xh_reports::prelude::*;
-
-#[derive(Default, Debug, IntoReport)]
-#[message("could not run lua backend")]
-pub struct Error;
 
 fn conv_dependency(table: Table) -> StdResult<Dependency, mlua::Error> {
     Ok(Dependency {
@@ -190,7 +186,6 @@ impl LuaBackend {
 }
 
 impl Backend for LuaBackend {
-    type Error = Error;
     type Value = LuaValue;
 
     fn name() -> &'static BackendName {

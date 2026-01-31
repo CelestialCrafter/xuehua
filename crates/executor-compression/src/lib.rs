@@ -8,13 +8,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use xh_engine::{builder::InitializeContext, executor::Executor, gen_name, name::ExecutorName};
+use xh_engine::{builder::InitializeContext, executor::{Error, Executor}, gen_name, name::ExecutorName};
 
 use xh_reports::prelude::*;
-
-#[derive(Default, Debug, IntoReport)]
-#[message("could not run compression executor")]
-pub struct Error;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Algorithm {
@@ -56,7 +52,6 @@ impl CompressionExecutor {
 
 impl Executor for CompressionExecutor {
     type Request = Request;
-    type Error = Error;
 
     fn name() -> &'static ExecutorName {
         static NAME: LazyLock<ExecutorName> = LazyLock::new(|| gen_name!(compression@xuehua));

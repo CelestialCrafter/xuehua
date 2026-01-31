@@ -6,7 +6,7 @@ use petgraph::graph::NodeIndex;
 use xh_reports::prelude::*;
 
 use crate::{
-    backend::Backend,
+    backend::{Backend, Error as BackendError},
     name::PackageName,
     package::Package,
     planner::{Planner, Unfrozen},
@@ -22,14 +22,14 @@ pub struct Error;
 pub struct Config<B: Backend> {
     current: B::Value,
     #[educe(Debug(ignore))]
-    apply: Arc<dyn Fn(B::Value) -> Result<Package, B::Error> + Send + Sync>,
+    apply: Arc<dyn Fn(B::Value) -> Result<Package, BackendError> + Send + Sync>,
 }
 
 impl<B: Backend> Config<B> {
     #[inline]
     pub fn new<F>(defaults: B::Value, apply: F) -> Self
     where
-        F: Fn(B::Value) -> Result<Package, B::Error>,
+        F: Fn(B::Value) -> Result<Package, BackendError>,
         F: Send + Sync + 'static,
     {
         Config {
@@ -38,7 +38,7 @@ impl<B: Backend> Config<B> {
         }
     }
 
-    pub fn apply(self) -> Result<Package, B::Error> {
+    pub fn apply(self) -> Result<Package, BackendError> {
         (self.apply)(self.current)
     }
 }
@@ -73,7 +73,7 @@ impl<'a, B: Backend> ConfigManager<'a, B> {
         &mut self,
         source: &NodeIndex,
         destination: PackageName,
-        modify: impl FnOnce(B::Value) -> Result<B::Value, B::Error>,
+        modify: impl FnOnce(B::Value) -> Result<B::Value, BackendError>,
     ) -> Option<Result<(), Error>> {
         trace!("configuring from {source:?} into {destination}");
 

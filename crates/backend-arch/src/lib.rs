@@ -10,7 +10,7 @@ use alpm_repo_db::desc::RepoDescFile;
 use serde::Deserialize;
 use smol_str::{SmolStr, ToSmolStr};
 use xh_engine::{
-    backend::Backend,
+    backend::{Backend, Error},
     encoding::to_value,
     executor::Executor,
     gen_name,
@@ -22,10 +22,6 @@ use xh_executor_bubblewrap::BubblewrapExecutor;
 use xh_executor_compression::CompressionExecutor;
 use xh_executor_http::HttpExecutor;
 use xh_reports::{partition_results, prelude::*};
-
-#[derive(Default, Debug, IntoReport)]
-#[message("could not run arch backend")]
-pub struct Error;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Options {
@@ -193,7 +189,6 @@ impl ArchBackend {
 }
 
 impl Backend for ArchBackend {
-    type Error = Error;
     type Value = ();
 
     fn name() -> &'static xh_engine::name::BackendName {
@@ -201,7 +196,7 @@ impl Backend for ArchBackend {
         &*NAME
     }
 
-    fn plan(&self, planner: &mut Planner<Unfrozen>, project: &Path) -> Result<(), Self::Error> {
+    fn plan(&self, planner: &mut Planner<Unfrozen>, project: &Path) -> Result<(), Error> {
         let entries = scan_project(project).wrap()?;
         let index = self.resolve_index(entries);
         let packages = self.index_to_packages(index);
