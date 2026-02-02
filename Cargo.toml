@@ -12,7 +12,7 @@ members = [
   "crates/store-sqlite",
   "crates/common",
   "crates/executor-compression"
-]
+, "crates/query"]
 
 [workspace.dependencies]
 xh-archive = { path = "crates/archive", features = ["mmap"] }
@@ -31,6 +31,7 @@ memmap2 = "0.9.9"
 ed25519-dalek = "3.0.0-pre.5"
 smol_str = "0.3.5"
 blake3 = "1.8.3"
+fastrand = "2.3.0"
 log = { version = "0.4.29", features = ["std", "kv", "kv_std"] }
 serde = { version = "1.0.228", features = ["derive"] }
 educe = { version = "0.6.0", features = ["Debug", "Clone", "Default", "PartialEq", "Eq"] }
