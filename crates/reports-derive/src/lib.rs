@@ -111,9 +111,11 @@ fn build_into_report_impl(input: &DeriveInput) -> TokenStream {
         Data::Union(_) => unsupported_error(input.span(), "unions").to_compile_error(),
     };
 
+    let generics = &input.generics;
+    let ty_params = generics.type_params().map(|param| &param.ident);
     let ident = &input.ident;
     quote! {
-        impl ::xh_reports::IntoReport for #ident {
+        impl #generics ::xh_reports::IntoReport for #ident <#(#ty_params)*> {
             fn into_report(self) -> ::xh_reports::Report<Self> {
                 let (msg, frames) = #data;
                 ::xh_reports::Report::new(msg).with_frames(frames)
