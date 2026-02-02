@@ -12,7 +12,7 @@ members = [
   "crates/store-sqlite",
   "crates/common",
   "crates/executor-compression"
-]
+, "crates/query"]
 
 [workspace.dependencies]
 xh-archive = { path = "crates/archive", features = ["mmap"] }

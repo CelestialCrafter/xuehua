@@ -1,0 +1,12 @@
+[package]
+name = "xh-query"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xh-reports.workspace = true
+xh-common.workspace = true
+petgraph.workspace = true
+dashmap = { version = "6.1.0", features = ["inline"] }
+hashbrown = { version = "0.16.1", default-features = false, features = ["inline-more", "alloc", "core"] }
+rustc-hash = "2.1.1"
