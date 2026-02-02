@@ -1,0 +1,12 @@
+[package]
+name = "xh-query"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+log.workspace = true
+educe.workspace = true
+rustc-hash = "2.1.1"
+smallvec = "1.15.1"
+hashbrown = { version = "0.16.1", default-features = false, features = ["inline-more"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
