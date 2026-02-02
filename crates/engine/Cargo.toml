@@ -17,5 +17,5 @@ bytes.workspace = true
 memmap2.workspace = true
 educe.workspace = true
 smol_str.workspace = true
-blake3 = { workspace = true, features = ["std"] }
-futures-util = { version = "0.3.31", default-features = false, features = ["std"] }
+blake3.workspace = true
+futures-util = "0.3.31"

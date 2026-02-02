@@ -13,8 +13,6 @@ path = "tests/main.rs"
 harness = false
 
 [features]
-default = ["std"]
-std = ["blake3/std", "xh-reports/std"]
 mmap = ["dep:memmap2"]
 log = ["dep:log"]
 

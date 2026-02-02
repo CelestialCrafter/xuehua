@@ -1,29 +1,20 @@
 //! Error handling crate designed for use with Xuehua
 
 #![warn(missing_docs)]
-#![no_std]
-
-extern crate alloc;
-#[cfg(feature = "std")]
-extern crate std;
 
 pub mod prelude;
 pub mod render;
 
 pub use xh_reports_derive::IntoReport;
 
-use alloc::{
-    boxed::Box,
-    string::{String, ToString},
-    vec::Vec,
-};
-use core::{
+use std::{
     any::{type_name, type_name_of_val},
     error::Error,
     fmt,
+    iter::once,
     marker::PhantomData,
     panic::Location,
-    result::Result as CoreResult,
+    result::Result as StdResult,
 };
 
 use educe::Educe;
@@ -38,8 +29,8 @@ use crate::render::{Render, SimpleRenderer};
 /// Helper alias for [`Error`]
 pub type BoxDynError = Box<dyn Error + Send + Sync + 'static>;
 
-/// Helper alias for [`Result`](CoreResult)
-pub type Result<T, E> = CoreResult<T, Report<E>>;
+/// Helper alias for [`Result`](StdResult)
+pub type Result<T, E> = StdResult<T, Report<E>>;
 
 /// A single piece of information inside of a [`Report`].
 ///
@@ -164,7 +155,7 @@ impl<T> Report<T> {
     ///
     /// # Notes
     ///
-    /// This method has the same semantics as [`core::any::type_name`].
+    /// This method has the same semantics as [`std::any::type_name`].
     pub fn type_name(&self) -> &'static str {
         self.inner.type_name
     }
@@ -305,7 +296,7 @@ pub trait ResultReportExt<T, E>: Sized {
     /// Converts the inner [`Report`] into a type implementing [`Error`].
     ///
     /// See [`Report::into_error`] for more information.
-    fn into_error(self) -> CoreResult<T, impl Error + Send + Sync + 'static>;
+    fn into_error(self) -> StdResult<T, impl Error + Send + Sync + 'static>;
 
     /// "Erases" this `Report`s generic parameter to `()`.
     ///
@@ -345,9 +336,9 @@ pub trait ResultReportExt<T, E>: Sized {
 }
 
 // we can't use [`Result::map_err`] in any of these since `#[track_caller]` on closures is unstable
-impl<T, E, D: Into<Report<E>>> ResultReportExt<T, E> for CoreResult<T, D> {
+impl<T, E, D: Into<Report<E>>> ResultReportExt<T, E> for StdResult<T, D> {
     #[track_caller]
-    fn into_error(self) -> CoreResult<T, impl Error + Send + Sync + 'static> {
+    fn into_error(self) -> StdResult<T, impl Error + Send + Sync + 'static> {
         match self {
             Ok(t) => Ok(t),
             Err(report) => Err(report.into().into_error()),
@@ -447,7 +438,7 @@ impl LogError {
                 &mut self,
                 key: Key<'_>,
                 value: Value<'_>,
-            ) -> CoreResult<(), log::kv::Error> {
+            ) -> StdResult<(), log::kv::Error> {
                 match key.as_str() {
                     "suggestion" => self.frames.push(Frame::suggestion(value.to_smolstr())),
                     "attachment" => self.frames.push(Frame::attachment(value)),
@@ -489,12 +480,12 @@ macro_rules! impl_compat {
         /// Helper trait for populating common error types.
         pub trait $name<T, E>: Sized {
             /// Converts this error into a pre-populated [`Report`]($crate::Report).
-            fn compat(self) -> ::core::result::Result<T, $crate::Report<E>>;
+            fn compat(self) -> ::std::result::Result<T, $crate::Report<E>>;
         }
 
-        $(impl<T> $name<T, $error> for ::core::result::Result<T, $error> {
+        $(impl<T> $name<T, $error> for ::std::result::Result<T, $error> {
             #[track_caller]
-            fn compat(self) -> ::core::result::Result<T, $crate::Report<$error>> {
+            fn compat(self) -> ::std::result::Result<T, $crate::Report<$error>> {
                 #[track_caller]
                 fn convert($argument: $error) -> $crate::Report<$error> {
                     $block
@@ -512,8 +503,8 @@ macro_rules! impl_compat {
 
 /// Helper function to partition an [`Iterator`] based on its [`Result`]
 pub fn partition_results<T, U, E, F>(
-    iterator: impl Iterator<Item = CoreResult<T, E>>,
-) -> CoreResult<U, F>
+    iterator: impl Iterator<Item = StdResult<T, E>>,
+) -> StdResult<U, F>
 where
     U: Extend<T> + Default,
     F: Extend<E> + Default,
@@ -523,10 +514,10 @@ where
 
     let mut has_error = false;
     iterator.for_each(|result| match result {
-        Ok(v) => ok.extend(core::iter::once(v)),
+        Ok(v) => ok.extend(once(v)),
         Err(v) => {
             has_error = true;
-            err.extend(core::iter::once(v))
+            err.extend(once(v))
         }
     });
 

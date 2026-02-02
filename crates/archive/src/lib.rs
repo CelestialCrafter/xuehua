@@ -1,5 +1,4 @@
 #![warn(missing_docs)]
-#![cfg_attr(not(feature = "std"), no_std)]
 
 //! # Xuehua Archive Format
 //!
@@ -10,7 +9,7 @@
 //! - [`decoding::Decoder`]: Decode from bytes
 //! - [`encoding::Encoder`]: Encode into bytes
 //!
-//! And with the `std` feature on `unix` targets:
+//! And on `unix` targets:
 //! - [`packing::Packer`]: Pack from the filesystem
 //! - [`unpacking::Unpacker`]: Unpack into the filesystem
 //!
@@ -20,14 +19,15 @@ pub(crate) mod utils;
 pub mod decoding;
 pub mod encoding;
 
-#[cfg(all(feature = "std", unix))]
+#[cfg(unix)]
 pub mod packing;
-#[cfg(all(feature = "std", unix))]
+#[cfg(unix)]
 pub mod unpacking;
 
-extern crate alloc;
-
-use core::fmt::Debug;
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use bytes::Bytes;
 use ed25519_dalek::Signature;
@@ -38,8 +38,8 @@ pub struct PathBytes {
     inner: Bytes,
 }
 
-impl Debug for PathBytes {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl fmt::Debug for PathBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.inner.fmt(f)
     }
 }
@@ -56,17 +56,17 @@ impl From<Bytes> for PathBytes {
     }
 }
 
-#[cfg(all(feature = "std", unix))]
-impl std::convert::AsRef<std::path::Path> for PathBytes {
-    fn as_ref(&self) -> &std::path::Path {
+#[cfg(unix)]
+impl AsRef<Path> for PathBytes {
+    fn as_ref(&self) -> &Path {
         let str: &std::ffi::OsStr = std::os::unix::ffi::OsStrExt::from_bytes(&self.inner);
-        std::path::Path::new(str)
+        Path::new(str)
     }
 }
 
-#[cfg(all(feature = "std", unix))]
-impl From<std::path::PathBuf> for PathBytes {
-    fn from(value: std::path::PathBuf) -> Self {
+#[cfg(unix)]
+impl From<PathBuf> for PathBytes {
+    fn from(value: PathBuf) -> Self {
         let bytes = std::os::unix::ffi::OsStringExt::into_vec(value.into_os_string());
         Bytes::from_owner(bytes).into()
     }
@@ -94,7 +94,6 @@ pub struct Object {
     pub content: ObjectContent,
 }
 
-#[cfg(feature = "std")]
 impl Object {
     #[allow(missing_docs)]
     #[inline]
@@ -117,5 +116,5 @@ pub enum Event {
     /// An object containing an individual file
     Object(Object),
     /// The footer containing the archive digest and signature
-    Footer(alloc::vec::Vec<(Fingerprint, Signature)>),
+    Footer(Vec<(Fingerprint, Signature)>),
 }

@@ -6,7 +6,7 @@ pub mod json;
 pub mod pretty;
 pub mod simple;
 
-use core::fmt;
+use std::fmt;
 
 #[cfg(feature = "json")]
 pub use json::JsonRenderer;
@@ -23,7 +23,6 @@ pub trait Render {
 }
 
 /// Sets a panic hook for rendering [`Report`]s.
-#[cfg(feature = "std")]
 pub fn set_hook(renderer: impl Render + Send + Sync + 'static) {
     std::panic::set_hook(std::boxed::Box::new(move |info| {
         let message = info.payload_as_str().unwrap_or("no message");

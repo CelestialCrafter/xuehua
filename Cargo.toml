@@ -17,7 +17,7 @@ members = [
 [workspace.dependencies]
 xh-archive = { path = "crates/archive", features = ["mmap"] }
 xh-engine = { path = "crates/engine" }
-xh-reports = { path = "crates/reports", default-features = false }
+xh-reports = { path = "crates/reports" }
 xh-common = { path = "crates/common" }
 xh-executor-http = { path = "crates/executor-http" }
 xh-executor-bubblewrap = { path = "crates/executor-bubblewrap" }
@@ -30,8 +30,8 @@ serde_json = "1.0.149"
 memmap2 = "0.9.9"
 ed25519-dalek = "3.0.0-pre.5"
 smol_str = "0.3.5"
+blake3 = "1.8.3"
 log = { version = "0.4.29", features = ["std", "kv", "kv_std"] }
 serde = { version = "1.0.228", features = ["derive"] }
-blake3 = { version = "1.8.3", default-features = false }
 educe = { version = "0.6.0", features = ["Debug", "Clone", "Default", "PartialEq", "Eq"] }
 jiff = { version = "0.2.18", default-features = false, features = ["alloc", "std", "perf-inline"] }

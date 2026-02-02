@@ -1,7 +1,6 @@
 //! [JSON](https://json.org/) rendering for [`Report`]s.
 
-use alloc::{string::ToString, vec::Vec};
-use core::fmt;
+use std::fmt;
 
 use serde_json::{Value, json};
 

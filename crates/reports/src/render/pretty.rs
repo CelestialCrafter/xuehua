@@ -1,6 +1,6 @@
 //! Pretty rendering for [`Report`]s.
 
-use core::fmt;
+use std::fmt;
 
 use log::Level;
 use owo_colors::{OwoColorize, Style};

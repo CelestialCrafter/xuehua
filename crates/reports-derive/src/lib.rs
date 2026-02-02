@@ -1,8 +1,3 @@
-#![no_std]
-
-extern crate alloc;
-
-use alloc::{format, string::ToString, vec::Vec};
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use syn::{
@@ -108,8 +103,7 @@ fn build_into_report_impl(input: &DeriveInput) -> TokenStream {
                 let enum_ident = &input.ident;
                 let variant_ident = &variant.ident;
 
-                let alloc = alloc();
-                quote! { #enum_ident::#variant_ident #bindings => (#msg, #alloc::vec![#(#frames),*])}
+                quote! { #enum_ident::#variant_ident #bindings => (#msg, ::std::vec![#(#frames),*])}
             });
 
             quote! { match self { #(#arms),* } }
@@ -147,7 +141,7 @@ fn build_bindings_struct(fields: &Fields) -> TokenStream {
         .collect()
 }
 
-fn unsupported_error(span: Span, feature: impl core::fmt::Display) -> Error {
+fn unsupported_error(span: Span, feature: impl std::fmt::Display) -> Error {
     Error::new(
         span,
         format_args!("#[derive(IntoReport)] does not support {feature}"),
@@ -258,15 +252,13 @@ fn build_formatted(fields: &Fields, target: &str, attr: &Attribute) -> Result<To
         Fields::Unit => TokenStream::new(),
     };
 
-    let alloc = alloc();
     Ok(quote!({
-        use #alloc::borrow::Cow;
-        use #alloc::string::ToString;
+        use std::borrow::Cow;
 
         let fmt = format_args!(#fmt, #bindings);
         match fmt.as_str() {
             Some(string) => Cow::Borrowed(string),
-            None => Cow::Owned(fmt.to_string())
+            None => Cow::Owned(fmt.to_string()),
         }
     }))
 }
@@ -282,13 +274,5 @@ fn escape_member(member: Member) -> Ident {
     match member {
         Member::Named(ident) => ident,
         Member::Unnamed(index) => Ident::new(&format!("__self_{}", index.index), index.span),
-    }
-}
-
-fn alloc() -> TokenStream {
-    if cfg!(feature = "std") {
-        quote! { ::std }
-    } else {
-        quote! { ::alloc }
     }
 }

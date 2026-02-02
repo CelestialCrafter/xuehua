@@ -1,7 +1,5 @@
 pub(crate) use log::*;
 
-use alloc::format;
-
 use crate::{Object, ObjectContent};
 
 use bytes::{BufMut, Bytes};
