@@ -1,6 +1,6 @@
 //! Decoding of [`Event`]s from binary
 
-use alloc::borrow::Cow;
+use std::borrow::Cow;
 
 use blake3::Hash;
 use bytes::{Buf, Bytes};
@@ -85,7 +85,7 @@ impl Decoder {
         &mut self,
         buffer: &mut Bytes,
     ) -> impl Iterator<Item = Result<Event, Error>> {
-        core::iter::from_fn(|| {
+        std::iter::from_fn(|| {
             if buffer.is_empty() {
                 None
             } else {

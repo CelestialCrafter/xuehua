@@ -1,6 +1,6 @@
 //! Encoding of [`Event`]s into binary
 
-use core::borrow::Borrow;
+use std::borrow::Borrow;
 
 use bytes::{BufMut, Bytes};
 use ed25519_dalek::Signature;
@@ -89,7 +89,7 @@ impl Encoder {
         buffer.put_slice(hash);
     }
 
-    fn process_footer(&self, buffer: &mut impl BufMut, signatures: &alloc::vec::Vec<(Fingerprint, Signature)>) {
+    fn process_footer(&self, buffer: &mut impl BufMut, signatures: &Vec<(Fingerprint, Signature)>) {
         Marker::Footer.put(buffer);
 
         let hash = self.hasher.finalize();
