@@ -1,5 +1,6 @@
 use std::{
-    any::Any,
+    any::{Any, TypeId},
+    collections::HashMap,
     fmt,
     hash::{BuildHasher, Hash, Hasher},
     sync::{
@@ -9,13 +10,11 @@ use std::{
 };
 
 use educe::Educe;
-use hashbrown::HashTable;
-use rustc_hash::{FxBuildHasher, FxHashSet};
-
-pub type KeyIndex = usize;
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
 pub trait QueryKey: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
     type Value: QueryValue;
+    type Database: Database<Key = Self, Value = Self::Value>;
 
     fn compute(self, ctx: &Context) -> impl Future<Output = Self::Value> + Send;
 }
@@ -73,107 +72,134 @@ impl<T: QueryValue> DynQueryValue for T {
     }
 }
 
-#[derive(Debug)]
-struct Key(Box<dyn DynQueryKey>);
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub struct KeyIndex(usize);
 
-impl Clone for Key {
-    fn clone(&self) -> Self {
-        Self(self.0.key_clone())
-    }
-}
-
-#[derive(Debug)]
-struct Value(Box<dyn DynQueryValue>);
-
-impl Clone for Value {
-    fn clone(&self) -> Self {
-        Self(self.0.value_clone())
-    }
-}
-
-#[derive(Debug)]
-struct Memo {
-    value: Value,
-    verified_at: AtomicUsize,
+#[derive(Debug, Clone)]
+pub struct Memo<V> {
+    value: V,
+    verified_at: usize,
     // TODO: experiment with a SmallVec instead of a Vec
     dependencies: Vec<KeyIndex>,
 }
+
+pub trait Database {
+    type Key;
+    type Value;
+
+    fn index_of(&self, key: &Self::Key) -> Option<KeyIndex>;
+    fn key_of(&self, idx: KeyIndex) -> Option<Self::Key>;
+    fn memo_of(&self, idx: KeyIndex) -> Option<Memo<Self::Value>>;
+
+    fn store_key(&self, idx: KeyIndex, key: Self::Key);
+    fn store_memo(&self, idx: KeyIndex, memo: Memo<Self::Value>);
+
+    fn update_revision(&self, idx: KeyIndex, to: usize) {
+        let mut memo = self.memo_of(idx).expect("memo should exist");
+        memo.verified_at = to;
+        self.store_memo(idx, memo);
+    }
+}
+
+#[derive(Educe)]
+#[educe(Default(bound(S: Default)))]
+pub struct MemoryDatabase<K, V, S> {
+    lookup: RwLock<HashMap<K, KeyIndex, S>>,
+    keys: RwLock<HashMap<KeyIndex, K, S>>,
+    memos: RwLock<HashMap<KeyIndex, Memo<V>, S>>,
+}
+
+impl<K, V, S> Database for MemoryDatabase<K, V, S> {
+    type Key = K;
+
+    type Value = V;
+
+    fn index_of(&self, key: &Self::Key) -> Option<KeyIndex> {
+        todo!()
+    }
+
+    fn key_of(&self, idx: KeyIndex) -> Option<Self::Key> {
+        todo!()
+    }
+
+    fn memo_of(&self, idx: KeyIndex) -> Option<Memo<Self::Value>> {
+        todo!()
+    }
+
+    fn store_key(&self, idx: KeyIndex, key: Self::Key) {
+        todo!()
+    }
+
+    fn store_memo(&self, idx: KeyIndex, memo: Memo<Self::Value>) {
+        todo!()
+    }
+}
+
+trait DynDatabase: fmt::Debug + Any {}
+impl<D: Database + fmt::Debug + 'static> DynDatabase for D {}
 
 #[derive(Default, Educe)]
 #[educe(Debug)]
 struct Store {
     revision: AtomicUsize,
-    #[educe(Debug(ignore))]
-    hash_builder: FxBuildHasher,
-    keys: RwLock<HashTable<(KeyIndex, Key)>>,
-    memos: RwLock<Vec<RwLock<Option<Arc<Memo>>>>>,
+    index: AtomicUsize,
+    databases: FxHashMap<TypeId, Box<dyn DynDatabase>>,
 }
 
 impl Store {
-    fn index_of<K: QueryKey>(&self, key: &K) -> KeyIndex {
-        let hash = key.key_hash(&self.hash_builder);
-        let idx = self
-            .keys
-            .read()
-            .unwrap()
-            .find(hash, |(_, other_key)| key.key_eq(other_key.0.as_ref()))
-            .map(|(idx, _)| *idx);
+    fn database_of<K: QueryKey>(&self) -> &K::Database {
+        (self.databases[&TypeId::of::<K>()].as_ref() as &dyn Any)
+            .downcast_ref::<K::Database>()
+            .expect("database should be of type K::Database")
+    }
 
-        idx.unwrap_or_else(|| {
-            let mut memos = self.memos.write().unwrap();
-            let mut keys = self.keys.write().unwrap();
-
-            let idx = keys.len();
-            memos.push(None.into());
-            keys.insert_unique(hash, (idx, Key(key.key_clone())), |(_, key)| {
-                key.0.key_hash(&self.hash_builder)
-            });
-
-            assert_eq!(keys.len(), memos.len());
+    fn index_of<D>(&self, database: &D, key: &D::Key) -> KeyIndex
+    where
+        D: Database,
+        D::Key: QueryKey,
+    {
+        database.index_of(key).unwrap_or_else(|| {
+            let idx = KeyIndex(self.index.fetch_add(1, Ordering::Relaxed));
+            database.store_key(idx, key.clone());
             idx
         })
     }
 
-    fn verify(&self, idx: KeyIndex) -> Option<Arc<Memo>> {
-        fn inner(
+    fn verify<D: Database>(&self, database: &D, idx: KeyIndex) -> Option<Memo<D::Value>> {
+        fn inner<D: Database>(
+            database: &D,
+            idx: KeyIndex,
             revision: usize,
-            memos: &Vec<RwLock<Option<Arc<Memo>>>>,
-            memo: &Memo,
-            parent_rev: Option<usize>,
-        ) -> bool {
-            let verified_at = memo.verified_at.load(Ordering::Relaxed);
+            parent_revision: Option<usize>,
+        ) -> Option<Memo<D::Value>> {
+            let Some(memo) = database.memo_of(idx) else {
+                return None;
+            };
 
             // hot path, if we computed the memo this revision, we know its valid
-            if verified_at == revision {
-                return true;
+            if memo.verified_at == revision {
+                return Some(memo);
             }
 
             // if dependency was verified after us, we're invalid
-            if let Some(parent_revision) = parent_rev
-                && parent_revision > verified_at
+            if let Some(parent_revision) = parent_revision
+                && parent_revision > memo.verified_at
             {
-                return false;
+                return None;
             }
 
             // cold path, deep verify dependencies
             for dep_idx in &memo.dependencies {
-                let dep_memo = memos[*dep_idx].read().unwrap();
-                let dep_memo = dep_memo.as_ref().expect("memo should be comptued");
-                if !inner(revision, memos, dep_memo, Some(verified_at)) {
-                    return false;
+                if let None = inner(database, *dep_idx, revision, Some(memo.verified_at)) {
+                    return None;
                 }
             }
 
-            memo.verified_at.store(revision, Ordering::Relaxed);
-            true
+            database.update_revision(idx, revision);
+            Some(memo)
         }
 
-        let memos = self.memos.read().unwrap();
-        let memo = memos[idx].read().unwrap();
-        memo.as_ref().and_then(|memo| {
-            let valid = inner(self.revision.load(Ordering::Relaxed), &memos, &memo, None);
-            valid.then(|| memo.clone())
-        })
+        inner(database, idx, self.revision.load(Ordering::Relaxed), None)
     }
 }
 
@@ -186,46 +212,45 @@ pub struct Context {
 
 impl Context {
     pub async fn query<K: QueryKey>(&self, key: K) -> K::Value {
-        let idx = self.store.index_of(&key);
+        let database = self.store.database_of::<K>();
+        let idx = self.store.index_of(database, &key);
         self.dependencies.lock().unwrap().insert(idx);
 
-        if let Some(memo) = self.store.verify(idx) {
-            (memo.value.0.as_ref() as &dyn Any)
-                .downcast_ref::<K::Value>()
-                .expect("memoized value should be of type R")
-                .clone()
-        } else {
-            let ctx = Context {
-                store: self.store.clone(),
-                dependencies: Default::default(),
-            };
+        match self.store.verify(database, idx) {
+            Some(memo) => memo.value,
+            None => {
+                let ctx = Context {
+                    store: self.store.clone(),
+                    dependencies: Default::default(),
+                };
 
-            let value = key.compute(&ctx).await;
-            let memos = self.store.memos.read().unwrap();
-            let mut memo = memos[idx].write().unwrap();
-            *memo = Some(Arc::new(Memo {
-                value: Value(value.value_clone()),
-                verified_at: self.store.revision.load(Ordering::Relaxed).into(),
-                dependencies: ctx.dependencies.into_inner().unwrap().into_iter().collect(),
-            }));
+                let value = key.compute(&ctx).await;
+                let memo = Memo {
+                    value: value.clone(),
+                    verified_at: self.store.revision.load(Ordering::Relaxed),
+                    dependencies: ctx.dependencies.into_inner().unwrap().into_iter().collect(),
+                };
 
-            value
+                database.store_memo(idx, memo);
+                value
+            }
         }
     }
 
     pub fn set<K: QueryKey>(&mut self, key: &K, value: K::Value) {
-        let value = Box::new(value);
+        let database = self.store.database_of::<K>();
+        let idx = self.store.index_of(database, &key);
+
         let old_revision = self.store.revision.fetch_add(1, Ordering::Relaxed);
         let revision = old_revision.wrapping_add(1);
 
-        let idx = self.store.index_of(key);
-        let memos = self.store.memos.read().unwrap();
-        let mut memo = memos[idx].write().unwrap();
-        *memo = Some(Arc::new(Memo {
-            value: Value(Box::new(value)),
-            verified_at: revision.into(),
+        let memo = Memo {
+            value,
+            verified_at: revision,
             dependencies: Default::default(),
-        }))
+        };
+
+        database.store_memo(idx, memo);
     }
 }
 
