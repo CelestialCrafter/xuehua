@@ -2876,10 +2876,8 @@ name = "xh-query"
 version = "0.1.0"
 dependencies = [
  "educe",
- "hashbrown 0.16.1",
  "log",
  "rustc-hash",
- "smallvec",
  "tokio",
 ]
 

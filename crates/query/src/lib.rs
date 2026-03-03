@@ -1,16 +1,19 @@
+mod migration;
+pub mod store;
+
 use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
+    any::Any,
     fmt,
-    hash::{BuildHasher, Hash, RandomState},
-    sync::{
-        Arc, Mutex, RwLock,
-        atomic::{AtomicUsize, Ordering},
-    },
+    hash::Hash,
+    sync::{Arc, Mutex},
 };
 
-use educe::Educe;
-use rustc_hash::{FxHashMap, FxHashSet};
+use tokio::sync::futures::Notified;
+
+use crate::{
+    migration::{MigrationGuard, MigrationState},
+    store::{Database, Memo, Store},
+};
 
 pub trait Key: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
     type Value: Value;
@@ -20,13 +23,14 @@ pub trait Key: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
 }
 
 #[macro_export]
-macro_rules! input_key {
-    ($ty:ty, $value:ty) => {
-        impl QueryKey for $ty {
+macro_rules! impl_input_key {
+    ($ty:ty, $db:ty, $value:ty) => {
+        impl $crate::Key for $ty {
             type Value = $value;
+            type Database = $db;
 
-            fn compute(self, _ctx: QueryContext) -> Self::Value {
-                panic!("QueryKey::compute() should not be called on input key")
+            async fn compute(self, _ctx: &$crate::Context) -> Self::Value {
+                panic!("QueryKey::compute() should not be called on an input key")
             }
         }
     };
@@ -37,138 +41,6 @@ impl<T: fmt::Debug + Clone + Send + Sync + 'static> Value for T {}
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct KeyIndex(usize);
-
-#[derive(Debug)]
-pub struct Memo {
-    verified_at: AtomicUsize,
-    dependencies: Vec<KeyIndex>,
-}
-
-pub trait Database: Send + Sync + 'static {
-    type Key;
-    type Value;
-
-    fn index_of(&self, key: &Self::Key) -> Option<KeyIndex>;
-    fn key_of(&self, idx: KeyIndex) -> Option<Self::Key>;
-    fn value_of(&self, idx: KeyIndex) -> Option<Self::Value>;
-
-    fn store_key(&self, idx: KeyIndex, key: Self::Key);
-    fn store_value(&self, idx: KeyIndex, memo: Self::Value);
-}
-
-#[derive(Educe)]
-#[educe(Default(bound(S: Default)))]
-pub struct MemoryDatabase<K, V, S = RandomState> {
-    lookup: RwLock<HashMap<K, KeyIndex, S>>,
-    keys: RwLock<HashMap<KeyIndex, K, S>>,
-    values: RwLock<HashMap<KeyIndex, V, S>>,
-}
-
-impl<K: Key, V: Value, S: BuildHasher + Send + Sync + 'static> Database
-    for MemoryDatabase<K, V, S>
-{
-    type Key = K;
-
-    type Value = V;
-
-    fn index_of(&self, key: &Self::Key) -> Option<KeyIndex> {
-        self.lookup.read().unwrap().get(key).copied()
-    }
-
-    fn key_of(&self, idx: KeyIndex) -> Option<Self::Key> {
-        self.keys.read().unwrap().get(&idx).cloned()
-    }
-
-    fn value_of(&self, idx: KeyIndex) -> Option<Self::Value> {
-        self.values.read().unwrap().get(&idx).cloned()
-    }
-
-    fn store_key(&self, idx: KeyIndex, key: Self::Key) {
-        self.lookup.write().unwrap().insert(key.clone(), idx);
-        self.keys.write().unwrap().insert(idx, key);
-    }
-
-    fn store_value(&self, idx: KeyIndex, memo: Self::Value) {
-        self.values.write().unwrap().insert(idx, memo.clone());
-    }
-}
-
-trait DynDatabase: Send + Sync + Any {}
-impl<D: Database> DynDatabase for D {}
-
-#[derive(Default, Educe)]
-#[educe(Debug)]
-struct Store {
-    revision: AtomicUsize,
-    index: AtomicUsize,
-    #[educe(Debug(ignore))]
-    databases: FxHashMap<TypeId, Box<dyn DynDatabase>>,
-    memos: RwLock<FxHashMap<KeyIndex, Memo>>,
-}
-
-impl Store {
-    fn database_of<K: Key>(&self) -> &K::Database {
-        (self.databases[&TypeId::of::<K::Database>()].as_ref() as &dyn Any)
-            .downcast_ref::<K::Database>()
-            .expect("database should be of type K::Database")
-    }
-
-    fn index_of<D>(&self, database: &D, key: &D::Key) -> KeyIndex
-    where
-        D: Database,
-        D::Key: Key,
-    {
-        database.index_of(key).unwrap_or_else(|| {
-            let idx = KeyIndex(self.index.fetch_add(1, Ordering::Relaxed));
-            database.store_key(idx, key.clone());
-            idx
-        })
-    }
-
-    fn verify(&self, idx: KeyIndex) -> bool {
-        fn inner(
-            memos: &FxHashMap<KeyIndex, Memo>,
-            idx: KeyIndex,
-            revision: usize,
-            parent_revision: Option<usize>,
-        ) -> bool {
-            let Some(memo) = memos.get(&idx) else {
-                return false;
-            };
-
-            let verified_at = memo.verified_at.load(Ordering::Relaxed);
-
-            // hot path, if we computed the memo this revision, we know its valid
-            if verified_at == revision {
-                return true;
-            }
-
-            // if dependency was verified after us, we're invalid
-            if let Some(parent_revision) = parent_revision
-                && parent_revision > verified_at
-            {
-                return false;
-            }
-
-            // cold path, deep verify dependencies
-            for dep_idx in &memo.dependencies {
-                if !inner(memos, *dep_idx, revision, Some(verified_at)) {
-                    return false;
-                }
-            }
-
-            memo.verified_at.store(revision, Ordering::Relaxed);
-            true
-        }
-
-        inner(
-            &self.memos.read().unwrap(),
-            idx,
-            self.revision.load(Ordering::Relaxed),
-            None,
-        )
-    }
-}
 
 #[derive(Default)]
 pub struct ContextBuilder {
@@ -182,9 +54,12 @@ impl ContextBuilder {
     }
 
     pub fn build(self) -> Context {
+        let store = Arc::new(self.store);
+
         Context {
-            store: self.store.into(),
+            store: store.clone(),
             dependencies: Default::default(),
+            migration: MigrationState::new(store).into(),
         }
     }
 }
@@ -192,7 +67,8 @@ impl ContextBuilder {
 #[derive(Debug)]
 pub struct Context {
     store: Arc<Store>,
-    dependencies: Mutex<FxHashSet<KeyIndex>>,
+    migration: Arc<MigrationState>,
+    dependencies: Mutex<Vec<KeyIndex>>,
 }
 
 impl Context {
@@ -201,47 +77,40 @@ impl Context {
     }
 
     pub async fn query<K: Key>(&self, key: K) -> K::Value {
+        let guard = MigrationGuard::new(&self.migration).await;
+
         let database = self.store.database_of::<K>();
         let idx = self.store.index_of(database, &key);
-        self.dependencies.lock().unwrap().insert(idx);
+        self.dependencies.lock().unwrap().push(idx);
 
-        if self.store.verify(idx)
+        let value = if self.store.verify(idx, &guard)
             && let Some(value) = database.value_of(idx)
         {
             value
         } else {
             let ctx = Context {
                 store: self.store.clone(),
+                migration: self.migration.clone(),
                 dependencies: Default::default(),
             };
-
             let value = key.compute(&ctx).await;
             let memo = Memo {
-                verified_at: self.store.revision.load(Ordering::Relaxed).into(),
-                dependencies: ctx.dependencies.into_inner().unwrap().into_iter().collect(),
+                verified_at: guard.revision().into(),
+                dependencies: ctx.dependencies.into_inner().unwrap(),
             };
 
             database.store_value(idx, value.clone());
             self.store.memos.write().unwrap().insert(idx, memo);
 
             value
-        }
-    }
-
-    pub fn set<K: Key>(&mut self, key: &K, value: K::Value) {
-        let database = self.store.database_of::<K>();
-        let idx = self.store.index_of(database, &key);
-
-        let old_revision = self.store.revision.fetch_add(1, Ordering::Relaxed);
-        let revision = old_revision.wrapping_add(1);
-
-        let memo = Memo {
-            verified_at: revision.into(),
-            dependencies: Default::default(),
         };
 
-        database.store_value(idx, value);
-        self.store.memos.write().unwrap().insert(idx, memo);
+        drop(guard);
+        value
+    }
+
+    pub fn queue<K: Key>(&self, key: &K, value: K::Value) -> Notified<'_> {
+        self.migration.queue(key, value)
     }
 }
 
@@ -249,10 +118,16 @@ impl Context {
 mod tests {
     use std::ops::Range;
 
+    use crate::store::MemoryDatabase;
+
     use super::*;
 
     #[tokio::test]
     async fn expensive_query() {
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct InputQuery;
+        impl_input_key!(InputQuery, MemoryDatabase<Self>, Range<u64>);
+
         #[derive(Debug, Clone, Hash, Eq, PartialEq)]
         struct DifficultQuery {
             offset: u64,
@@ -260,7 +135,7 @@ mod tests {
 
         impl Key for DifficultQuery {
             type Value = u64;
-            type Database = MemoryDatabase<Self, Self::Value>;
+            type Database = MemoryDatabase<Self>;
 
             async fn compute(self, _: &Context) -> Self::Value {
                 (1..=u16::MAX as u64)
@@ -273,17 +148,15 @@ mod tests {
         }
 
         #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct RootQuery {
-            range: Range<u64>,
-        }
+        struct RootQuery;
 
         impl Key for RootQuery {
             type Value = u128;
-            type Database = MemoryDatabase<Self, Self::Value>;
+            type Database = MemoryDatabase<Self>;
 
             async fn compute(self, ctx: &Context) -> Self::Value {
                 let mut sum = 0;
-                for i in self.range {
+                for i in ctx.query(InputQuery).await {
                     sum += ctx
                         .query(DifficultQuery {
                             offset: i % u16::MAX as u64,
@@ -296,19 +169,23 @@ mod tests {
         }
 
         let ctx = ContextBuilder::default()
-            .register_database(MemoryDatabase::<RootQuery, u128>::default())
-            .register_database(MemoryDatabase::<DifficultQuery, u64>::default())
+            .register_database(MemoryDatabase::<RootQuery>::default())
+            .register_database(MemoryDatabase::<DifficultQuery>::default())
+            .register_database(MemoryDatabase::<InputQuery>::default())
             .build();
-        let result = ctx.query(RootQuery { range: 0..10000 }).await;
-        println!("result: {result}");
-        let result = ctx.query(RootQuery { range: 5000..15000 }).await;
-        println!("result: {result}");
-        let result = ctx
-            .query(RootQuery {
-                range: 10000..20000,
-            })
-            .await;
-        println!("result: {result}");
+
+        ctx.queue(&InputQuery, 0..10).await;
+        let result = ctx.query(RootQuery).await;
+        println!("result 1: {result}");
+
+        ctx.queue(&InputQuery, 5..15).await;
+        let result = ctx.query(RootQuery).await;
+        println!("result 2: {result}");
+
+        ctx.queue(&InputQuery, 10..20).await;
+        let result = ctx.query(RootQuery).await;
+        println!("result 3: {result}");
+
         panic!()
     }
 }
