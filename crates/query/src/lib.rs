@@ -1,4 +1,3 @@
-mod migration;
 pub mod store;
 
 use std::{
@@ -8,18 +7,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use tokio::sync::futures::Notified;
+use educe::Educe;
 
-use crate::{
-    migration::{MigrationGuard, MigrationState},
-    store::{Database, Memo, Store},
-};
+use crate::store::{Database, Memo, Store};
 
 pub trait Key: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
     type Value: Value;
     type Database: Database<Key = Self, Value = Self::Value>;
 
-    fn compute(self, ctx: &Context) -> impl Future<Output = Self::Value> + Send;
+    fn compute(self, ctx: &QueryContext) -> impl Future<Output = Self::Value> + Send;
 }
 
 #[macro_export]
@@ -29,7 +25,7 @@ macro_rules! impl_input_key {
             type Value = $value;
             type Database = $db;
 
-            async fn compute(self, _ctx: &$crate::Context) -> Self::Value {
+            async fn compute(self, _ctx: &$crate::QueryContext<'_>) -> Self::Value {
                 panic!("QueryKey::compute() should not be called on an input key")
             }
         }
@@ -42,87 +38,102 @@ impl<T: fmt::Debug + Clone + Send + Sync + 'static> Value for T {}
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct KeyIndex(usize);
 
-#[derive(Default)]
-pub struct ContextBuilder {
-    store: Store,
-}
-
-impl ContextBuilder {
-    pub fn register_database(mut self, db: impl Database) -> Self {
-        self.store.databases.insert(db.type_id(), Box::new(db));
-        self
-    }
-
-    pub fn build(self) -> Context {
-        let store = Arc::new(self.store);
-
-        Context {
-            store: store.clone(),
-            dependencies: Default::default(),
-            migration: MigrationState::new(store).into(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Context {
-    store: Arc<Store>,
-    migration: Arc<MigrationState>,
+pub struct QueryContext<'a> {
+    store: &'a Arc<Store>,
     dependencies: Mutex<Vec<KeyIndex>>,
 }
 
-impl Context {
-    pub fn new() -> Self {
-        ContextBuilder::default().build()
-    }
-
+impl QueryContext<'_> {
     pub async fn query<K: Key>(&self, key: K) -> K::Value {
-        let guard = MigrationGuard::new(&self.migration).await;
-
         let database = self.store.database_of::<K>();
         let idx = self.store.index_of(database, &key);
         self.dependencies.lock().unwrap().push(idx);
 
-        let value = if self.store.verify(idx, &guard)
+        if self.store.verify(idx)
             && let Some(value) = database.value_of(idx)
         {
             value
         } else {
-            let ctx = Context {
-                store: self.store.clone(),
-                migration: self.migration.clone(),
-                dependencies: Default::default(),
-            };
-            let value = key.compute(&ctx).await;
-            let memo = Memo {
-                verified_at: guard.revision().into(),
-                dependencies: ctx.dependencies.into_inner().unwrap(),
-            };
+            let store = self.store.clone();
+            let handle = tokio::task::spawn(async move {
+                let ctx = QueryContext {
+                    store: &store,
+                    dependencies: Default::default(),
+                };
 
+                (
+                    key.compute(&ctx).await,
+                    ctx.dependencies.into_inner().unwrap(),
+                )
+            });
+
+            let (value, dependencies) = handle.await.expect("query task should not panic");
             database.store_value(idx, value.clone());
-            self.store.memos.write().unwrap().insert(idx, memo);
+
+            self.store.memos.write().unwrap().insert(
+                idx,
+                Memo {
+                    verified_at: self.store.revision.into(),
+                    dependencies,
+                },
+            );
 
             value
-        };
+        }
+    }
+}
 
-        drop(guard);
-        value
+#[derive(Debug, Educe)]
+#[educe(Default(new))]
+pub struct Context {
+    store: Arc<Store>,
+}
+
+impl Context {
+    pub fn register_database(mut self, db: impl Database) -> Self {
+        let store =
+            Arc::get_mut(&mut self.store).expect("store should not have outstanding references");
+        store.databases.insert(db.type_id(), Box::new(db));
+
+        self
     }
 
-    pub fn queue<K: Key>(&self, key: &K, value: K::Value) -> Notified<'_> {
-        self.migration.queue(key, value)
+    pub fn query_ctx(&self) -> QueryContext<'_> {
+        QueryContext {
+            store: &self.store,
+            dependencies: Default::default(),
+        }
+    }
+
+    pub fn set<K: Key>(&mut self, key: &K, value: K::Value) {
+        let store =
+            Arc::get_mut(&mut self.store).expect("store should not have outstanding references");
+        store.revision += 1;
+
+        let database = store.database_of::<K>();
+        let idx = store.index_of(database, key);
+        database.store_value(idx, value);
+
+        let memos = store.memos.get_mut().unwrap();
+        memos.insert(
+            idx,
+            Memo {
+                verified_at: store.revision.into(),
+                dependencies: Default::default(),
+            },
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Range;
+    use std::{ops::Range, sync::Mutex};
 
     use crate::store::MemoryDatabase;
 
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 32)]
     async fn expensive_query() {
         #[derive(Debug, Clone, Hash, Eq, PartialEq)]
         struct InputQuery;
@@ -137,7 +148,7 @@ mod tests {
             type Value = u64;
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, _: &Context) -> Self::Value {
+            async fn compute(self, _: &QueryContext<'_>) -> Self::Value {
                 (1..=u16::MAX as u64)
                     .zip(1..=u16::MAX as u64)
                     .map(|(a, b)| if self.offset % 2 == 0 { a / b } else { a * b })
@@ -154,38 +165,82 @@ mod tests {
             type Value = u128;
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, ctx: &Context) -> Self::Value {
+            async fn compute(self, ctx: &QueryContext<'_>) -> Self::Value {
+                let mut set = futures_util::stream::FuturesUnordered::from_iter(ctx.query(InputQuery).await.map(|i| {
+                    ctx.query(DifficultQuery {
+                        offset: i % u16::MAX as u64,
+                    })
+                }));
+
                 let mut sum = 0;
-                for i in ctx.query(InputQuery).await {
-                    sum += ctx
-                        .query(DifficultQuery {
-                            offset: i % u16::MAX as u64,
-                        })
-                        .await as u128;
+                while let Some(value) = futures_util::StreamExt::next(&mut set).await {
+                    sum += value as u128;
                 }
 
                 sum
             }
         }
 
-        let ctx = ContextBuilder::default()
+        let mut ctx = Context::new()
             .register_database(MemoryDatabase::<RootQuery>::default())
             .register_database(MemoryDatabase::<DifficultQuery>::default())
-            .register_database(MemoryDatabase::<InputQuery>::default())
-            .build();
+            .register_database(MemoryDatabase::<InputQuery>::default());
 
-        ctx.queue(&InputQuery, 0..10).await;
-        let result = ctx.query(RootQuery).await;
+        ctx.set(&InputQuery, 0..100000);
+        let result = ctx.query_ctx().query(RootQuery).await;
         println!("result 1: {result}");
 
-        ctx.queue(&InputQuery, 5..15).await;
-        let result = ctx.query(RootQuery).await;
+        ctx.set(&InputQuery, 50000..150000);
+        let result = ctx.query_ctx().query(RootQuery).await;
         println!("result 2: {result}");
 
-        ctx.queue(&InputQuery, 10..20).await;
-        let result = ctx.query(RootQuery).await;
+        ctx.set(&InputQuery, 0..200000);
+        let result = ctx.query_ctx().query(RootQuery).await;
         println!("result 3: {result}");
 
         panic!()
+    }
+
+    #[test]
+    fn expensive_normal() {
+        fn difficult(offset: u64) -> u64 {
+            (1..=u16::MAX as u64)
+                .zip(1..=u16::MAX as u64)
+                .map(|(a, b)| if offset % 2 == 0 { a / b } else { a * b })
+                .reduce(|a, b| a.isqrt() * b.isqrt())
+                .unwrap()
+                + offset
+        }
+
+        fn root() -> u128 {
+            let mut sum = 0;
+            for i in input() {
+                sum += difficult(i % u16::MAX as u64) as u128;
+            }
+
+            sum
+        }
+
+        static INPUT: Mutex<Option<Range<u64>>> = Mutex::new(None);
+        fn input() -> Range<u64> {
+            INPUT
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("input should be set")
+                .clone()
+        }
+
+        *INPUT.lock().unwrap() = Some(0..1000);
+        let result = root();
+        eprintln!("result 1: {result}");
+
+        *INPUT.lock().unwrap() = Some(1000..2000);
+        let result = root();
+        eprintln!("result 2: {result}");
+
+        *INPUT.lock().unwrap() = Some(0..2000);
+        let result = root();
+        eprintln!("result 3: {result}");
     }
 }

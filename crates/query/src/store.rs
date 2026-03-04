@@ -11,7 +11,7 @@ use std::{
 use educe::Educe;
 use rustc_hash::FxHashMap;
 
-use crate::{Key, KeyIndex, migration::MigrationGuard};
+use crate::{Key, KeyIndex};
 
 #[derive(Debug)]
 pub(crate) struct Memo {
@@ -24,13 +24,14 @@ pub(crate) struct Memo {
 pub(crate) struct Store {
     index: AtomicUsize,
     #[educe(Debug(ignore))]
-    pub databases: FxHashMap<TypeId, Box<dyn DynDatabase>>,
+    pub databases: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
     pub memos: RwLock<FxHashMap<KeyIndex, Memo>>,
+    pub revision: usize,
 }
 
 impl Store {
     pub fn database_of<K: Key>(&self) -> &K::Database {
-        (self.databases[&TypeId::of::<K::Database>()].as_ref() as &dyn Any)
+        self.databases[&TypeId::of::<K::Database>()]
             .downcast_ref::<K::Database>()
             .expect("database should be of type K::Database")
     }
@@ -42,13 +43,12 @@ impl Store {
     {
         database.index_of(key).unwrap_or_else(|| {
             let idx = KeyIndex(self.index.fetch_add(1, Ordering::Relaxed));
-            eprintln!("registering key {key:?} as index {idx:?}");
             database.store_key(idx, key.clone());
             idx
         })
     }
 
-    pub fn verify(&self, idx: KeyIndex, guard: &MigrationGuard) -> bool {
+    pub fn verify(&self, idx: KeyIndex) -> bool {
         fn inner(
             memos: &FxHashMap<KeyIndex, Memo>,
             idx: KeyIndex,
@@ -56,41 +56,35 @@ impl Store {
             parent_revision: Option<usize>,
         ) -> bool {
             let Some(memo) = memos.get(&idx) else {
-                eprintln!("no memo for key {idx:?}");
                 return false;
             };
 
             let verified_at = memo.verified_at.load(Ordering::Relaxed);
-            eprintln!("key {idx:?} was verified_at {verified_at}");
 
             // if our parent was verified before us, they're invalid
             if let Some(parent_revision) = parent_revision
                 && parent_revision < verified_at
             {
-                eprintln!("parent was verified before dependency {idx:?}");
                 return false;
             }
 
             // hot path, if we computed the memo this revision, we know its valid
             if verified_at == revision {
-                eprintln!("key {idx:?} is up to date");
                 return true;
             }
 
             // cold path, deep verify dependencies
             for dep_idx in &memo.dependencies {
                 if !inner(memos, *dep_idx, revision, Some(verified_at)) {
-                    eprintln!("dependency {dep_idx:?} is invalid for key {idx:?}");
                     return false;
                 }
             }
 
-            eprintln!("key {idx:?} is valid");
             memo.verified_at.store(revision, Ordering::Relaxed);
             true
         }
 
-        inner(&self.memos.read().unwrap(), idx, guard.revision(), None)
+        inner(&self.memos.read().unwrap(), idx, self.revision, None)
     }
 }
 
@@ -131,28 +125,11 @@ impl<K: Key, S: BuildHasher + Send + Sync + 'static> Database for MemoryDatabase
     }
 
     fn store_key(&self, idx: KeyIndex, key: Self::Key) {
-        eprintln!("storing key {key:?} for idx {idx:?}");
         self.lookup.write().unwrap().insert(key.clone(), idx);
         self.keys.write().unwrap().insert(idx, key);
     }
 
     fn store_value(&self, idx: KeyIndex, value: Self::Value) {
-        eprintln!("storing value {value:?} for idx {idx:?}");
         self.values.write().unwrap().insert(idx, value);
-    }
-}
-
-pub(crate) trait DynDatabase: Send + Sync + Any {
-    fn dyn_store_value(&self, idx: KeyIndex, value: Box<dyn Any>);
-}
-
-impl<D: Database> DynDatabase for D {
-    fn dyn_store_value(&self, idx: KeyIndex, value: Box<dyn Any>) {
-        self.store_value(
-            idx,
-            *value
-                .downcast::<D::Value>()
-                .expect("value should be of type D::Value"),
-        );
     }
 }
