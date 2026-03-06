@@ -2,121 +2,135 @@ use std::{
     any::{Any, TypeId},
     collections::HashMap,
     hash::{BuildHasher, RandomState},
+    num::NonZeroUsize,
     sync::{
-        Arc, Mutex, RwLock,
+        Mutex, RwLock,
         atomic::{AtomicUsize, Ordering},
     },
 };
 
 use educe::Educe;
 use rustc_hash::FxHashMap;
-use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{Key, KeyIndex, Value};
 
 #[derive(Debug)]
 pub(crate) struct Memo {
     pub verified_at: AtomicUsize,
-    pub dependencies: Vec<KeyIndex>,
-    pub computing: Arc<AsyncMutex<()>>,
+    pub dependencies: Mutex<Vec<KeyIndex>>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Educe, Debug)]
+#[educe(Default)]
 pub(crate) struct Store {
-    index: Mutex<usize>,
-    databases: RwLock<FxHashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
-    pub memos: RwLock<FxHashMap<KeyIndex, Memo>>,
-    pub revision: usize,
+    databases: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    pub memos: boxcar::Vec<Memo>,
+    // some things depend on revision 0 being non-existent
+    #[educe(Default = NonZeroUsize::new(1).unwrap())]
+    pub revision: NonZeroUsize,
 }
 
-pub(crate) enum VerificationResult<D: Database> {
+pub(crate) enum VerificationResult<'a, D: Database> {
     Cached { value: D::Value },
-    Outdated { compute_lock: Arc<AsyncMutex<()>> },
-    New,
+    Outdated { memo: &'a Memo },
 }
 
 impl Store {
-    pub fn database_of<K: Key>(&self) -> Arc<K::Database> {
-        let type_id = TypeId::of::<K::Database>();
-        let database = self.databases.read().unwrap().get(&type_id).cloned();
+    pub fn database_of<K: Key>(&self) -> &K::Database {
+        let database = self
+            .databases
+            .get(&TypeId::of::<K::Database>())
+            .expect("database should be registered");
         database
-            .map(|any| {
-                any.downcast::<K::Database>()
-                    .expect("database should be of type K::Database")
-            })
-            .unwrap_or_else(|| {
-                let database = Arc::new(K::Database::default());
-                self.databases
-                    .write()
-                    .unwrap()
-                    .insert(type_id, database.clone());
-                database
-            })
+            .downcast_ref::<K::Database>()
+            .expect("database should be of type K::Database")
     }
 
     pub fn index_of<D: Database>(&self, database: &D, key: &D::Key) -> KeyIndex {
         database.index_of(key).unwrap_or_else(|| {
-            let mut current_index = self.index.lock().unwrap();
-            *current_index += 1;
+            let idx = KeyIndex(self.memos.push(Memo {
+                verified_at: (self.revision.get() - 1).into(),
+                dependencies: Default::default(),
+            }));
 
-            let idx = KeyIndex(*current_index);
             database.store_key(idx, key.clone());
             idx
         })
     }
 
-    pub fn verify<'a, D: Database>(&self, database: &D, idx: KeyIndex) -> VerificationResult<D> {
-        fn inner(
-            store: &Store,
-            memos: &FxHashMap<KeyIndex, Memo>,
-            idx: KeyIndex,
-            parent_revision: Option<usize>,
-        ) -> bool {
-            let Some(memo) = memos.get(&idx) else {
-                return false;
+    pub async fn verify<D: Database>(
+        &self,
+        database: &D,
+        idx: KeyIndex,
+    ) -> VerificationResult<'_, D> {
+        #[derive(Debug)]
+        enum Operation {
+            Validate { parent_revision: usize },
+            Update,
+        }
+
+        let root = &self.memos[idx.0];
+        let mut queue = vec![(
+            root,
+            Operation::Validate {
+                parent_revision: usize::MAX,
+            },
+        )];
+
+        let valid = loop {
+            let Some((memo, entry)) = queue.pop() else {
+                break true;
             };
 
-            let verified_at = memo.verified_at.load(Ordering::Relaxed);
+            let (verified_at, parent_revision) = match entry {
+                Operation::Validate { parent_revision } => {
+                    (memo.verified_at.load(Ordering::Relaxed), parent_revision)
+                }
+                Operation::Update => {
+                    memo.verified_at
+                        .store(self.revision.get(), Ordering::Relaxed);
+                    continue;
+                }
+            };
 
             // if our parent was verified before us, they're invalid
-            if let Some(parent_revision) = parent_revision
-                && parent_revision < verified_at
-            {
-                return false;
+            if parent_revision < verified_at {
+                break false;
             }
 
             // hot path, if we computed the memo this revision, we know its valid
-            if verified_at == store.revision {
-                return true;
+            if verified_at == self.revision.get() {
+                break true;
             }
 
             // cold path, deep verify dependencies
-            for dep_idx in &memo.dependencies {
-                if !inner(store, memos, *dep_idx, Some(verified_at)) {
-                    return false;
-                }
-            }
+            let dependencies = memo.dependencies.lock().unwrap().clone();
+            queue.push((memo, Operation::Update));
+            queue.extend(dependencies.into_iter().map(|idx| {
+                (
+                    &self.memos[idx.0],
+                    Operation::Validate {
+                        parent_revision: verified_at,
+                    },
+                )
+            }));
+        };
 
-            memo.verified_at.store(store.revision, Ordering::Relaxed);
-            true
-        }
-
-        let memos = self.memos.read().unwrap();
-        if inner(self, &memos, idx, None)
-            && let Some(value) = database.value_of(idx)
-        {
+        if valid && let Some(value) = database.value_of(idx) {
             VerificationResult::Cached { value }
-        } else if let Some(memo) = memos.get(&idx) {
-            VerificationResult::Outdated {
-                compute_lock: memo.computing.clone(),
-            }
         } else {
-            VerificationResult::New
+            VerificationResult::Outdated { memo: root }
         }
+    }
+
+    pub fn register(&mut self, database: impl Database) {
+        self.databases
+            .entry(database.type_id())
+            .or_insert_with(|| Box::new(database));
     }
 }
 
-pub trait Database: Default + Send + Sync + 'static {
+pub trait Database: Send + Sync + 'static {
     type Key: Key<Value = Self::Value>;
     type Value: Value;
 

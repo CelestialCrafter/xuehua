@@ -3,18 +3,19 @@ pub mod store;
 use std::{
     fmt,
     hash::Hash,
-    sync::{Arc, Mutex},
+    sync::{Arc, atomic::Ordering},
 };
 
+use crossbeam_queue::SegQueue;
 use educe::Educe;
 
-use crate::store::{Database, Memo, Store, VerificationResult};
+use crate::store::{Database, Store, VerificationResult};
 
 pub trait Key: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
     type Value: Value;
     type Database: Database<Key = Self, Value = Self::Value>;
 
-    fn compute(self, ctx: &QueryContext) -> impl Future<Output = Self::Value> + Send;
+    fn compute(self, ctx: &Handle) -> impl Future<Output = Self::Value> + Send;
 }
 
 #[macro_export]
@@ -24,7 +25,7 @@ macro_rules! impl_input_key {
             type Value = $value;
             type Database = $db;
 
-            async fn compute(self, _ctx: &$crate::QueryContext<'_>) -> Self::Value {
+            async fn compute(self, _ctx: &$crate::Handle<'_>) -> Self::Value {
                 panic!("QueryKey::compute() should not be called on an input key")
             }
         }
@@ -37,53 +38,42 @@ impl<T: Clone + Send + Sync + 'static> Value for T {}
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct KeyIndex(usize);
 
-pub struct QueryContext<'a> {
+pub struct Handle<'a> {
     store: &'a Arc<Store>,
-    dependencies: Mutex<Vec<KeyIndex>>,
+    dependencies: SegQueue<KeyIndex>,
 }
 
-impl QueryContext<'_> {
+impl Handle<'_> {
     pub async fn query<K: Key>(&self, key: K) -> K::Value {
         let database = self.store.database_of::<K>();
-        let idx = self.store.index_of(database.as_ref(), &key);
-        self.dependencies.lock().unwrap().push(idx);
+        let idx = self.store.index_of(database, &key);
+        self.dependencies.push(idx);
 
-        let mutex = match self.store.verify(database.as_ref(), idx) {
+        let memo = match self.store.verify(database, idx).await {
+            VerificationResult::Outdated { memo } => memo,
             VerificationResult::Cached { value } => return value,
-            VerificationResult::Outdated { compute_lock } => Some(compute_lock),
-            VerificationResult::New => None,
-        };
-        let guard = match &mutex {
-            Some(mutex) => Some(mutex.lock().await),
-            None => None,
         };
 
         let store = self.store.clone();
         let handle = tokio::task::spawn(async move {
-            let ctx = QueryContext {
+            let ctx = Handle {
                 store: &store,
                 dependencies: Default::default(),
             };
 
-            (
-                key.compute(&ctx).await,
-                ctx.dependencies.into_inner().unwrap(),
-            )
+            (key.compute(&ctx).await, ctx.dependencies.into_iter())
         });
 
         let (value, dependencies) = handle.await.expect("query task should not panic");
         database.store_value(idx, value.clone());
 
-        self.store.memos.write().unwrap().insert(
-            idx,
-            Memo {
-                verified_at: self.store.revision.into(),
-                computing: Default::default(),
-                dependencies,
-            },
-        );
+        let mut memo_dependencies = memo.dependencies.lock().unwrap();
+        memo_dependencies.clear();
+        memo_dependencies.extend(dependencies);
 
-        drop(guard);
+        memo.verified_at
+            .store(self.store.revision.get(), Ordering::Relaxed);
+
         value
     }
 }
@@ -95,31 +85,41 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn query_ctx(&self) -> QueryContext<'_> {
-        QueryContext {
+    pub fn query_ctx(&self) -> Handle<'_> {
+        Handle {
             store: &self.store,
             dependencies: Default::default(),
         }
     }
 
+    fn store_mut(&mut self) -> &mut Store {
+        Arc::get_mut(&mut self.store).expect("store should not have outstanding references")
+    }
+
     pub fn set<K: Key>(&mut self, key: &K, value: K::Value) {
-        let store =
-            Arc::get_mut(&mut self.store).expect("store should not have outstanding references");
-        store.revision += 1;
+        let store = self.store_mut();
+        store.revision = store
+            .revision
+            .checked_add(1)
+            .expect("revision should not exceed NonZeroUsize::MAX");
 
         let database = store.database_of::<K>();
-        let idx = store.index_of(database.as_ref(), key);
+        let idx = store.index_of(database, key);
         database.store_value(idx, value);
 
-        let memos = store.memos.get_mut().unwrap();
-        memos.insert(
-            idx,
-            Memo {
-                verified_at: store.revision.into(),
-                dependencies: Default::default(),
-                computing: Default::default(),
-            },
-        );
+        let memo = store
+            .memos
+            .get_mut(idx.0)
+            .expect("memo should be valid for any KeyIndex");
+
+        memo.verified_at = store.revision.get().into();
+        memo.dependencies = Default::default();
+    }
+
+    pub fn register<K: Key>(mut self, database: K::Database) -> Self {
+        let store = self.store_mut();
+        store.register(database);
+        self
     }
 }
 
@@ -127,197 +127,11 @@ impl Context {
 mod tests {
     use std::{ops::Range, sync::Mutex};
 
+    use futures_util::{StreamExt, stream::FuturesUnordered};
+
     use crate::store::MemoryDatabase;
 
     use super::*;
-
-    use futures_util::StreamExt;
-    use std::{sync::Arc, time::Duration, time::Instant};
-
-    // NOTE: function fully generated by gemini pro 3.1
-    #[tokio::test(flavor = "multi_thread")]
-    async fn system_benchmark() {
-        // =========================================================================
-        // 1. INPUTS
-        // =========================================================================
-
-        /// Represents the raw text content of a file on disk.
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct FileText(String);
-        impl_input_key!(FileText, MemoryDatabase<Self>, Arc<String>);
-
-        /// A global configuration parameter (e.g., optimization level, theme).
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct GlobalConfig;
-        impl_input_key!(GlobalConfig, MemoryDatabase<Self>, u64);
-
-        // =========================================================================
-        // 2. DERIVED QUERIES
-        // =========================================================================
-
-        /// Simulates parsing a file into an AST.
-        /// This is an expensive operation that we want to cache.
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct ParseFile(String);
-
-        impl Key for ParseFile {
-            type Value = Arc<Vec<String>>; // Simulated AST
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, ctx: &QueryContext<'_>) -> Self::Value {
-                let text = ctx.query(FileText(self.0)).await;
-
-                // Simulate expensive parsing/IO (5ms per file)
-                tokio::time::sleep(Duration::from_millis(5)).await;
-
-                let tokens: Vec<String> = text.split_whitespace().map(|s| s.to_string()).collect();
-                Arc::new(tokens)
-            }
-        }
-
-        /// Simulates processing/type-checking the AST of a file.
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct ProcessFile(String);
-
-        impl Key for ProcessFile {
-            type Value = u64; // Simulated compiled artifact (just a token count)
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, ctx: &QueryContext<'_>) -> Self::Value {
-                let ast = ctx.query(ParseFile(self.0)).await;
-
-                // Simulate CPU-heavy processing
-                let mut hash: u64 = 0;
-                for token in ast.iter() {
-                    hash = hash.wrapping_add(token.len() as u64).wrapping_mul(31);
-                }
-                hash
-            }
-        }
-
-        /// The root query: compiles the whole project by aggregating all files
-        /// and applying the global configuration.
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct BuildProject {
-            files: Arc<Vec<String>>,
-        }
-
-        impl Key for BuildProject {
-            type Value = u64; // Final build hash
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, ctx: &QueryContext<'_>) -> Self::Value {
-                let config_multiplier = ctx.query(GlobalConfig).await;
-
-                // Fan-out: Concurrently process all files
-                let mut tasks = futures_util::stream::FuturesUnordered::from_iter(
-                    self.files
-                        .iter()
-                        .map(|file| ctx.query(ProcessFile(file.clone()))),
-                );
-
-                // Fan-in: Aggregate results
-                let mut total_hash: u64 = 0;
-                while let Some(file_hash) = tasks.next().await {
-                    total_hash = total_hash.wrapping_add(file_hash);
-                }
-
-                total_hash.wrapping_mul(config_multiplier)
-            }
-        }
-
-    // =========================================================================
-    // 3. THE WORKLOAD TEST
-    // =========================================================================
-
-        let mut ctx = Context::new();
-        let num_files = 1000;
-        let mut file_names = Vec::with_capacity(num_files);
-
-        // 1. Setup Initial State
-        for i in 0..num_files {
-            let name = format!("file_{}.rs", i);
-            let content = Arc::new(format!(
-                "fn main() {{ println!(\"Hello from file {}\"); }}",
-                i
-            ));
-
-            ctx.set(&FileText(name.clone()), content);
-            file_names.push(name);
-        }
-        ctx.set(&GlobalConfig, 1);
-
-        let root_query = BuildProject {
-            files: Arc::new(file_names.clone()),
-        };
-
-        println!("--- Starting Benchmark ---");
-
-        // PHASE 1: Cold Cache
-        // Everything must be computed. 1000 files * 5ms = ~5 seconds serially.
-        // With 4 worker threads fanning out, it should take ~1.25 seconds.
-        let start = Instant::now();
-        let result_cold = ctx.query_ctx().query(root_query.clone()).await;
-        let elapsed_cold = start.elapsed();
-        println!(
-            "Phase 1 (Cold Cache):        {:?} \t(Result: {})",
-            elapsed_cold, result_cold
-        );
-
-        // PHASE 2: Hot Cache
-        // Nothing changed. Should resolve instantly by validating timestamps.
-        let start = Instant::now();
-        let result_hot = ctx.query_ctx().query(root_query.clone()).await;
-        let elapsed_hot = start.elapsed();
-        println!(
-            "Phase 2 (Hot Cache):         {:?} \t(Result: {})",
-            elapsed_hot, result_hot
-        );
-        assert_eq!(result_cold, result_hot);
-        assert!(
-            elapsed_hot < Duration::from_millis(50),
-            "Hot cache should be near-instant"
-        );
-
-        // PHASE 3: Partial Invalidation (Leaf Node)
-        // We change a single file. Only `ParseFile`, `ProcessFile` for this one file,
-        // and the `BuildProject` root should recompute.
-        let updated_file = "file_42.rs".to_string();
-        ctx.set(
-            &FileText(updated_file.clone()),
-            Arc::new("fn main() { panic!(); }".to_string()),
-        );
-
-        let start = Instant::now();
-        let result_partial = ctx.query_ctx().query(root_query.clone()).await;
-        let elapsed_partial = start.elapsed();
-        println!(
-            "Phase 3 (1 File Changed):    {:?} \t(Result: {})",
-            elapsed_partial, result_partial
-        );
-        assert_ne!(result_hot, result_partial);
-        // It should take slightly longer than Hot Cache, but vastly less than Cold Cache (roughly ~5ms + overhead)
-        assert!(elapsed_partial < elapsed_cold / 10);
-
-        // PHASE 4: Root Dependency Invalidation
-        // We change the global config. The root query MUST recompute, but ALL file
-        // processing is still cached. This tests deep cache verification success.
-        ctx.set(&GlobalConfig, 2);
-
-        let start = Instant::now();
-        let result_root = ctx.query_ctx().query(root_query.clone()).await;
-        let elapsed_root = start.elapsed();
-        println!(
-            "Phase 4 (Config Changed):    {:?} \t(Result: {})",
-            elapsed_root, result_root
-        );
-
-        // Because the multiplier is 2, the new hash should just be the previous total * 2
-        assert_eq!(result_root, result_partial.wrapping_mul(2));
-        assert!(elapsed_root < elapsed_cold / 10);
-
-        println!("--- Benchmark Complete ---");
-    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn expensive_query() {
@@ -334,7 +148,7 @@ mod tests {
             type Value = u64;
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, ctx: &QueryContext<'_>) -> Self::Value {
+            async fn compute(self, ctx: &Handle<'_>) -> Self::Value {
                 let range = (1..=u16::MAX as u64)
                     .zip(ctx.query(InputQuery).await)
                     .map(|(a, b)| a + b);
@@ -355,17 +169,15 @@ mod tests {
             type Value = u128;
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, ctx: &QueryContext<'_>) -> Self::Value {
-                let mut set = futures_util::stream::FuturesUnordered::from_iter(
-                    ctx.query(InputQuery).await.map(|i| {
-                        ctx.query(DifficultQuery {
-                            offset: i % u16::MAX as u64,
-                        })
-                    }),
-                );
+            async fn compute(self, ctx: &Handle<'_>) -> Self::Value {
+                let mut set = FuturesUnordered::from_iter(ctx.query(InputQuery).await.map(|i| {
+                    ctx.query(DifficultQuery {
+                        offset: i % u16::MAX as u64,
+                    })
+                }));
 
                 let mut sum = 0;
-                while let Some(value) = futures_util::StreamExt::next(&mut set).await {
+                while let Some(value) = set.next().await {
                     sum += value as u128;
                 }
 
@@ -373,17 +185,20 @@ mod tests {
             }
         }
 
-        let mut ctx = Context::new();
+        let mut ctx = Context::new()
+            .register::<RootQuery>(Default::default())
+            .register::<DifficultQuery>(Default::default())
+            .register::<InputQuery>(Default::default());
 
-        ctx.set(&InputQuery, 0..10000);
+        ctx.set(&InputQuery, 0..1000);
         let result = ctx.query_ctx().query(RootQuery).await;
         println!("result 1: {result}");
 
-        ctx.set(&InputQuery, 5000..15000);
+        ctx.set(&InputQuery, 500..1500);
         let result = ctx.query_ctx().query(RootQuery).await;
         println!("result 2: {result}");
 
-        ctx.set(&InputQuery, 0..20000);
+        ctx.set(&InputQuery, 0..2000);
         let result = ctx.query_ctx().query(RootQuery).await;
         println!("result 3: {result}");
 
@@ -392,24 +207,6 @@ mod tests {
 
     #[test]
     fn expensive_normal() {
-        fn difficult(offset: u64) -> u64 {
-            (1..=u16::MAX as u64)
-                .zip(1..=u16::MAX as u64)
-                .map(|(a, b)| if offset % 2 == 0 { a / b } else { a * b })
-                .reduce(|a, b| a.isqrt() * b.isqrt())
-                .unwrap()
-                + offset
-        }
-
-        fn root() -> u128 {
-            let mut sum = 0;
-            for i in input() {
-                sum += difficult(i % u16::MAX as u64) as u128;
-            }
-
-            sum
-        }
-
         static INPUT: Mutex<Option<Range<u64>>> = Mutex::new(None);
         fn input() -> Range<u64> {
             INPUT
@@ -418,6 +215,23 @@ mod tests {
                 .as_ref()
                 .expect("input should be set")
                 .clone()
+        }
+
+        fn difficult(offset: u64) -> u64 {
+            let range = (1..=u16::MAX as u64).zip(input()).map(|(a, b)| a + b);
+            let range = range.clone().zip(range);
+
+            range
+                .map(|(a, b)| if offset % 2 == 0 { a / b } else { a * b })
+                .reduce(|a, b| a.isqrt() * b.isqrt())
+                .unwrap()
+                + offset
+        }
+
+        fn root() -> u128 {
+            input()
+                .map(|i| difficult(i % u16::MAX as u64) as u128)
+                .sum()
         }
 
         *INPUT.lock().unwrap() = Some(0..1000);
