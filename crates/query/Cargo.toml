@@ -10,5 +10,5 @@ rustc-hash = "2.1.1"
 tokio = { workspace = true, features = ["rt", "sync"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 futures-util = "0.3.32"
