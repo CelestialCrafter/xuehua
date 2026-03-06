@@ -7,8 +7,8 @@ edition = "2024"
 log.workspace = true
 educe.workspace = true
 rustc-hash = "2.1.1"
-tokio = { workspace = true, features = ["macros", "rt", "sync", "rt-multi-thread"] }
-dashmap = "6.1.0"
+tokio = { workspace = true, features = ["rt", "sync"] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 futures-util = "0.3.32"

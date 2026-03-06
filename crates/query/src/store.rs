@@ -3,56 +3,73 @@ use std::{
     collections::HashMap,
     hash::{BuildHasher, RandomState},
     sync::{
-        RwLock,
+        Arc, Mutex, RwLock,
         atomic::{AtomicUsize, Ordering},
     },
 };
 
 use educe::Educe;
 use rustc_hash::FxHashMap;
+use tokio::sync::Mutex as AsyncMutex;
 
-use crate::{Key, KeyIndex};
+use crate::{Key, KeyIndex, Value};
 
 #[derive(Debug)]
 pub(crate) struct Memo {
     pub verified_at: AtomicUsize,
     pub dependencies: Vec<KeyIndex>,
+    pub computing: Arc<AsyncMutex<()>>,
 }
 
-#[derive(Default, Educe)]
-#[educe(Debug)]
+#[derive(Default, Debug)]
 pub(crate) struct Store {
-    index: AtomicUsize,
-    #[educe(Debug(ignore))]
-    pub databases: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    index: Mutex<usize>,
+    databases: RwLock<FxHashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
     pub memos: RwLock<FxHashMap<KeyIndex, Memo>>,
     pub revision: usize,
 }
 
+pub(crate) enum VerificationResult<D: Database> {
+    Cached { value: D::Value },
+    Outdated { compute_lock: Arc<AsyncMutex<()>> },
+    New,
+}
+
 impl Store {
-    pub fn database_of<K: Key>(&self) -> &K::Database {
-        self.databases[&TypeId::of::<K::Database>()]
-            .downcast_ref::<K::Database>()
-            .expect("database should be of type K::Database")
+    pub fn database_of<K: Key>(&self) -> Arc<K::Database> {
+        let type_id = TypeId::of::<K::Database>();
+        let database = self.databases.read().unwrap().get(&type_id).cloned();
+        database
+            .map(|any| {
+                any.downcast::<K::Database>()
+                    .expect("database should be of type K::Database")
+            })
+            .unwrap_or_else(|| {
+                let database = Arc::new(K::Database::default());
+                self.databases
+                    .write()
+                    .unwrap()
+                    .insert(type_id, database.clone());
+                database
+            })
     }
 
-    pub fn index_of<D>(&self, database: &D, key: &D::Key) -> KeyIndex
-    where
-        D: Database,
-        D::Key: Key,
-    {
+    pub fn index_of<D: Database>(&self, database: &D, key: &D::Key) -> KeyIndex {
         database.index_of(key).unwrap_or_else(|| {
-            let idx = KeyIndex(self.index.fetch_add(1, Ordering::Relaxed));
+            let mut current_index = self.index.lock().unwrap();
+            *current_index += 1;
+
+            let idx = KeyIndex(*current_index);
             database.store_key(idx, key.clone());
             idx
         })
     }
 
-    pub fn verify(&self, idx: KeyIndex) -> bool {
+    pub fn verify<'a, D: Database>(&self, database: &D, idx: KeyIndex) -> VerificationResult<D> {
         fn inner(
+            store: &Store,
             memos: &FxHashMap<KeyIndex, Memo>,
             idx: KeyIndex,
-            revision: usize,
             parent_revision: Option<usize>,
         ) -> bool {
             let Some(memo) = memos.get(&idx) else {
@@ -69,28 +86,39 @@ impl Store {
             }
 
             // hot path, if we computed the memo this revision, we know its valid
-            if verified_at == revision {
+            if verified_at == store.revision {
                 return true;
             }
 
             // cold path, deep verify dependencies
             for dep_idx in &memo.dependencies {
-                if !inner(memos, *dep_idx, revision, Some(verified_at)) {
+                if !inner(store, memos, *dep_idx, Some(verified_at)) {
                     return false;
                 }
             }
 
-            memo.verified_at.store(revision, Ordering::Relaxed);
+            memo.verified_at.store(store.revision, Ordering::Relaxed);
             true
         }
 
-        inner(&self.memos.read().unwrap(), idx, self.revision, None)
+        let memos = self.memos.read().unwrap();
+        if inner(self, &memos, idx, None)
+            && let Some(value) = database.value_of(idx)
+        {
+            VerificationResult::Cached { value }
+        } else if let Some(memo) = memos.get(&idx) {
+            VerificationResult::Outdated {
+                compute_lock: memo.computing.clone(),
+            }
+        } else {
+            VerificationResult::New
+        }
     }
 }
 
-pub trait Database: Send + Sync + 'static {
-    type Key;
-    type Value;
+pub trait Database: Default + Send + Sync + 'static {
+    type Key: Key<Value = Self::Value>;
+    type Value: Value;
 
     fn index_of(&self, key: &Self::Key) -> Option<KeyIndex>;
     fn key_of(&self, idx: KeyIndex) -> Option<Self::Key>;
@@ -101,14 +129,14 @@ pub trait Database: Send + Sync + 'static {
 }
 
 #[derive(Educe)]
-#[educe(Default(bound(S: Default)))]
-pub struct MemoryDatabase<K: Key, S = RandomState> {
+#[educe(Default(new, bound(S: Default)))]
+pub struct MemoryDatabase<K: Key, S: Default = RandomState> {
     lookup: RwLock<HashMap<K, KeyIndex, S>>,
     keys: RwLock<HashMap<KeyIndex, K, S>>,
     values: RwLock<HashMap<KeyIndex, K::Value, S>>,
 }
 
-impl<K: Key, S: BuildHasher + Send + Sync + 'static> Database for MemoryDatabase<K, S> {
+impl<K: Key, S: Default + BuildHasher + Send + Sync + 'static> Database for MemoryDatabase<K, S> {
     type Key = K;
     type Value = K::Value;
 
@@ -125,11 +153,15 @@ impl<K: Key, S: BuildHasher + Send + Sync + 'static> Database for MemoryDatabase
     }
 
     fn store_key(&self, idx: KeyIndex, key: Self::Key) {
-        self.lookup.write().unwrap().insert(key.clone(), idx);
-        self.keys.write().unwrap().insert(idx, key);
+        if let (Ok(mut lookup), Ok(mut keys)) = (self.lookup.write(), self.keys.write()) {
+            lookup.insert(key.clone(), idx);
+            keys.insert(idx, key);
+        }
     }
 
     fn store_value(&self, idx: KeyIndex, value: Self::Value) {
-        self.values.write().unwrap().insert(idx, value);
+        if let Ok(mut values) = self.values.write() {
+            values.insert(idx, value);
+        }
     }
 }

@@ -1,7 +1,6 @@
 pub mod store;
 
 use std::{
-    any::Any,
     fmt,
     hash::Hash,
     sync::{Arc, Mutex},
@@ -9,7 +8,7 @@ use std::{
 
 use educe::Educe;
 
-use crate::store::{Database, Memo, Store};
+use crate::store::{Database, Memo, Store, VerificationResult};
 
 pub trait Key: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
     type Value: Value;
@@ -32,8 +31,8 @@ macro_rules! impl_input_key {
     };
 }
 
-pub trait Value: fmt::Debug + Clone + Send + Sync + 'static {}
-impl<T: fmt::Debug + Clone + Send + Sync + 'static> Value for T {}
+pub trait Value: Clone + Send + Sync + 'static {}
+impl<T: Clone + Send + Sync + 'static> Value for T {}
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct KeyIndex(usize);
@@ -46,40 +45,46 @@ pub struct QueryContext<'a> {
 impl QueryContext<'_> {
     pub async fn query<K: Key>(&self, key: K) -> K::Value {
         let database = self.store.database_of::<K>();
-        let idx = self.store.index_of(database, &key);
+        let idx = self.store.index_of(database.as_ref(), &key);
         self.dependencies.lock().unwrap().push(idx);
 
-        if self.store.verify(idx)
-            && let Some(value) = database.value_of(idx)
-        {
-            value
-        } else {
-            let store = self.store.clone();
-            let handle = tokio::task::spawn(async move {
-                let ctx = QueryContext {
-                    store: &store,
-                    dependencies: Default::default(),
-                };
+        let mutex = match self.store.verify(database.as_ref(), idx) {
+            VerificationResult::Cached { value } => return value,
+            VerificationResult::Outdated { compute_lock } => Some(compute_lock),
+            VerificationResult::New => None,
+        };
+        let guard = match &mutex {
+            Some(mutex) => Some(mutex.lock().await),
+            None => None,
+        };
 
-                (
-                    key.compute(&ctx).await,
-                    ctx.dependencies.into_inner().unwrap(),
-                )
-            });
+        let store = self.store.clone();
+        let handle = tokio::task::spawn(async move {
+            let ctx = QueryContext {
+                store: &store,
+                dependencies: Default::default(),
+            };
 
-            let (value, dependencies) = handle.await.expect("query task should not panic");
-            database.store_value(idx, value.clone());
+            (
+                key.compute(&ctx).await,
+                ctx.dependencies.into_inner().unwrap(),
+            )
+        });
 
-            self.store.memos.write().unwrap().insert(
-                idx,
-                Memo {
-                    verified_at: self.store.revision.into(),
-                    dependencies,
-                },
-            );
+        let (value, dependencies) = handle.await.expect("query task should not panic");
+        database.store_value(idx, value.clone());
 
-            value
-        }
+        self.store.memos.write().unwrap().insert(
+            idx,
+            Memo {
+                verified_at: self.store.revision.into(),
+                computing: Default::default(),
+                dependencies,
+            },
+        );
+
+        drop(guard);
+        value
     }
 }
 
@@ -90,14 +95,6 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn register_database(mut self, db: impl Database) -> Self {
-        let store =
-            Arc::get_mut(&mut self.store).expect("store should not have outstanding references");
-        store.databases.insert(db.type_id(), Box::new(db));
-
-        self
-    }
-
     pub fn query_ctx(&self) -> QueryContext<'_> {
         QueryContext {
             store: &self.store,
@@ -111,7 +108,7 @@ impl Context {
         store.revision += 1;
 
         let database = store.database_of::<K>();
-        let idx = store.index_of(database, key);
+        let idx = store.index_of(database.as_ref(), key);
         database.store_value(idx, value);
 
         let memos = store.memos.get_mut().unwrap();
@@ -120,6 +117,7 @@ impl Context {
             Memo {
                 verified_at: store.revision.into(),
                 dependencies: Default::default(),
+                computing: Default::default(),
             },
         );
     }
@@ -133,7 +131,7 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 32)]
+    #[tokio::test(flavor = "multi_thread")]
     async fn expensive_query() {
         #[derive(Debug, Clone, Hash, Eq, PartialEq)]
         struct InputQuery;
@@ -148,9 +146,13 @@ mod tests {
             type Value = u64;
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, _: &QueryContext<'_>) -> Self::Value {
-                (1..=u16::MAX as u64)
-                    .zip(1..=u16::MAX as u64)
+            async fn compute(self, ctx: &QueryContext<'_>) -> Self::Value {
+                let range = (1..=u16::MAX as u64)
+                    .zip(ctx.query(InputQuery).await)
+                    .map(|(a, b)| a + b);
+                let range = range.clone().zip(range);
+
+                range
                     .map(|(a, b)| if self.offset % 2 == 0 { a / b } else { a * b })
                     .reduce(|a, b| a.isqrt() * b.isqrt())
                     .unwrap()
@@ -166,11 +168,13 @@ mod tests {
             type Database = MemoryDatabase<Self>;
 
             async fn compute(self, ctx: &QueryContext<'_>) -> Self::Value {
-                let mut set = futures_util::stream::FuturesUnordered::from_iter(ctx.query(InputQuery).await.map(|i| {
-                    ctx.query(DifficultQuery {
-                        offset: i % u16::MAX as u64,
-                    })
-                }));
+                let mut set = futures_util::stream::FuturesUnordered::from_iter(
+                    ctx.query(InputQuery).await.map(|i| {
+                        ctx.query(DifficultQuery {
+                            offset: i % u16::MAX as u64,
+                        })
+                    }),
+                );
 
                 let mut sum = 0;
                 while let Some(value) = futures_util::StreamExt::next(&mut set).await {
@@ -181,20 +185,17 @@ mod tests {
             }
         }
 
-        let mut ctx = Context::new()
-            .register_database(MemoryDatabase::<RootQuery>::default())
-            .register_database(MemoryDatabase::<DifficultQuery>::default())
-            .register_database(MemoryDatabase::<InputQuery>::default());
+        let mut ctx = Context::new();
 
-        ctx.set(&InputQuery, 0..100000);
+        ctx.set(&InputQuery, 0..10000);
         let result = ctx.query_ctx().query(RootQuery).await;
         println!("result 1: {result}");
 
-        ctx.set(&InputQuery, 50000..150000);
+        ctx.set(&InputQuery, 5000..15000);
         let result = ctx.query_ctx().query(RootQuery).await;
         println!("result 2: {result}");
 
-        ctx.set(&InputQuery, 0..200000);
+        ctx.set(&InputQuery, 0..20000);
         let result = ctx.query_ctx().query(RootQuery).await;
         println!("result 3: {result}");
 
@@ -235,12 +236,14 @@ mod tests {
         let result = root();
         eprintln!("result 1: {result}");
 
-        *INPUT.lock().unwrap() = Some(1000..2000);
+        *INPUT.lock().unwrap() = Some(500..1500);
         let result = root();
         eprintln!("result 2: {result}");
 
         *INPUT.lock().unwrap() = Some(0..2000);
         let result = root();
         eprintln!("result 3: {result}");
+
+        panic!()
     }
 }
