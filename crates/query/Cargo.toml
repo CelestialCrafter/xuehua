@@ -8,9 +8,7 @@ log.workspace = true
 educe.workspace = true
 rustc-hash = "2.1.1"
 tokio = { workspace = true, features = ["rt", "sync"] }
-hashbrown = { version = "0.16.1", default-features = false, features = ["core"] }
 boxcar = "0.2.14"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-futures-util = "0.3.32"

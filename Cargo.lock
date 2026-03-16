@@ -960,7 +960,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
  "foldhash 0.2.0",
- "rustc-std-workspace-core",
 ]
 
 [[package]]
@@ -1696,12 +1695,6 @@ name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
-
-[[package]]
-name = "rustc-std-workspace-core"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa9c45b374136f52f2d6311062c7146bff20fec063c3f5d46a410bd937746955"
 
 [[package]]
 name = "rustc_version"
@@ -2883,8 +2876,6 @@ version = "0.1.0"
 dependencies = [
  "boxcar",
  "educe",
- "futures-util",
- "hashbrown 0.16.1",
  "log",
  "rustc-hash",
  "tokio",

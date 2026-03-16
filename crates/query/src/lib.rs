@@ -36,8 +36,6 @@ pub struct KeyIndex(usize);
 mod tests {
     use std::{ops::Range, sync::Mutex};
 
-    use futures_util::{StreamExt, stream::FuturesUnordered};
-
     use crate::store::MemoryDatabase;
 
     use super::*;
@@ -79,11 +77,12 @@ mod tests {
             type Database = MemoryDatabase<Self>;
 
             async fn compute(self, handle: &handle::Borrowed<'_>) -> Self::Value {
-                let mut set = FuturesUnordered::from_iter(handle.query(InputQuery).await.map(|i| {
-                    handle.query(DifficultQuery {
+                let mut set = handle.set();
+                for i in handle.query(InputQuery).await {
+                    set.spawn(DifficultQuery {
                         offset: i % u16::MAX as u64,
-                    })
-                }));
+                    });
+                }
 
                 let mut sum = 0;
                 while let Some(value) = set.next().await {
@@ -99,15 +98,15 @@ mod tests {
             .register::<DifficultQuery>(Default::default())
             .register::<InputQuery>(Default::default());
 
-        root.upcoming().update(&InputQuery, 0..1000);
+        root.upcoming().update(&InputQuery, 0..10000);
         let result = root.borrowed().query(RootQuery).await;
         println!("result 1: {result}");
 
-        root.upcoming().update(&InputQuery, 500..1500);
+        root.upcoming().update(&InputQuery, 5000..15000);
         let result = root.borrowed().query(RootQuery).await;
         println!("result 2: {result}");
 
-        root.upcoming().update(&InputQuery, 0..2000);
+        root.upcoming().update(&InputQuery, 0..20000);
         let result = root.borrowed().query(RootQuery).await;
         println!("result 3: {result}");
 

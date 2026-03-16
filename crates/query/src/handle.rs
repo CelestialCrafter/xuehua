@@ -1,19 +1,24 @@
 use std::sync::{Arc, Mutex, atomic::Ordering};
 
-use educe::Educe;
+use tokio::task::{JoinError, JoinSet};
 
 use crate::{
     Key, KeyIndex,
     store::{Database, Store, VerificationResult},
 };
 
-#[derive(Debug, Educe)]
-#[educe(Default(new))]
+#[derive(Debug)]
 pub struct Root {
     store: Arc<Store>,
 }
 
 impl Root {
+    pub fn new() -> Self {
+        Self {
+            store: Default::default(),
+        }
+    }
+
     pub fn borrowed(&self) -> Borrowed<'_> {
         Borrowed {
             store: &self.store,
@@ -69,30 +74,109 @@ pub struct Borrowed<'a> {
     dependencies: Mutex<Vec<KeyIndex>>,
 }
 
+macro_rules! query_epilogue {
+    ($key:expr, $idx:expr, $store:expr) => {
+        async move {
+            let handle = Borrowed {
+                store: &$store,
+                dependencies: Default::default(),
+            };
+
+            let value = $key.compute(&handle).await;
+            let database = $store.database_of::<K>();
+            database.store_value($idx, value.clone());
+
+            let memo = &$store.memos[$idx.0];
+            memo.verified_at
+                .store($store.revision.get(), Ordering::Relaxed);
+
+            let mut dependencies = memo.dependencies.lock().unwrap();
+            *dependencies = handle.dependencies.into_inner().unwrap();
+
+            value
+        }
+    };
+}
+
 impl Borrowed<'_> {
+    pub fn set<K: Key>(&self) -> QuerySet<'_, K> {
+        QuerySet {
+            borrowed: self,
+            cached: Default::default(),
+            joinset: Default::default(),
+        }
+    }
+
     pub async fn query<K: Key>(&self, key: K) -> K::Value {
         let database = self.store.database_of::<K>();
         let idx = self.store.index_of(database, &key);
         self.dependencies.lock().unwrap().push(idx);
 
-        let memo = match self.store.verify(database, idx).await {
-            VerificationResult::Outdated { memo } => memo,
-            VerificationResult::Cached { value } => return value,
+        if let VerificationResult::Cached { value } = self.store.verify(database, idx) {
+            return value;
         };
 
-        let sub_ctx = Borrowed {
-            store: &self.store,
-            dependencies: Default::default(),
+        query_epilogue!(key, idx, self.store).await
+    }
+}
+
+#[derive(Debug)]
+pub struct QuerySet<'a, K: Key> {
+    borrowed: &'a Borrowed<'a>,
+    cached: Vec<K::Value>,
+    joinset: JoinSet<K::Value>,
+}
+
+impl<K: Key> QuerySet<'_, K> {
+    pub fn spawn(&mut self, key: K) {
+        let store = self.borrowed.store;
+        let database = store.database_of::<K>();
+        let idx = store.index_of(database, &key);
+        self.borrowed.dependencies.lock().unwrap().push(idx);
+
+        match store.verify(database, idx) {
+            VerificationResult::Cached { value } => self.cached.push(value),
+            VerificationResult::Outdated => {
+                let store = store.clone();
+                self.joinset.spawn(query_epilogue!(key, idx, store));
+            }
         };
+    }
 
-        let value = key.compute(&sub_ctx).await;
-        database.store_value(idx, value.clone());
+    pub async fn try_next(&mut self) -> Option<Result<K::Value, JoinError>> {
+        match self.cached.pop() {
+            Some(value) => return Some(Ok(value)),
+            None => self.joinset.join_next().await,
+        }
+    }
 
-        *memo.dependencies.lock().unwrap() = sub_ctx.dependencies.into_inner().unwrap();
+    pub async fn next(&mut self) -> Option<K::Value> {
+        self.try_next()
+            .await
+            .map(|result| result.expect("QuerySet::next() should return Ok"))
+    }
 
-        memo.verified_at
-            .store(self.store.revision.get(), Ordering::Relaxed);
+    pub async fn try_all<T: Default + Extend<Result<K::Value, JoinError>>>(&mut self) -> T {
+        let mut collection = T::default();
+        collection.extend(self.cached.drain(..).map(Ok));
 
-        value
+        while let Some(result) = self.joinset.join_next().await {
+            collection.extend(std::iter::once(result));
+        }
+
+        collection
+    }
+
+    pub async fn all<T: Default + Extend<K::Value>>(&mut self) -> T {
+        let mut collection = T::default();
+        collection.extend(self.cached.drain(..));
+
+        while let Some(result) = self.joinset.join_next().await {
+            collection.extend(std::iter::once(
+                result.expect("JoinSet::next() should return Ok"),
+            ));
+        }
+
+        collection
     }
 }

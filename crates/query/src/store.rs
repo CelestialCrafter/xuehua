@@ -30,9 +30,9 @@ pub(crate) struct Store {
     pub revision: NonZeroUsize,
 }
 
-pub(crate) enum VerificationResult<'a, D: Database> {
+pub(crate) enum VerificationResult<D: Database> {
     Cached { value: D::Value },
-    Outdated { memo: &'a Memo },
+    Outdated,
 }
 
 impl Store {
@@ -58,20 +58,15 @@ impl Store {
         })
     }
 
-    pub async fn verify<D: Database>(
-        &self,
-        database: &D,
-        idx: KeyIndex,
-    ) -> VerificationResult<'_, D> {
+    pub fn verify<D: Database>(&self, database: &D, idx: KeyIndex) -> VerificationResult<D> {
         #[derive(Debug)]
         enum Operation {
             Validate { parent_revision: usize },
             Update,
         }
 
-        let root = &self.memos[idx.0];
         let mut queue = vec![(
-            root,
+            &self.memos[idx.0],
             Operation::Validate {
                 parent_revision: usize::MAX,
             },
@@ -119,7 +114,7 @@ impl Store {
         if valid && let Some(value) = database.value_of(idx) {
             VerificationResult::Cached { value }
         } else {
-            VerificationResult::Outdated { memo: root }
+            VerificationResult::Outdated
         }
     }
 
