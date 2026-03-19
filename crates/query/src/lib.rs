@@ -26,8 +26,8 @@ macro_rules! impl_input_key {
     };
 }
 
-pub trait Value: Clone + Send + Sync + 'static {}
-impl<T: Clone + Send + Sync + 'static> Value for T {}
+pub trait Value: fmt::Debug + Clone + Send + Sync + 'static {}
+impl<T: fmt::Debug + Clone + Send + Sync + 'static> Value for T {}
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct KeyIndex(usize);
@@ -36,7 +36,7 @@ pub struct KeyIndex(usize);
 mod tests {
     use std::{ops::Range, sync::Mutex};
 
-    use crate::store::MemoryDatabase;
+    use crate::{handle::QuerySet, store::MemoryDatabase};
 
     use super::*;
 
@@ -77,7 +77,7 @@ mod tests {
             type Database = MemoryDatabase<Self>;
 
             async fn compute(self, handle: &handle::Borrowed<'_>) -> Self::Value {
-                let mut set = handle.set();
+                let mut set = QuerySet::new(handle);
                 for i in handle.query(InputQuery).await {
                     set.spawn(DifficultQuery {
                         offset: i % u16::MAX as u64,

@@ -1,5 +1,9 @@
-use std::sync::{Arc, Mutex, atomic::Ordering};
+use std::{
+    fmt::Debug,
+    sync::{Arc, Mutex, atomic::Ordering},
+};
 
+use educe::Educe;
 use tokio::task::{JoinError, JoinSet};
 
 use crate::{
@@ -55,7 +59,7 @@ impl Upcoming<'_> {
     pub fn update<K: Key>(&mut self, key: &K, value: K::Value) {
         let database = self.store.database_of::<K>();
         let idx = self.store.index_of(database, key);
-        database.store_value(idx, value);
+        database.update_value(idx, value);
 
         let memo = self
             .store
@@ -68,45 +72,30 @@ impl Upcoming<'_> {
     }
 }
 
+async fn query_epilogue<K: Key>(key: K, idx: KeyIndex, handle: Borrowed<'_>) -> K::Value {
+    let value = key.compute(&handle).await;
+
+    let store = handle.store;
+    let database = store.database_of::<K>();
+    database.update_value(idx, value.clone());
+
+    let memo = &store.memos[idx.0];
+    memo.verified_at
+        .store(store.revision.get(), Ordering::Release);
+
+    let mut dependencies = memo.dependencies.lock().unwrap();
+    *dependencies = handle.dependencies.into_inner().unwrap();
+
+    value
+}
+
 #[derive(Debug)]
 pub struct Borrowed<'a> {
     store: &'a Arc<Store>,
     dependencies: Mutex<Vec<KeyIndex>>,
 }
 
-macro_rules! query_epilogue {
-    ($key:expr, $idx:expr, $store:expr) => {
-        async move {
-            let handle = Borrowed {
-                store: &$store,
-                dependencies: Default::default(),
-            };
-
-            let value = $key.compute(&handle).await;
-            let database = $store.database_of::<K>();
-            database.store_value($idx, value.clone());
-
-            let memo = &$store.memos[$idx.0];
-            memo.verified_at
-                .store($store.revision.get(), Ordering::Relaxed);
-
-            let mut dependencies = memo.dependencies.lock().unwrap();
-            *dependencies = handle.dependencies.into_inner().unwrap();
-
-            value
-        }
-    };
-}
-
 impl Borrowed<'_> {
-    pub fn set<K: Key>(&self) -> QuerySet<'_, K> {
-        QuerySet {
-            borrowed: self,
-            cached: Default::default(),
-            joinset: Default::default(),
-        }
-    }
-
     pub async fn query<K: Key>(&self, key: K) -> K::Value {
         let database = self.store.database_of::<K>();
         let idx = self.store.index_of(database, &key);
@@ -116,29 +105,53 @@ impl Borrowed<'_> {
             return value;
         };
 
-        query_epilogue!(key, idx, self.store).await
+        query_epilogue(
+            key,
+            idx,
+            Borrowed {
+                store: &self.store,
+                dependencies: Default::default(),
+            },
+        )
+        .await
     }
 }
 
-#[derive(Debug)]
+#[derive(Educe)]
+#[educe(Debug)]
 pub struct QuerySet<'a, K: Key> {
-    borrowed: &'a Borrowed<'a>,
+    handle: &'a Borrowed<'a>,
     cached: Vec<K::Value>,
     joinset: JoinSet<K::Value>,
 }
 
-impl<K: Key> QuerySet<'_, K> {
+impl<'a, K: Key> QuerySet<'a, K> {
+    pub fn new(handle: &'a Borrowed<'a>) -> Self {
+        Self {
+            handle,
+            cached: Default::default(),
+            joinset: Default::default(),
+        }
+    }
+
     pub fn spawn(&mut self, key: K) {
-        let store = self.borrowed.store;
+        let store = self.handle.store;
         let database = store.database_of::<K>();
         let idx = store.index_of(database, &key);
-        self.borrowed.dependencies.lock().unwrap().push(idx);
+        self.handle.dependencies.lock().unwrap().push(idx);
 
         match store.verify(database, idx) {
             VerificationResult::Cached { value } => self.cached.push(value),
             VerificationResult::Outdated => {
                 let store = store.clone();
-                self.joinset.spawn(query_epilogue!(key, idx, store));
+                self.joinset.spawn(async move {
+                    let handle = Borrowed {
+                        store: &store,
+                        dependencies: Default::default(),
+                    };
+
+                    query_epilogue(key, idx, handle).await
+                });
             }
         };
     }

@@ -11,6 +11,7 @@ use std::{
 
 use educe::Educe;
 use rustc_hash::FxHashMap;
+use tokio::sync::RwLock as AsyncRwLock;
 
 use crate::{Key, KeyIndex, Value};
 
@@ -18,6 +19,7 @@ use crate::{Key, KeyIndex, Value};
 pub(crate) struct Memo {
     pub verified_at: AtomicUsize,
     pub dependencies: Mutex<Vec<KeyIndex>>,
+    pub computing: AsyncRwLock<()>
 }
 
 #[derive(Educe, Debug)]
@@ -25,7 +27,7 @@ pub(crate) struct Memo {
 pub(crate) struct Store {
     databases: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
     pub memos: boxcar::Vec<Memo>,
-    // some things depend on revision 0 being non-existent
+    // index_of depends on revision 0 being non-existent
     #[educe(Default = NonZeroUsize::new(1).unwrap())]
     pub revision: NonZeroUsize,
 }
@@ -47,14 +49,14 @@ impl Store {
     }
 
     pub fn index_of<D: Database>(&self, database: &D, key: &D::Key) -> KeyIndex {
-        database.index_of(key).unwrap_or_else(|| {
-            let idx = KeyIndex(self.memos.push(Memo {
+        database.index_of(key, || {
+            let idx = self.memos.push(Memo {
                 verified_at: (self.revision.get() - 1).into(),
                 dependencies: Default::default(),
-            }));
+                computing: Default::default(),
+            });
 
-            database.store_key(idx, key.clone());
-            idx
+            KeyIndex(idx)
         })
     }
 
@@ -79,11 +81,11 @@ impl Store {
 
             let (verified_at, parent_revision) = match entry {
                 Operation::Validate { parent_revision } => {
-                    (memo.verified_at.load(Ordering::Relaxed), parent_revision)
+                    (memo.verified_at.load(Ordering::Acquire), parent_revision)
                 }
                 Operation::Update => {
                     memo.verified_at
-                        .store(self.revision.get(), Ordering::Relaxed);
+                        .store(self.revision.get(), Ordering::Release);
                     continue;
                 }
             };
@@ -95,7 +97,7 @@ impl Store {
 
             // hot path, if we computed the memo this revision, we know its valid
             if verified_at == self.revision.get() {
-                break true;
+                continue;
             }
 
             // cold path, deep verify dependencies
@@ -129,12 +131,11 @@ pub trait Database: Send + Sync + 'static {
     type Key: Key<Value = Self::Value>;
     type Value: Value;
 
-    fn index_of(&self, key: &Self::Key) -> Option<KeyIndex>;
+    fn index_of(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex;
     fn key_of(&self, idx: KeyIndex) -> Option<Self::Key>;
     fn value_of(&self, idx: KeyIndex) -> Option<Self::Value>;
 
-    fn store_key(&self, idx: KeyIndex, key: Self::Key);
-    fn store_value(&self, idx: KeyIndex, memo: Self::Value);
+    fn update_value(&self, idx: KeyIndex, value: Self::Value);
 }
 
 #[derive(Educe)]
@@ -149,8 +150,21 @@ impl<K: Key, S: Default + BuildHasher + Send + Sync + 'static> Database for Memo
     type Key = K;
     type Value = K::Value;
 
-    fn index_of(&self, key: &Self::Key) -> Option<KeyIndex> {
-        self.lookup.read().unwrap().get(key).copied()
+    fn index_of(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex {
+        let idx = self.lookup.read().unwrap().get(key).copied();
+        idx.unwrap_or_else(|| {
+            let mut lookup = self.lookup.write().unwrap();
+            if let Some(idx) = lookup.get(key) {
+                return *idx;
+            }
+
+            let idx = new();
+            let mut keys = self.keys.write().unwrap();
+            lookup.insert(key.clone(), idx);
+            keys.insert(idx, key.clone());
+
+            idx
+        })
     }
 
     fn key_of(&self, idx: KeyIndex) -> Option<Self::Key> {
@@ -161,16 +175,7 @@ impl<K: Key, S: Default + BuildHasher + Send + Sync + 'static> Database for Memo
         self.values.read().unwrap().get(&idx).cloned()
     }
 
-    fn store_key(&self, idx: KeyIndex, key: Self::Key) {
-        if let (Ok(mut lookup), Ok(mut keys)) = (self.lookup.write(), self.keys.write()) {
-            lookup.insert(key.clone(), idx);
-            keys.insert(idx, key);
-        }
-    }
-
-    fn store_value(&self, idx: KeyIndex, value: Self::Value) {
-        if let Ok(mut values) = self.values.write() {
-            values.insert(idx, value);
-        }
+    fn update_value(&self, idx: KeyIndex, value: Self::Value) {
+        self.values.write().unwrap().insert(idx, value);
     }
 }
