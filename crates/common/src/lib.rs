@@ -15,13 +15,11 @@ pub struct InvalidPathError {
 pub fn safe_path(root: &Path, path: &Path) -> Result<PathBuf, InvalidPathError> {
     let resolved = path.components().fold(root.to_path_buf(), |mut acc, x| {
         match x {
-            Component::Prefix(_) => acc.push(x),
-            Component::RootDir => acc.push(x),
+            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => acc.push(x),
             Component::CurDir => (),
             Component::ParentDir => {
                 acc.pop();
             }
-            Component::Normal(_) => acc.push(x),
         }
 
         acc

@@ -20,7 +20,7 @@ pub struct EmptyStore;
 impl Store for EmptyStore {
     fn name() -> &'static StoreName {
         static NAME: LazyLock<StoreName> = LazyLock::new(|| gen_name!(empty@xuehua));
-        &*NAME
+        &NAME
     }
 
     async fn register_package(

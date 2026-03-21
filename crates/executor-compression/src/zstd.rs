@@ -18,7 +18,7 @@ fn mmap_input(input: &Path) -> Result<Mmap, std::io::Error> {
 
 fn mmap_output(output: &Path, size: usize) -> Result<MmapMut, std::io::Error> {
     let file = File::create_new(output)?;
-    file.set_len(size as u64)?;
+    file.set_len(size.try_into().expect("cannot resize file past u64::MAX"))?;
     let map = unsafe { memmap2::MmapOptions::new().len(size).map_mut(&file) }?;
 
     Ok(map)
@@ -49,10 +49,14 @@ pub fn decompress(_options: &Options, input: &Path, output: &Path) -> Result<(),
         log::warn!(capacity = capacity; "could not determine compressed file size, falling back to fixed capacity");
         capacity
     });
-    let size = size.min(usize::MAX as u64) as usize;
 
-    let mut output = mmap_output(output, size).erased()?;
-
+    let mut output = mmap_output(
+        output,
+        size.try_into()
+            .expect("cannot mmap region larger than usize::MAX"),
+    )
+    .erased()?;
     map_result(zstd_safe::decompress(output.as_mut(), &input))?;
+
     Ok(())
 }

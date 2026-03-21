@@ -274,7 +274,7 @@ pub struct Options {
 }
 
 impl Options {
-    pub fn options() -> OptionParser<Self> {
+    pub fn new() -> OptionParser<Self> {
         let action = Action::parser();
         construct!(Self { action })
             .to_options()
@@ -286,6 +286,6 @@ impl Options {
 mod tests {
     #[test]
     fn check_options() {
-        super::Options::options().check_invariants(false)
+        super::Options::new().check_invariants(false)
     }
 }

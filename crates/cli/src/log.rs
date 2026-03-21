@@ -4,7 +4,7 @@ use xh_reports::{
 };
 
 pub fn log_report<T>(report: &xh_reports::Report<T>) {
-    eprintln!("{}", PrettyRenderer::new().render(&report));
+    eprintln!("{}", PrettyRenderer::new().render(report));
 }
 
 pub struct Logger;

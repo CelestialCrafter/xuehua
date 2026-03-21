@@ -43,8 +43,8 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             network: true,
-            add_capabilities: Default::default(),
-            drop_capabilities: Default::default(),
+            add_capabilities: Vec::default(),
+            drop_capabilities: Vec::default(),
         }
     }
 }
@@ -83,7 +83,7 @@ impl Executor for BubblewrapExecutor {
 
     fn name() -> &'static ExecutorName {
         static NAME: LazyLock<ExecutorName> = LazyLock::new(|| gen_name!(bubblewrap@xuehua));
-        &*NAME
+        &NAME
     }
 
     async fn execute(&mut self, request: Self::Request) -> Result<(), Error> {

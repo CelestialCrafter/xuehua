@@ -68,7 +68,7 @@ impl Executor for HttpExecutor {
 
     fn name() -> &'static ExecutorName {
         static NAME: LazyLock<ExecutorName> = LazyLock::new(|| gen_name!(http@xuehua));
-        &*NAME
+        &NAME
     }
 
     async fn execute(&mut self, request: Self::Request) -> Result<(), Error> {
@@ -79,8 +79,7 @@ impl Executor for HttpExecutor {
         if request
             .path
             .components()
-            .find(|component| matches!(component, Component::ParentDir))
-            .is_some()
+            .any(|component| matches!(&component, Component::ParentDir))
         {
             return Err(InvalidPathError.wrap());
         }

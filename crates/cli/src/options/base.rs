@@ -63,7 +63,7 @@ fn initialize_locations() -> Result<Locations, InitializeLocationsError> {
     let system = system_locations();
     let user = user_locations();
 
-    if let None = user {
+    if user.is_none() {
         warn!(
             suggestion = "ensure that the XDG_RUNTIME_DIR, XDG_DATA_HOME, and XDG_CONFIG_HOME environment variables are set";
             "could not evaluate user locations"
@@ -84,7 +84,7 @@ fn initialize_locations() -> Result<Locations, InitializeLocationsError> {
             Ok(false) => (),
             Err(err) => warn!(
                 error:err = err;
-                "could not check if options file at {path:?} exists"
+                "could not check if options file at {} exists", path.display()
             ),
         }
 

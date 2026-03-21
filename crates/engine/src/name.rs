@@ -16,17 +16,12 @@ pub struct Name<T: NameType> {
 
 impl<T: NameType> Name<T> {
     #[inline]
-    pub fn new() -> Self {
+    pub fn new(identifier: impl Into<SmolStr>, namespace: impl Into<Arc<[SmolStr]>>) -> Self {
         Name {
-            identifier: SmolStr::new_static(""),
-            namespace: Arc::new([]),
+            identifier: identifier.into(),
+            namespace: namespace.into(),
             ty: T::default(),
         }
-    }
-
-    pub fn with_ident(mut self, ident: impl Into<SmolStr>) -> Self {
-        self.identifier = ident.into();
-        self
     }
 
     pub fn with_type<U: NameType>(self, ty: U) -> Name<U> {
@@ -52,7 +47,7 @@ impl<T: NameType> FromStr for Name<T> {
             None => (rest, T::default()),
         };
 
-        let (identifier, namespace) = match rest.split_once("@") {
+        let (identifier, namespace) = match rest.split_once('@') {
             Some((identifier, rest)) => {
                 let namespace = rest.split('/').map(Into::into);
                 (identifier.into(), namespace.collect())

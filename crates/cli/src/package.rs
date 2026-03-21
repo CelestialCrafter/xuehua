@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     io::Write,
     path::Path,
     sync::{Arc, mpsc},
@@ -22,9 +23,9 @@ use xh_engine::{
     scheduler::{Event, Scheduler},
     store::Store,
 };
-use xh_executor_bubblewrap::BubblewrapExecutor;
-use xh_executor_compression::CompressionExecutor;
-use xh_executor_http::HttpExecutor;
+use xh_executor_bubblewrap::{BubblewrapExecutor, Options as BubblewrapExecutorOptions};
+use xh_executor_compression::{CompressionExecutor, Options as CompressionExecutorOptions};
+use xh_executor_http::{HttpExecutor, Options as HttpExecutorOptions};
 use xh_reports::{partition_results, prelude::*};
 use xh_store_sqlite::SqliteStore;
 
@@ -45,8 +46,8 @@ pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
     ArchBackend::new(xh_backend_arch::Options {
         mirror: "http://mirrors.acm.wpi.edu/archlinux".to_string(),
         architecture: "x86_64".into(),
-        repos: Default::default(),
-        priorities: Default::default(),
+        repos: Vec::default(),
+        priorities: BTreeMap::default(),
     })
     .plan(&mut planner, project)
     .wrap_with(PackageActionError::Initialize)
@@ -61,11 +62,11 @@ pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
         PackageAction::Build { packages, .. } => build(&planner, packages).await.erased()?,
         PackageAction::Link { .. } => todo!("link action not implemented"),
         PackageAction::Inspect(action) => match action {
-            InspectAction::Project { format } => inspect_project(&planner, format),
+            InspectAction::Project { format } => inspect_project(&planner, *format),
             InspectAction::Packages { packages, format } => {
-                inspect_packages(planner, packages, format)
+                inspect_packages(&planner, packages, *format)
                     .wrap_with(PackageActionError::Inspect)
-                    .erased()?
+                    .erased()?;
             }
         },
     }
@@ -74,16 +75,16 @@ pub async fn handle(project: &Path, action: &PackageAction) -> Result<(), ()> {
 }
 
 fn inspect_packages(
-    planner: Planner<Frozen>,
-    packages: &Vec<PackageName>,
-    format: &PackageFormat,
+    planner: &Planner<Frozen>,
+    packages: &[PackageName],
+    format: PackageFormat,
 ) -> Result<(), ()> {
     match format {
         // TODO: styled output instead of "markdown"
         // TODO: output store artifacts for pkg
         PackageFormat::Human => {
             let mut stdout = std::io::stdout().lock();
-            for (i, node) in resolve_many(&planner, packages)
+            for (i, node) in resolve_many(planner, packages)
                 .erased()?
                 .into_iter()
                 .enumerate()
@@ -95,12 +96,12 @@ fn inspect_packages(
                 for edge in plan.edges_directed(node, Direction::Outgoing) {
                     let name = &plan[edge.target()].name;
                     let target = edge.weight();
-                    writeln!(stdout, "**Dependency**: {} at {}", name, target).erased()?;
+                    writeln!(stdout, "**Dependency**: {name} at {target}").erased()?;
                 }
 
                 // .join would be less efficient here
                 if i + 1 != packages.len() {
-                    writeln!(stdout, "").erased()?;
+                    writeln!(stdout).erased()?;
                 }
             }
         }
@@ -110,7 +111,7 @@ fn inspect_packages(
     Ok(())
 }
 
-fn inspect_project(planner: &Planner<Frozen>, format: &ProjectFormat) {
+fn inspect_project(planner: &Planner<Frozen>, format: ProjectFormat) {
     match format {
         ProjectFormat::Dot => println!(
             "{:?}",
@@ -131,15 +132,25 @@ struct BuildActionError;
 
 async fn build(
     planner: &Planner<Frozen>,
-    packages: &Vec<PackageName>,
+    packages: &[PackageName],
 ) -> StdResult<(), Report<BuildActionError>> {
     let locations = &get_opts().base.locations;
     let nodes = resolve_many(planner, packages).wrap()?;
     let mut store = SqliteStore::new(locations.store.clone()).wrap()?;
     let builder: Arc<_> = Builder::new(locations.build.clone())
-        .register(|ctx| Ok(BubblewrapExecutor::new(ctx, Default::default())))
-        .register(|ctx| Ok(HttpExecutor::new(ctx, Default::default())))
-        .register(|ctx| Ok(CompressionExecutor::new(ctx, Default::default())))
+        .register(|ctx| {
+            Ok(BubblewrapExecutor::new(
+                ctx,
+                BubblewrapExecutorOptions::default(),
+            ))
+        })
+        .register(|ctx| Ok(HttpExecutor::new(ctx, HttpExecutorOptions::default())))
+        .register(|ctx| {
+            Ok(CompressionExecutor::new(
+                ctx,
+                CompressionExecutorOptions::default(),
+            ))
+        })
         .into();
 
     let mut scheduler = Scheduler::new(planner, builder.as_ref());
@@ -178,9 +189,9 @@ async fn build(
                                 .expect("could not register artifact");
                         }
                         Err(report) => failures.push(report),
-                    };
+                    }
                 }
-            };
+            }
         }
 
         failures
@@ -192,9 +203,7 @@ async fn build(
     if failures.is_empty() {
         Ok(())
     } else {
-        Err(BuildActionError::default()
-            .into_report()
-            .with_children(failures))
+        Err(BuildActionError.into_report().with_children(failures))
     }
 }
 
@@ -207,7 +216,7 @@ pub struct PackageResolveError {
 
 fn resolve_many(
     planner: &Planner<Frozen>,
-    packages: &Vec<PackageName>,
+    packages: &[PackageName],
 ) -> Result<Vec<NodeIndex>, PackageResolveError> {
     partition_results(
         packages

@@ -18,19 +18,19 @@ impl Deref for Manifest {
 }
 
 impl Manifest {
-    async fn populate<'a, S: Store>(
+    async fn populate<S: Store>(
         self,
-        iter: impl IntoIterator<Item = impl Borrow<PackageId>>,
-        store: &S,
+        _iter: impl IntoIterator<Item = impl Borrow<PackageId>>,
+        _store: &S,
     ) -> Result<Self, Error> {
         todo!()
     }
 
-    pub async fn create<B: Backend, S: Store>(plan: &Plan, store: &S) -> Result<Self, Error> {
+    pub async fn create<B: Backend, S: Store>(_plan: &Plan, _store: &S) -> Result<Self, Error> {
         todo!()
     }
 
-    pub async fn update<S: Store>(self, store: &S) -> Result<Self, Error> {
+    pub async fn update<S: Store>(self, _store: &S) -> Result<Self, Error> {
         todo!()
     }
 }

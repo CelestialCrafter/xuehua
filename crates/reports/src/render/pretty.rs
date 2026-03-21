@@ -144,7 +144,7 @@ impl PrettyRenderer {
     /// Constructs a new `PrettyRenderer`.
     #[inline]
     pub fn new() -> Self {
-        Default::default()
+        Self::default()
     }
 }
 
@@ -321,7 +321,7 @@ impl<E> PrettyDisplayer<'_, E> {
             let guide = if last { guides.empty } else { guides.line };
             let next_next_prefix = format_args!("{}{}", prefix, guide.style(styles.guides));
 
-            self.render_report(fmt, &child, next_prefix, next_next_prefix)?;
+            self.render_report(fmt, child, next_prefix, next_next_prefix)?;
         }
 
         Ok(())

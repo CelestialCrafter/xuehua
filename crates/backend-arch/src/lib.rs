@@ -193,7 +193,7 @@ impl Backend for ArchBackend {
 
     fn name() -> &'static xh_engine::name::BackendName {
         static NAME: LazyLock<BackendName> = LazyLock::new(|| gen_name!(arch@xuehua));
-        &*NAME
+        &NAME
     }
 
     fn plan(&self, planner: &mut Planner<Unfrozen>, project: &Path) -> Result<(), Error> {
@@ -284,11 +284,7 @@ struct IndexEntry {
 }
 
 fn package_name(identifier: impl Into<SmolStr>) -> PackageName {
-    PackageName {
-        identifier: identifier.into(),
-        namespace: ["xuehua".into(), "arch".into()].into(),
-        ty: Default::default(),
-    }
+    PackageName::new(identifier, ["xuehua".into(), "arch".into()])
 }
 
 #[cfg(test)]

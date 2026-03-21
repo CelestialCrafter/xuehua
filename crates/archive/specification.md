@@ -53,5 +53,4 @@ u64(n) = Little-Endian unsigned 64 bit integer;
 ### Details
 
 - **Ordering:** Parent directory objects MUST be emitted before their children objects.
-- **Paths:** `object`s MUST be sorted by the bytes of their
-	`location` in ascending order. Duplicate `location`'s' MUST NOT appear.
+- **Paths:** `object`s MUST be sorted by the bytes of their `location` in ascending order. Duplicate `location`'s' MUST NOT appear.

@@ -13,7 +13,7 @@ where
     D: Deserializer<'de>,
 {
     struct Helper<S>(PhantomData<S>);
-    impl<'de, S> Visitor<'de> for Helper<S>
+    impl<S> Visitor<'_> for Helper<S>
     where
         S: FromStr,
         S::Err: fmt::Display,

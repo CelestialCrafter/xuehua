@@ -23,7 +23,7 @@ use xh_engine::{
 };
 use xh_reports::prelude::*;
 
-fn conv_dependency(table: Table) -> StdResult<Dependency, mlua::Error> {
+fn conv_dependency(table: &Table) -> StdResult<Dependency, mlua::Error> {
     Ok(Dependency {
         name: table.get::<AnyUserData>("package")?.take()?,
         time: LinkTime::from_str(&table.get::<String>("time")?)
@@ -32,42 +32,47 @@ fn conv_dependency(table: Table) -> StdResult<Dependency, mlua::Error> {
     })
 }
 
-fn conv_request(table: Table) -> Result<DispatchRequest, Error> {
+fn conv_request(table: &Table) -> Result<DispatchRequest, Error> {
     Ok(DispatchRequest {
         payload: to_value(table.get::<LuaValue>("payload").wrap()?).wrap()?,
         executor: ExecutorName::from_str(&table.get::<String>("executor").wrap()?).wrap()?,
     })
 }
 
-fn conv_package(table: Table) -> Result<Package, Error> {
+fn conv_package(table: &Table) -> Result<Package, Error> {
     Ok(Package {
-        name: Default::default(),
+        name: PackageName::default(),
         metadata: Metadata,
         requests: table
             .get::<Option<Vec<Table>>>("requests")
             .wrap()?
             .unwrap_or_default()
-            .into_iter()
+            .iter()
             .map(conv_request)
             .collect::<Result<_, _>>()?,
         dependencies: table
             .get::<Option<Vec<Table>>>("dependencies")
             .wrap()?
             .unwrap_or_default()
-            .into_iter()
+            .iter()
             .map(conv_dependency)
             .collect::<StdResult<_, _>>()
             .wrap()?,
     })
 }
 
-fn conv_config(table: Table) -> StdResult<Config<LuaBackend>, mlua::Error> {
+fn conv_config(table: &Table) -> StdResult<Config<LuaBackend>, mlua::Error> {
     let defaults = table
         .get::<Option<LuaValue>>("defaults")?
         .unwrap_or_default();
 
     let apply = table.get::<Function>("apply")?;
-    let apply = move |value: LuaValue| apply.call(value).wrap().and_then(conv_package);
+    let apply = move |value: LuaValue| {
+        apply
+            .call(value)
+            .wrap()
+            .and_then(|table| conv_package(&table))
+    };
 
     Ok(Config::new(defaults, apply))
 }
@@ -105,11 +110,7 @@ struct LuaConfigManager<'a> {
 
 impl LuaConfigManager<'_> {
     fn package_name(&self, identifier: impl Into<SmolStr>) -> PackageName {
-        PackageName {
-            identifier: identifier.into(),
-            namespace: self.namespace.current().into(),
-            ty: Default::default(),
-        }
+        PackageName::new(identifier, self.namespace.current())
     }
 }
 
@@ -140,7 +141,7 @@ impl UserData for LuaConfigManager<'_> {
 
         methods.add_method_mut("package", |_, this, table: Table| {
             let name = this.package_name(table.get::<String>("identifier")?);
-            let config = conv_config(table).into_lua_err()?;
+            let config = conv_config(&table).into_lua_err()?;
 
             this.inner
                 .register(name, config)
@@ -190,7 +191,7 @@ impl Backend for LuaBackend {
 
     fn name() -> &'static BackendName {
         static NAME: LazyLock<BackendName> = LazyLock::new(|| gen_name!(lua@xuehua));
-        &*NAME
+        &NAME
     }
 
     fn plan(&self, planner: &mut Planner<Unfrozen>, project: &Path) -> Result<(), Error> {
@@ -209,7 +210,7 @@ impl Backend for LuaBackend {
             .scope(|scope| {
                 with_module(
                     &self.lua,
-                    &scope,
+                    scope,
                     "xuehua.planner",
                     scope.create_userdata(manager)?,
                 )?;

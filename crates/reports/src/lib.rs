@@ -96,8 +96,8 @@ impl ReportInner {
             message,
             type_name,
             location,
-            children: Default::default(),
-            frames: Default::default(),
+            children: Vec::default(),
+            frames: Vec::default(),
             level: Level::Error,
         }
     }
@@ -237,7 +237,7 @@ impl<T> Report<T> {
 
     /// Appends an iterator of [`Frame`]s to this `Report`.
     pub fn with_frames(self, frames: impl IntoIterator<Item = Frame>) -> Self {
-        frames.into_iter().fold(self, |acc, x| acc.with_frame(x))
+        frames.into_iter().fold(self, Report::with_frame)
     }
 
     /// Retrieves the children associated with this `Report`.
@@ -256,7 +256,7 @@ impl<T> Report<T> {
 
     /// Appends an iterator of `Report`s as children of this `Report`.
     pub fn with_children<F>(self, children: impl IntoIterator<Item = Report<F>>) -> Self {
-        children.into_iter().fold(self, |acc, x| acc.with_child(x))
+        children.into_iter().fold(self, Report::with_child)
     }
 }
 
@@ -446,7 +446,7 @@ impl LogError {
                         .children
                         .push(Report::<LogSubError>::new(value.to_smolstr())),
                     key => self.frames.push(Frame::context(key, value)),
-                };
+                }
 
                 Ok(())
             }
@@ -517,7 +517,7 @@ where
         Ok(v) => ok.extend(once(v)),
         Err(v) => {
             has_error = true;
-            err.extend(once(v))
+            err.extend(once(v));
         }
     });
 

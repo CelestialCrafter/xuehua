@@ -91,7 +91,7 @@ fn pack(path: &Path) -> Result<(), ()> {
     for event in Packer::new(path.to_path_buf()).pack_iter() {
         buffer.clear();
         encoder.encode(&mut buffer, event.erased()?);
-        stdout.write_all(&buffer).erased()?
+        stdout.write_all(&buffer).erased()?;
     }
 
     Ok(())

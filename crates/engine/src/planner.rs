@@ -100,14 +100,20 @@ pub struct Planner<State> {
     _marker: PhantomData<State>,
 }
 
+impl Default for Planner<Unfrozen> {
+    fn default() -> Self {
+        Self {
+            graph: Acyclic::default(),
+            packages: HashMap::default(),
+            _marker: PhantomData,
+        }
+    }
+}
+
 impl Planner<Unfrozen> {
     #[inline]
     pub fn new() -> Self {
-        Self {
-            graph: Default::default(),
-            packages: Default::default(),
-            _marker: PhantomData,
-        }
+        Self::default()
     }
 
     #[inline]

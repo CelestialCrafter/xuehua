@@ -22,7 +22,7 @@ impl Encoder {
     /// Constructs a new encoder.
     #[inline]
     pub fn new() -> Self {
-        Default::default()
+        Self::default()
     }
 
     /// Encodes an iterator of [`Event`]s into `buffer`.
@@ -34,7 +34,7 @@ impl Encoder {
     ) {
         events
             .into_iter()
-            .for_each(|event| self.encode(buffer, event))
+            .for_each(|event| self.encode(buffer, event));
     }
 
     /// Encodes a single [`Event`] into `buffer`.
@@ -81,7 +81,7 @@ impl Encoder {
             ObjectContent::Directory => {
                 buffer.put_u8(2);
             }
-        };
+        }
 
         let hash = hash_object(object);
         let hash = hash.as_bytes();

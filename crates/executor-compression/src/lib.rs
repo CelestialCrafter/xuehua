@@ -55,7 +55,7 @@ impl Executor for CompressionExecutor {
 
     fn name() -> &'static ExecutorName {
         static NAME: LazyLock<ExecutorName> = LazyLock::new(|| gen_name!(compression@xuehua));
-        &*NAME
+        &NAME
     }
 
     async fn execute(&mut self, request: Self::Request) -> Result<(), Error> {

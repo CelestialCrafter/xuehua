@@ -15,20 +15,20 @@ impl Hasher for PassthruHasher {
         self.0 = i;
     }
 
-    fn write_usize(&mut self, i: usize) {
-        self.write_u64(i as u64);
+    fn write_usize(&mut self, _: usize) {
+        unimplemented!("passthru does not support Hasher::write_usize()")
     }
 
     fn write_u32(&mut self, i: u32) {
-        self.write_u64(i as u64);
+        self.write_u64(i.into());
     }
 
     fn write_u16(&mut self, i: u16) {
-        self.write_u64(i as u64);
+        self.write_u64(i.into());
     }
 
     fn write_u8(&mut self, i: u8) {
-        self.write_u64(i as u64);
+        self.write_u64(i.into());
     }
 
     fn write(&mut self, _: &[u8]) {

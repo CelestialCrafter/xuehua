@@ -116,7 +116,7 @@ fn get_package(db: &mut Connection, package: PackageId) -> Result<Option<StorePa
 fn register_artifact(
     db: &mut Connection,
     root: PathBuf,
-    archive: Vec<Event>,
+    archive: &[Event],
 ) -> Result<StoreArtifact, Error> {
     let temp = artifact_path(root.clone(), &xh_common::random_hash());
     let file = File::create_new(&temp).wrap()?;
@@ -125,7 +125,7 @@ fn register_artifact(
     let mut buffer = bytes::BytesMut::with_capacity(1024 * 4);
     let mut encoder = xh_archive::encoding::Encoder::new();
 
-    for event in &archive {
+    for event in archive {
         buffer.clear();
         encoder.encode(&mut buffer, event);
         file.write_all(&buffer).wrap()?;
@@ -200,7 +200,7 @@ fn processing_thread(mut db: Connection, mut rx: mpsc::Receiver<Task>) {
                 root,
                 channel,
             } => {
-                let _ = channel.send(register_artifact(&mut db, root, archive));
+                let _ = channel.send(register_artifact(&mut db, root, &archive));
             }
             Task::GetArtifact { artifact, channel } => {
                 let _ = channel.send(get_artifact(&mut db, artifact));
@@ -224,8 +224,8 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
-    pub fn new(root: PathBuf) -> Result<Self, Error> {
-        let root = root.join("artifacts");
+    pub fn new(mut root: PathBuf) -> Result<Self, Error> {
+        root.push("artifacts");
         ensure_dir(&root).wrap()?;
 
         let db = Connection::open(root.join("store.db")).wrap()?;
@@ -238,7 +238,7 @@ impl SqliteStore {
             .spawn(move || processing_thread(db, rx))
             .wrap()?;
 
-        Ok(Self { root, tx })
+        Ok(Self { tx, root })
     }
 
     async fn queue<R>(
@@ -255,7 +255,7 @@ impl SqliteStore {
 impl Store for SqliteStore {
     fn name() -> &'static StoreName {
         static NAME: LazyLock<StoreName> = LazyLock::new(|| gen_name!(sqlite@xuehua));
-        &*NAME
+        &NAME
     }
 
     fn register_package(

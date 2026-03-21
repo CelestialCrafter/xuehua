@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use educe::Educe;
 use log::trace;
@@ -53,7 +53,7 @@ impl<'a, B: Backend> ConfigManager<'a, B> {
     pub fn new(planner: &'a mut Planner<Unfrozen>) -> Self {
         Self {
             planner,
-            configs: Default::default(),
+            configs: HashMap::default(),
         }
     }
 

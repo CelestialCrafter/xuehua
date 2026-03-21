@@ -58,9 +58,9 @@ where
             .collect();
 
         Self {
+            state,
             planner,
             builder,
-            state,
         }
     }
 

@@ -97,7 +97,7 @@ fn process_object(root: &Path, object: &Object, write_file: WriteFileFn) -> Resu
 
     match &object.content {
         ObjectContent::File { data } => {
-            write_file(&location, &data).and_then(|()| set_permissions())
+            write_file(&location, data).and_then(|()| set_permissions())
         }
         ObjectContent::Symlink { target } => symlink(target, &location),
         ObjectContent::Directory => fs::create_dir(&location).and_then(|()| set_permissions()),
@@ -108,8 +108,7 @@ fn process_object(root: &Path, object: &Object, write_file: WriteFileFn) -> Resu
 }
 
 fn write_file_default(path: &Path, contents: &Bytes) -> StdResult<(), std::io::Error> {
-    fs::write(path, contents).map_err(Into::into)
-}
+    fs::write(path, contents)}
 
 #[cfg(feature = "mmap")]
 fn write_file_mmap(path: &Path, contents: &Bytes) -> StdResult<(), std::io::Error> {
@@ -117,6 +116,7 @@ fn write_file_mmap(path: &Path, contents: &Bytes) -> StdResult<(), std::io::Erro
         .create(true)
         .read(true)
         .write(true)
+        .truncate(true)
         .open(path)?;
     file.set_len(contents.len() as u64)?;
 
@@ -127,7 +127,7 @@ fn write_file_mmap(path: &Path, contents: &Bytes) -> StdResult<(), std::io::Erro
     }?;
 
     map.advise(memmap2::Advice::Sequential)?;
-    map.copy_from_slice(&contents);
+    map.copy_from_slice(contents);
 
     Ok(())
 }

@@ -3,12 +3,12 @@ use std::str::FromStr;
 use log::{Level, Record, logger};
 use mlua::{ExternalResult, Lua};
 
-fn log(level: Level, message: String) {
+fn log(level: Level, message: &str) {
     logger().log(
         &Record::builder()
             .level(level)
             .target("xh_backend_lua::runtime")
-            .args(format_args!("{}", message))
+            .args(format_args!("{message}"))
             .build(),
     );
 }
@@ -18,7 +18,10 @@ pub fn register_module(lua: &Lua) -> Result<(), mlua::Error> {
     let add_level = |name, level| {
         module.set(
             name,
-            lua.create_function(move |_, message| Ok(log(level, message)))?,
+            lua.create_function(move |_, message: String| {
+                log(level, &message);
+                Ok(())
+            })?,
         )
     };
 
@@ -29,11 +32,9 @@ pub fn register_module(lua: &Lua) -> Result<(), mlua::Error> {
     add_level("trace", Level::Trace)?;
     module.set(
         "log",
-        lua.create_function(move |_, (level, message): (String, _)| {
-            Ok(log(
-                Level::from_str(level.as_str()).into_lua_err()?,
-                message,
-            ))
+        lua.create_function(move |_, (level, message): (String, String)| {
+            log(Level::from_str(level.as_str()).into_lua_err()?, &message);
+            Ok(())
         })?,
     )?;
 

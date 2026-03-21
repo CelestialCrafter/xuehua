@@ -1,18 +1,6 @@
 [workspace]
 resolver = "3"
-members = [
-  "crates/cli",
-  "crates/archive",
-  "crates/backend-lua",
-  "crates/engine",
-  "crates/executor-bubblewrap",
-  "crates/executor-http",
-  "crates/reports",
-  "crates/reports-derive",
-  "crates/store-sqlite",
-  "crates/common",
-  "crates/executor-compression"
-, "crates/query"]
+members = ["crates/*"]
 
 [workspace.dependencies]
 xh-archive = { path = "crates/archive", features = ["mmap"] }

@@ -37,7 +37,7 @@ impl Marker {
         2
     }
 
-    pub fn put(&self, buffer: &mut impl BufMut) {
+    pub fn put(self, buffer: &mut impl BufMut) {
         buffer.put_slice(b"xuehua-archive@");
         buffer.put_slice(match self {
             Marker::Header => b"hd",
@@ -62,7 +62,7 @@ pub fn hash_object(object: &Object) -> blake3::Hash {
     let (variant, content) = match &object.content {
         ObjectContent::File { data } => (0, data),
         ObjectContent::Symlink { target } => (1, &target.inner),
-        ObjectContent::Directory => (2, &Default::default()),
+        ObjectContent::Directory => (2, &Bytes::default()),
     };
 
     hasher.update(&[variant]);

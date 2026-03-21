@@ -71,10 +71,10 @@ impl Packer {
             }),
             State::Objects(ref mut index) => match index.front_mut() {
                 Some(stub) => process_object(&self.root, stub, read_file)
-                    .map(|_| Event::Object(index.pop_front().unwrap())),
+                    .map(|()| Event::Object(index.pop_front().unwrap())),
                 None => {
                     self.state = State::Footer;
-                    Ok(Event::Footer(Default::default()))
+                    Ok(Event::Footer(Vec::default()))
                 }
             },
             State::Footer => return None,
@@ -88,7 +88,7 @@ fn process_object(root: &PathBytes, stub: &mut Object, read_file: ReadFileFn) ->
 
     let content = match stub.content {
         ObjectContent::File { .. } => ObjectContent::File {
-            data: read_file(&location).wrap()?,
+            data: read_file(location).wrap()?,
         },
         ObjectContent::Symlink { .. } => ObjectContent::Symlink {
             target: fs::read_link(location).wrap()?.into(),
@@ -97,7 +97,7 @@ fn process_object(root: &PathBytes, stub: &mut Object, read_file: ReadFileFn) ->
     };
 
     let location = location
-        .strip_prefix(&root)
+        .strip_prefix(root)
         .expect("path should be a child of root")
         .to_path_buf()
         .into();
@@ -108,7 +108,7 @@ fn process_object(root: &PathBytes, stub: &mut Object, read_file: ReadFileFn) ->
 }
 
 fn build_index(root: &PathBytes) -> Result<VecDeque<Object>, Error> {
-    let mut queue = Vec::from([(root.clone(), fs::symlink_metadata(&root).wrap()?)]);
+    let mut queue = Vec::from([(root.clone(), fs::symlink_metadata(root).wrap()?)]);
 
     let mut i = 0;
     while let Some((path, ty)) = queue.get(i) {

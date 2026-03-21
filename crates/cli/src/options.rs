@@ -19,7 +19,7 @@ pub struct Options {
 impl Options {
     pub fn run() -> Result<Self, ()> {
         Ok(Options {
-            cli: cli::Options::options().run().into(),
+            cli: cli::Options::new().run(),
             base: base::BaseOptions::read().erased()?,
         })
     }

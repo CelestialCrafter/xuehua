@@ -16,17 +16,23 @@ pub struct Root {
     store: Arc<Store>,
 }
 
+impl Default for Root {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Root {
     pub fn new() -> Self {
         Self {
-            store: Default::default(),
+            store: Arc::default(),
         }
     }
 
     pub fn borrowed(&self) -> Borrowed<'_> {
         Borrowed {
             store: &self.store,
-            dependencies: Default::default(),
+            dependencies: Mutex::default(),
         }
     }
 
@@ -68,7 +74,7 @@ impl Upcoming<'_> {
             .expect("memo should be valid for any KeyIndex");
 
         memo.verified_at = self.store.revision.get().into();
-        memo.dependencies = Default::default();
+        memo.dependencies = Mutex::default();
     }
 }
 
@@ -103,14 +109,14 @@ impl Borrowed<'_> {
 
         if let VerificationResult::Cached { value } = self.store.verify(database, idx) {
             return value;
-        };
+        }
 
         query_epilogue(
             key,
             idx,
             Borrowed {
-                store: &self.store,
-                dependencies: Default::default(),
+                store: self.store,
+                dependencies: Mutex::default(),
             },
         )
         .await
@@ -129,8 +135,8 @@ impl<'a, K: Key> QuerySet<'a, K> {
     pub fn new(handle: &'a Borrowed<'a>) -> Self {
         Self {
             handle,
-            cached: Default::default(),
-            joinset: Default::default(),
+            cached: Vec::default(),
+            joinset: JoinSet::default(),
         }
     }
 
@@ -147,18 +153,18 @@ impl<'a, K: Key> QuerySet<'a, K> {
                 self.joinset.spawn(async move {
                     let handle = Borrowed {
                         store: &store,
-                        dependencies: Default::default(),
+                        dependencies: Mutex::default(),
                     };
 
                     query_epilogue(key, idx, handle).await
                 });
             }
-        };
+        }
     }
 
     pub async fn try_next(&mut self) -> Option<Result<K::Value, JoinError>> {
         match self.cached.pop() {
-            Some(value) => return Some(Ok(value)),
+            Some(value) => Some(Ok(value)),
             None => self.joinset.join_next().await,
         }
     }

@@ -15,7 +15,7 @@ enum Mode {
 }
 
 impl Mode {
-    fn format(&self, value: impl ToTokens) -> TokenStream {
+    fn format(self, value: impl ToTokens) -> TokenStream {
         match self {
             Mode::Debug => quote!(format_args!("{:?}", #value)),
             Mode::Display => quote!(#value),
@@ -162,7 +162,7 @@ fn build_attachment(attr: &Attribute) -> Result<TokenStream, Error> {
                 input.parse::<Token![:]>()?;
                 mode
             }
-            Err(_) => Default::default(),
+            Err(_) => Mode::default(),
         };
 
         let value = mode.format(Member::parse(input)?);
@@ -174,14 +174,6 @@ fn build_attachment(attr: &Attribute) -> Result<TokenStream, Error> {
 
 fn build_context(attr: &Attribute) -> Result<impl Iterator<Item = TokenStream>, Error> {
     let (mode, members) = attr.parse_args_with(|stream: ParseStream| {
-        let mode = match Mode::parse(stream) {
-            Ok(mode) => {
-                stream.parse::<Token![:]>()?;
-                mode
-            }
-            Err(_) => Default::default(),
-        };
-
         struct Mapping {
             source: Member,
             dest: Option<Member>,
@@ -202,6 +194,14 @@ fn build_context(attr: &Attribute) -> Result<impl Iterator<Item = TokenStream>, 
                 })
             }
         }
+
+        let mode = match Mode::parse(stream) {
+            Ok(mode) => {
+                stream.parse::<Token![:]>()?;
+                mode
+            }
+            Err(_) => Mode::default(),
+        };
 
         let members = Punctuated::<Mapping, Token![,]>::parse_terminated(stream)?;
         Ok((mode, members))

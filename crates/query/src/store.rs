@@ -52,8 +52,8 @@ impl Store {
         database.index_of(key, || {
             let idx = self.memos.push(Memo {
                 verified_at: (self.revision.get() - 1).into(),
-                dependencies: Default::default(),
-                computing: Default::default(),
+                dependencies: Mutex::default(),
+                computing: AsyncRwLock::default(),
             });
 
             KeyIndex(idx)

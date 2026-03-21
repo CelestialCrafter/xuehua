@@ -70,7 +70,7 @@ impl Decoder {
     /// Constructs a new encoder
     #[inline]
     pub fn new() -> Self {
-        Default::default()
+        Self::default()
     }
 
     /// Decodes [`Bytes`] into an iterator of [`Event`]s.
@@ -118,11 +118,11 @@ impl Decoder {
             b"ft" => self.process_footer(buffer),
             b"ob" => self.process_object(buffer),
             _ => {
-                return Err(UnexpectedTokenError {
+                Err(UnexpectedTokenError {
                     token,
                     expected: r#""hd", "ft", or "ob""#.into(),
                 }
-                .wrap());
+                .wrap())
             }
         }
     }
@@ -224,18 +224,18 @@ fn process_plen(buffer: &mut Bytes) -> Result<Bytes, Error> {
         .wrap()?
         .try_into()
         .wrap()?;
-    Ok(try_split_to(buffer, len)?)
+    try_split_to(buffer, len)
 }
 
 fn try_split_to(buffer: &mut Bytes, at: usize) -> Result<Bytes, Error> {
     let len = buffer.len();
     if at > len {
-        return Err(bytes::TryGetError {
+        Err(bytes::TryGetError {
             requested: at,
             available: len,
         })
         .compat()
-        .wrap();
+        .wrap()
     } else {
         Ok(buffer.split_to(at))
     }
