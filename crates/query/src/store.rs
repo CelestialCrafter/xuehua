@@ -4,14 +4,13 @@ use std::{
     hash::{BuildHasher, RandomState},
     num::NonZeroUsize,
     sync::{
-        Mutex, RwLock,
+        Mutex,
         atomic::{AtomicUsize, Ordering},
     },
 };
 
 use educe::Educe;
 use rustc_hash::FxHashMap;
-use tokio::sync::RwLock as AsyncRwLock;
 
 use crate::{Key, KeyIndex, Value};
 
@@ -19,7 +18,6 @@ use crate::{Key, KeyIndex, Value};
 pub(crate) struct Memo {
     pub verified_at: AtomicUsize,
     pub dependencies: Mutex<Vec<KeyIndex>>,
-    pub computing: AsyncRwLock<()>
 }
 
 #[derive(Educe, Debug)]
@@ -53,7 +51,6 @@ impl Store {
             let idx = self.memos.push(Memo {
                 verified_at: (self.revision.get() - 1).into(),
                 dependencies: Mutex::default(),
-                computing: AsyncRwLock::default(),
             });
 
             KeyIndex(idx)
@@ -141,9 +138,9 @@ pub trait Database: Send + Sync + 'static {
 #[derive(Educe)]
 #[educe(Default(new, bound(S: Default)))]
 pub struct MemoryDatabase<K: Key, S: Default = RandomState> {
-    lookup: RwLock<HashMap<K, KeyIndex, S>>,
-    keys: RwLock<HashMap<KeyIndex, K, S>>,
-    values: RwLock<HashMap<KeyIndex, K::Value, S>>,
+    lookup: Mutex<HashMap<K, KeyIndex, S>>,
+    keys: Mutex<HashMap<KeyIndex, K, S>>,
+    values: Mutex<HashMap<KeyIndex, K::Value, S>>,
 }
 
 impl<K: Key, S: Default + BuildHasher + Send + Sync + 'static> Database for MemoryDatabase<K, S> {
@@ -151,15 +148,16 @@ impl<K: Key, S: Default + BuildHasher + Send + Sync + 'static> Database for Memo
     type Value = K::Value;
 
     fn index_of(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex {
-        let idx = self.lookup.read().unwrap().get(key).copied();
+        let mut lookup = self.lookup.lock().unwrap();
+
+        let idx = lookup.get(key).copied();
         idx.unwrap_or_else(|| {
-            let mut lookup = self.lookup.write().unwrap();
             if let Some(idx) = lookup.get(key) {
                 return *idx;
             }
 
             let idx = new();
-            let mut keys = self.keys.write().unwrap();
+            let mut keys = self.keys.lock().unwrap();
             lookup.insert(key.clone(), idx);
             keys.insert(idx, key.clone());
 
@@ -168,14 +166,14 @@ impl<K: Key, S: Default + BuildHasher + Send + Sync + 'static> Database for Memo
     }
 
     fn key_of(&self, idx: KeyIndex) -> Option<Self::Key> {
-        self.keys.read().unwrap().get(&idx).cloned()
+        self.keys.lock().unwrap().get(&idx).cloned()
     }
 
     fn value_of(&self, idx: KeyIndex) -> Option<Self::Value> {
-        self.values.read().unwrap().get(&idx).cloned()
+        self.values.lock().unwrap().get(&idx).cloned()
     }
 
     fn update_value(&self, idx: KeyIndex, value: Self::Value) {
-        self.values.write().unwrap().insert(idx, value);
+        self.values.lock().unwrap().insert(idx, value);
     }
 }
