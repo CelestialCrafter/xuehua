@@ -13,7 +13,7 @@ use std::{
 use educe::Educe;
 use futures_util::{FutureExt, future::BoxFuture};
 use rustc_hash::{FxHashMap, FxHashSet};
-use tokio::task::JoinSet;
+use tokio::{sync::Semaphore, task::JoinSet};
 
 use crate::{Key, KeyIndex, Value, handle::Handle};
 
@@ -22,6 +22,7 @@ pub(crate) struct Memo {
     pub verified_at: AtomicUsize,
     pub changed_at: AtomicUsize,
     pub dependencies: Mutex<FxHashSet<KeyIndex>>,
+    pub computing: Semaphore,
 }
 
 #[derive(Educe, Debug)]
@@ -70,6 +71,7 @@ impl Store {
                 verified_at: 0.into(),
                 changed_at: 0.into(),
                 dependencies: Mutex::default(),
+                computing: Semaphore::new(1),
             });
 
             KeyIndex(idx, database.type_id())
@@ -80,14 +82,31 @@ impl Store {
         let revision = self.revision.get();
 
         let memo = &self.memos[idx.0];
-        let changed_at = memo.changed_at.load(Ordering::Acquire);
-        let verified_at = memo.verified_at.load(Ordering::Acquire);
-        if verified_at == revision {
-            return changed_at;
+        let load_changed_at = || memo.changed_at.load(Ordering::Acquire);
+        macro_rules! load_va {
+            () => {{
+                let verified_at = memo.verified_at.load(Ordering::Acquire);
+                if verified_at == revision {
+                    return load_changed_at();
+                }
+
+                verified_at
+            }};
         }
 
-        let mut recompute = verified_at == 0;
+        // short circut if the memo is initially verified
+        load_va!();
 
+        let _permit = memo
+            .computing
+            .acquire()
+            .await
+            .expect("permit should not be closed");
+
+        // short circut if someone else verified the memo while we were waiting
+        let verified_at = load_va!();
+
+        let mut recompute = verified_at == 0;
         let dependencies = memo.dependencies.lock().unwrap().clone();
         if !dependencies.is_empty() {
             let mut joinset = JoinSet::new();
@@ -102,21 +121,21 @@ impl Store {
             }
         }
 
-        if recompute {
+        let changed_at = if recompute {
+            let database = &self.databases[&idx.1];
             let handle = Handle {
                 store: self,
                 dependencies: Mutex::default(),
             };
 
-            let database = &self.databases[&idx.1];
             let changed = database.query(&handle, idx).await;
-            if changed {
-                return revision;
-            }
-        }
+            changed.then_some(revision)
+        } else {
+            None
+        };
 
         memo.verified_at.store(revision, Ordering::Release);
-        changed_at
+        changed_at.unwrap_or_else(load_changed_at)
     }
 
     fn update_inner(self: &Arc<Self>, idx: KeyIndex) -> BoxFuture<'_, usize> {
