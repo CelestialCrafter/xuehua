@@ -3,12 +3,11 @@ use std::{
     sync::{Arc, Mutex, atomic::Ordering},
 };
 
-use educe::Educe;
-use tokio::task::{JoinError, JoinSet};
+use rustc_hash::FxHashSet;
 
 use crate::{
     Key, KeyIndex,
-    store::{Database, Store, VerificationResult},
+    store::{Database, Store},
 };
 
 #[derive(Debug)]
@@ -29,8 +28,8 @@ impl Root {
         }
     }
 
-    pub fn borrowed(&self) -> Borrowed<'_> {
-        Borrowed {
+    pub fn handle(&self) -> Handle<'_> {
+        Handle {
             store: &self.store,
             dependencies: Mutex::default(),
         }
@@ -65,7 +64,7 @@ impl Upcoming<'_> {
     pub fn update<K: Key>(&mut self, key: &K, value: K::Value) {
         let database = self.store.database_of::<K>();
         let idx = self.store.index_of(database, key);
-        database.update_value(idx, value);
+        database.set_value(idx, value);
 
         let memo = self
             .store
@@ -73,129 +72,61 @@ impl Upcoming<'_> {
             .get_mut(idx.0)
             .expect("memo should be valid for any KeyIndex");
 
-        memo.verified_at = self.store.revision.get().into();
+        let revision = self.store.revision.get();
+        *memo.verified_at.get_mut() = revision;
+        *memo.changed_at.get_mut() = revision;
         memo.dependencies = Mutex::default();
     }
 }
 
-async fn query_epilogue<K: Key>(key: K, idx: KeyIndex, handle: Borrowed<'_>) -> K::Value {
-    let value = key.compute(&handle).await;
-
-    let store = handle.store;
-    let database = store.database_of::<K>();
-    database.update_value(idx, value.clone());
-
-    let memo = &store.memos[idx.0];
-    memo.verified_at
-        .store(store.revision.get(), Ordering::Release);
-
-    let mut dependencies = memo.dependencies.lock().unwrap();
-    *dependencies = handle.dependencies.into_inner().unwrap();
-
-    value
-}
-
 #[derive(Debug)]
-pub struct Borrowed<'a> {
-    store: &'a Arc<Store>,
-    dependencies: Mutex<Vec<KeyIndex>>,
+pub struct Handle<'a> {
+    pub(crate) store: &'a Arc<Store>,
+    pub(crate) dependencies: Mutex<FxHashSet<KeyIndex>>,
 }
 
-impl Borrowed<'_> {
+impl Handle<'_> {
     pub async fn query<K: Key>(&self, key: K) -> K::Value {
         let database = self.store.database_of::<K>();
         let idx = self.store.index_of(database, &key);
-        self.dependencies.lock().unwrap().push(idx);
+        self.dependencies.lock().unwrap().insert(idx);
 
-        if let VerificationResult::Cached { value } = self.store.verify(database, idx) {
-            return value;
-        }
-
-        query_epilogue(
-            key,
-            idx,
-            Borrowed {
-                store: self.store,
-                dependencies: Mutex::default(),
-            },
-        )
-        .await
-    }
-}
-
-#[derive(Educe)]
-#[educe(Debug)]
-pub struct QuerySet<'a, K: Key> {
-    handle: &'a Borrowed<'a>,
-    cached: Vec<K::Value>,
-    joinset: JoinSet<K::Value>,
-}
-
-impl<'a, K: Key> QuerySet<'a, K> {
-    pub fn new(handle: &'a Borrowed<'a>) -> Self {
-        Self {
-            handle,
-            cached: Vec::default(),
-            joinset: JoinSet::default(),
-        }
+        self.store.update(idx).await;
+        database
+            .value_of(idx)
+            .expect("value should exist in database")
     }
 
-    pub fn spawn(&mut self, key: K) {
-        let store = self.handle.store;
-        let database = store.database_of::<K>();
-        let idx = store.index_of(database, &key);
-        self.handle.dependencies.lock().unwrap().push(idx);
+    pub(crate) async fn query_inner<K: Key>(
+        &self,
+        database: &K::Database,
+        key: K,
+        idx: KeyIndex,
+    ) -> bool {
+        let child = Handle {
+            store: self.store,
+            dependencies: Mutex::default(),
+        };
 
-        match store.verify(database, idx) {
-            VerificationResult::Cached { value } => self.cached.push(value),
-            VerificationResult::Outdated => {
-                let store = store.clone();
-                self.joinset.spawn(async move {
-                    let handle = Borrowed {
-                        store: &store,
-                        dependencies: Mutex::default(),
-                    };
+        let old = database.value_of(idx);
+        let new = key.compute(&child).await;
 
-                    query_epilogue(key, idx, handle).await
-                });
-            }
-        }
-    }
+        let revision = self.store.revision.get();
+        let memo = &self.store.memos[idx.0];
 
-    pub async fn try_next(&mut self) -> Option<Result<K::Value, JoinError>> {
-        match self.cached.pop() {
-            Some(value) => Some(Ok(value)),
-            None => self.joinset.join_next().await,
-        }
-    }
+        let changed = if old.is_some_and(|old| old == new) {
+            false
+        } else {
+            database.set_value(idx, new);
+            memo.changed_at.store(revision, Ordering::Release);
 
-    pub async fn next(&mut self) -> Option<K::Value> {
-        self.try_next()
-            .await
-            .map(|result| result.expect("QuerySet::next() should return Ok"))
-    }
+            true
+        };
 
-    pub async fn try_all<T: Default + Extend<Result<K::Value, JoinError>>>(&mut self) -> T {
-        let mut collection = T::default();
-        collection.extend(self.cached.drain(..).map(Ok));
+        let mut deps = memo.dependencies.lock().unwrap();
+        *deps = child.dependencies.into_inner().unwrap();
 
-        while let Some(result) = self.joinset.join_next().await {
-            collection.extend(std::iter::once(result));
-        }
-
-        collection
-    }
-
-    pub async fn all<T: Default + Extend<K::Value>>(&mut self) -> T {
-        let mut collection = T::default();
-        collection.extend(self.cached.drain(..));
-
-        while let Some(result) = self.joinset.join_next().await {
-            collection.extend(std::iter::once(
-                result.expect("JoinSet::next() should return Ok"),
-            ));
-        }
-
-        collection
+        memo.verified_at.store(revision, Ordering::Release);
+        changed
     }
 }

@@ -9,6 +9,8 @@ educe.workspace = true
 rustc-hash = "2.1.1"
 tokio = { workspace = true, features = ["rt", "sync"] }
 boxcar = "0.2.14"
+futures-util = { version = "0.3.32", default-features = false, features = ["std", "alloc"] }
 
 [dev-dependencies]
+rayon = "1.11.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

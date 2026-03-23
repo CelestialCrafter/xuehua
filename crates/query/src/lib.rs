@@ -1,7 +1,7 @@
 pub mod handle;
 pub mod store;
 
-use std::{fmt, hash::Hash};
+use std::{any::TypeId, fmt, hash::Hash};
 
 use crate::store::Database;
 
@@ -9,7 +9,7 @@ pub trait Key: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
     type Value: Value;
     type Database: Database<Key = Self, Value = Self::Value>;
 
-    fn compute(self, ctx: &handle::Borrowed) -> impl Future<Output = Self::Value> + Send;
+    fn compute(self, handle: &handle::Handle) -> impl Future<Output = Self::Value> + Send;
 }
 
 #[macro_export]
@@ -19,24 +19,30 @@ macro_rules! impl_input_key {
             type Value = $value;
             type Database = $db;
 
-            async fn compute(self, _ctx: &$crate::handle::Borrowed<'_>) -> Self::Value {
+            async fn compute(self, _ctx: &$crate::handle::Handle<'_>) -> Self::Value {
                 panic!("QueryKey::compute() should not be called on an input key")
             }
         }
     };
 }
 
-pub trait Value: fmt::Debug + Clone + Send + Sync + 'static {}
-impl<T: fmt::Debug + Clone + Send + Sync + 'static> Value for T {}
+pub trait Value: fmt::Debug + PartialEq + Clone + Send + Sync + 'static {}
+impl<T: fmt::Debug + PartialEq + Clone + Send + Sync + 'static> Value for T {}
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub struct KeyIndex(usize);
+pub struct KeyIndex(usize, TypeId);
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Range, sync::Mutex};
+    use std::{
+        ops::Range,
+        sync::{Arc, Mutex},
+    };
 
-    use crate::{handle::QuerySet, store::MemoryDatabase};
+    use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    use tokio::task::JoinSet;
+
+    use crate::store::MemoryDatabase;
 
     use super::*;
 
@@ -55,7 +61,7 @@ mod tests {
             type Value = u64;
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, ctx: &handle::Borrowed<'_>) -> Self::Value {
+            async fn compute(self, ctx: &handle::Handle<'_>) -> Self::Value {
                 let range = (1..=u16::MAX as u64)
                     .zip(ctx.query(InputQuery).await)
                     .map(|(a, b)| a + b);
@@ -76,39 +82,53 @@ mod tests {
             type Value = u128;
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, handle: &handle::Borrowed<'_>) -> Self::Value {
-                let mut set = QuerySet::new(handle);
-                for i in handle.query(InputQuery).await {
-                    set.spawn(DifficultQuery {
-                        offset: i % u16::MAX as u64,
-                    });
-                }
-
+            async fn compute(self, handle: &handle::Handle<'_>) -> Self::Value {
                 let mut sum = 0;
-                while let Some(value) = set.next().await {
-                    sum += value as u128;
+                for i in handle.query(InputQuery).await {
+                    sum += handle
+                        .query(DifficultQuery {
+                            offset: i % u16::MAX as u64,
+                        })
+                        .await as u128;
                 }
 
                 sum
             }
         }
 
-        let mut root = handle::Root::new()
+        let root = handle::Root::new()
             .register::<RootQuery>(Default::default())
             .register::<DifficultQuery>(Default::default())
             .register::<InputQuery>(Default::default());
 
-        root.upcoming().update(&InputQuery, 0..10000);
-        let result = root.borrowed().query(RootQuery).await;
-        println!("result 1: {result}");
+        let perform = async |mut root: handle::Root, range| {
+            root.upcoming().update(&InputQuery, range);
 
-        root.upcoming().update(&InputQuery, 5000..15000);
-        let result = root.borrowed().query(RootQuery).await;
-        println!("result 2: {result}");
+            let mut joinset = JoinSet::new();
+            let root = Arc::new(root);
 
-        root.upcoming().update(&InputQuery, 0..20000);
-        let result = root.borrowed().query(RootQuery).await;
-        println!("result 3: {result}");
+            for _ in 0..50 {
+                let root = root.clone();
+                joinset.spawn(async move { root.handle().query(RootQuery).await });
+            }
+
+            let mut sum = 0;
+            while let Some(value) = joinset.join_next().await {
+                sum += value.expect("query should not panic");
+            }
+
+            let root = Arc::into_inner(root).expect("no more references to root should be held");
+            (root, sum)
+        };
+
+        let (root, result) = perform(root, 0..1000).await;
+        println!("result 1: {result:?}");
+
+        let (root, result) = perform(root, 500..1500).await;
+        println!("result 2: {result:?}");
+
+        let (_, result) = perform(root, 0..2000).await;
+        println!("result 3: {result:?}");
 
         panic!()
     }
@@ -138,20 +158,23 @@ mod tests {
 
         fn root() -> u128 {
             input()
+                .into_par_iter()
                 .map(|i| difficult(i % u16::MAX as u64) as u128)
                 .sum()
         }
 
-        *INPUT.lock().unwrap() = Some(0..1000);
-        let result = root();
+        fn perform(range: Range<u64>) -> u128 {
+            *INPUT.lock().unwrap() = Some(range);
+            (0..50).into_par_iter().map(|_| root()).sum()
+        }
+
+        let result = perform(0..1000);
         eprintln!("result 1: {result}");
 
-        *INPUT.lock().unwrap() = Some(500..1500);
-        let result = root();
+        let result = perform(500..1500);
         eprintln!("result 2: {result}");
 
-        *INPUT.lock().unwrap() = Some(0..2000);
-        let result = root();
+        let result = perform(0..2000);
         eprintln!("result 3: {result}");
 
         panic!()
