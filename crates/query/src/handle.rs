@@ -71,19 +71,15 @@ pub struct Upcoming<'a> {
 impl Upcoming<'_> {
     pub fn update<K: Key>(&mut self, key: &K, value: K::Value) {
         let database = self.store.database_of::<K>();
-        let idx = self.store.index_of(database, key);
+        let idx = database.index_of(key);
         database.set_value(idx, value);
 
-        let memo = self
-            .store
-            .memos
-            .get_mut(idx.0)
-            .expect("memo should be valid for any KeyIndex");
-
+        let memo = database.memo_of(idx);
         let revision = self.store.revision.get();
-        *memo.verified_at.get_mut() = revision;
-        *memo.changed_at.get_mut() = revision;
-        memo.dependencies = Mutex::default();
+
+        memo.verified_at.store(revision, Ordering::Release);
+        memo.changed_at.store(revision, Ordering::Release);
+        *memo.dependencies.lock().unwrap() = FxHashSet::default();
     }
 }
 
@@ -96,7 +92,7 @@ pub struct Handle<'a> {
 impl Handle<'_> {
     pub async fn query<K: Key>(&self, key: K) -> K::Value {
         let database = self.store.database_of::<K>();
-        let idx = self.store.index_of(database, &key);
+        let idx = database.index_of(&key);
         self.dependencies.lock().unwrap().insert(idx);
 
         self.store.update(idx).await;
@@ -120,7 +116,7 @@ impl Handle<'_> {
         let new = key.compute(&child).await;
 
         let revision = self.store.revision.get();
-        let memo = &self.store.memos[idx.0];
+        let memo = database.memo_of(idx);
 
         let changed = if old.is_some_and(|old| old == new) {
             false

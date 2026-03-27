@@ -17,20 +17,21 @@ use tokio::{sync::Semaphore, task::JoinSet};
 
 use crate::{Key, KeyIndex, Value, handle::Handle};
 
-#[derive(Debug)]
-pub(crate) struct Memo {
-    pub verified_at: AtomicUsize,
-    pub changed_at: AtomicUsize,
-    pub dependencies: Mutex<FxHashSet<KeyIndex>>,
-    pub computing: Semaphore,
+#[derive(Debug, Educe)]
+#[educe(Default)]
+pub struct Memo {
+    pub(crate) verified_at: AtomicUsize,
+    pub(crate) changed_at: AtomicUsize,
+    pub(crate) dependencies: Mutex<FxHashSet<KeyIndex>>,
+    #[educe(Default(expr = Semaphore::new(1)))]
+    computing: Semaphore,
 }
 
 #[derive(Educe, Debug)]
 #[educe(Default)]
 pub(crate) struct Store {
     // NOTE: potentially store memo next to the database
-    databases: FxHashMap<TypeId, Box<dyn DynDatabase>>,
-    pub memos: boxcar::Vec<Memo>,
+    registry: FxHashMap<TypeId, Box<dyn DynDatabase>>,
     // index_of depends on revision 0 being non-existent
     #[educe(Default = NonZeroUsize::new(1).unwrap())]
     pub revision: NonZeroUsize,
@@ -38,12 +39,17 @@ pub(crate) struct Store {
 
 trait DynDatabase: Any + Send + Sync {
     fn query<'a>(&'a self, handle: &'a Handle<'_>, idx: KeyIndex) -> BoxFuture<'a, bool>;
+    fn memo_of(&self, idx: KeyIndex) -> &Memo;
 }
 
 impl<T: Database> DynDatabase for T {
     fn query<'a>(&'a self, handle: &'a Handle<'_>, idx: KeyIndex) -> BoxFuture<'a, bool> {
-        let key = self.key_of(idx).expect("key should exist");
+        let key = self.key_of(idx).expect("key should exist").clone();
         handle.query_inner(self, key, idx).boxed()
+    }
+
+    fn memo_of(&self, idx: KeyIndex) -> &Memo {
+        self.memo_of(idx)
     }
 }
 
@@ -56,7 +62,7 @@ impl fmt::Debug for Box<dyn DynDatabase> {
 impl Store {
     pub fn database_of<K: Key>(&self) -> &K::Database {
         let database = self
-            .databases
+            .registry
             .get(&TypeId::of::<K::Database>())
             .expect("database should be registered");
 
@@ -65,23 +71,12 @@ impl Store {
             .expect("database should be of type K::Database")
     }
 
-    pub fn index_of<D: Database>(&self, database: &D, key: &D::Key) -> KeyIndex {
-        database.index_of(key, || {
-            let idx = self.memos.push(Memo {
-                verified_at: 0.into(),
-                changed_at: 0.into(),
-                dependencies: Mutex::default(),
-                computing: Semaphore::new(1),
-            });
-
-            KeyIndex(idx, database.type_id())
-        })
-    }
-
     pub async fn update(self: &Arc<Self>, idx: KeyIndex) -> usize {
         let revision = self.revision.get();
 
-        let memo = &self.memos[idx.0];
+        let database = &self.registry[&idx.1];
+        let memo = database.memo_of(idx);
+
         let load_changed_at = || memo.changed_at.load(Ordering::Acquire);
         macro_rules! load_va {
             () => {{
@@ -122,7 +117,6 @@ impl Store {
         }
 
         let changed_at = if recompute {
-            let database = &self.databases[&idx.1];
             let handle = Handle {
                 store: self,
                 dependencies: Mutex::default(),
@@ -143,7 +137,7 @@ impl Store {
     }
 
     pub fn register(&mut self, database: impl Database) {
-        self.databases
+        self.registry
             .entry(database.type_id())
             .or_insert_with(|| Box::new(database));
     }
@@ -153,9 +147,10 @@ pub trait Database: Send + Sync + 'static {
     type Key: Key<Value = Self::Value, Database = Self>;
     type Value: Value;
 
-    fn index_of(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex;
-    fn key_of(&self, idx: KeyIndex) -> Option<Self::Key>;
+    fn index_of(&self, key: &Self::Key) -> KeyIndex;
+    fn key_of(&self, idx: KeyIndex) -> Option<&Self::Key>;
     fn value_of(&self, idx: KeyIndex) -> Option<Self::Value>;
+    fn memo_of(&self, idx: KeyIndex) -> &Memo;
 
     fn set_value(&self, idx: KeyIndex, value: Self::Value);
 }
@@ -164,8 +159,8 @@ pub trait Database: Send + Sync + 'static {
 #[educe(Default(new, bound(S: Default)))]
 pub struct MemoryDatabase<K: Key, S: Default = RandomState> {
     lookup: Mutex<HashMap<K, KeyIndex, S>>,
-    keys: Mutex<HashMap<KeyIndex, K, S>>,
     values: Mutex<HashMap<KeyIndex, K::Value, S>>,
+    memos: boxcar::Vec<(K, Memo)>,
 }
 
 impl<K: Key<Database = Self>, S: Default + BuildHasher + Send + Sync + 'static> Database
@@ -174,26 +169,32 @@ impl<K: Key<Database = Self>, S: Default + BuildHasher + Send + Sync + 'static> 
     type Key = K;
     type Value = K::Value;
 
-    fn index_of(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex {
+    fn index_of(&self, key: &Self::Key) -> KeyIndex {
         let mut lookup = self.lookup.lock().unwrap();
         if let Some(idx) = lookup.get(key).copied() {
             return idx;
         }
 
-        let idx = new();
-        let mut keys = self.keys.lock().unwrap();
+        let idx = self.memos.push((key.clone(), Memo::default()));
+        let idx = KeyIndex::new::<Self>(idx);
         lookup.insert(key.clone(), idx);
-        keys.insert(idx, key.clone());
 
         idx
     }
 
-    fn key_of(&self, idx: KeyIndex) -> Option<Self::Key> {
-        self.keys.lock().unwrap().get(&idx).cloned()
+    fn key_of(&self, idx: KeyIndex) -> Option<&Self::Key> {
+        self.memos.get(idx.idx()).map(|(key, _)| key)
     }
 
     fn value_of(&self, idx: KeyIndex) -> Option<Self::Value> {
         self.values.lock().unwrap().get(&idx).cloned()
+    }
+
+    fn memo_of(&self, idx: KeyIndex) -> &Memo {
+        self.memos
+            .get(idx.idx())
+            .map(|(_, memo)| memo)
+            .expect("memo should be valid for any given KeyIndex")
     }
 
     fn set_value(&self, idx: KeyIndex, value: Self::Value) {

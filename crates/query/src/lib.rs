@@ -32,6 +32,16 @@ impl<T: fmt::Debug + PartialEq + Clone + Send + Sync + 'static> Value for T {}
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct KeyIndex(usize, TypeId);
 
+impl KeyIndex {
+    pub fn new<T: 'static>(idx: usize) -> Self {
+        KeyIndex(idx, TypeId::of::<T>())
+    }
+
+    pub fn idx(self) -> usize {
+        self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
