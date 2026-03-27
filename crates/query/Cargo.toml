@@ -12,5 +12,6 @@ boxcar = "0.2.14"
 futures-util = { version = "0.3.32", default-features = false, features = ["std", "alloc"] }
 
 [dev-dependencies]
-rayon = "1.11.0"
+arbitrary = "1.4.2"
+arbtest = "0.3.2"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -36,147 +36,400 @@ pub struct KeyIndex(usize, TypeId);
 mod tests {
     use std::{
         ops::Range,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
-    use rayon::iter::{IntoParallelIterator, ParallelIterator};
-    use tokio::task::JoinSet;
+    use tokio::{runtime::Runtime, task::JoinSet};
 
-    use crate::store::MemoryDatabase;
+    use crate::{
+        Key,
+        handle::{self, Handle},
+        store::MemoryDatabase,
+    };
 
-    use super::*;
+    #[tokio::test]
+    async fn test_early_cutoff() {
+        static LEN_COMPUTES: AtomicUsize = AtomicUsize::new(0);
+        static EVEN_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn expensive_query() {
         #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct InputQuery;
-        impl_input_key!(InputQuery, MemoryDatabase<Self>, Range<u64>);
+        struct TextInput;
+        impl_input_key!(TextInput, MemoryDatabase<Self>, String);
 
         #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct DifficultQuery {
-            offset: u64,
-        }
-
-        impl Key for DifficultQuery {
-            type Value = u64;
+        struct LengthQuery;
+        impl Key for LengthQuery {
+            type Value = usize;
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, ctx: &handle::Handle<'_>) -> Self::Value {
-                let range = (1..=u16::MAX as u64)
-                    .zip(ctx.query(InputQuery).await)
-                    .map(|(a, b)| a + b);
-                let range = range.clone().zip(range);
+            async fn compute(self, handle: &handle::Handle<'_>) -> Self::Value {
+                LEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
+                handle.query(TextInput).await.len()
+            }
+        }
 
-                range
-                    .map(|(a, b)| if self.offset % 2 == 0 { a / b } else { a * b })
-                    .reduce(|a, b| a.isqrt() * b.isqrt())
-                    .unwrap()
-                    + self.offset
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct EvenQuery;
+        impl Key for EvenQuery {
+            type Value = bool;
+            type Database = MemoryDatabase<Self>;
+
+            async fn compute(self, handle: &handle::Handle<'_>) -> Self::Value {
+                EVEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
+                handle.query(LengthQuery).await % 2 == 0
+            }
+        }
+
+        let mut root = handle::Root::new()
+            .register_default::<TextInput>()
+            .register_default::<LengthQuery>()
+            .register_default::<EvenQuery>();
+
+        root.upcoming().update(&TextInput, "hello".to_string());
+        root.handle().query(EvenQuery).await;
+
+        assert_eq!(LEN_COMPUTES.load(Ordering::Relaxed), 1);
+        assert_eq!(EVEN_COMPUTES.load(Ordering::Relaxed), 1);
+
+        root.upcoming().update(&TextInput, "world".to_string());
+        root.handle().query(EvenQuery).await;
+
+        assert_eq!(LEN_COMPUTES.load(Ordering::Relaxed), 2);
+        assert_eq!(EVEN_COMPUTES.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_dependencies() {
+        static BRANCH_COMPUTES: AtomicUsize = AtomicUsize::new(0);
+
+        #[derive(Debug, PartialEq, Clone)]
+        enum FlagDirection {
+            Left,
+            Right,
+        }
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct FlagInput;
+        impl_input_key!(FlagInput, MemoryDatabase<Self>, FlagDirection);
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct LeftInput;
+        impl_input_key!(LeftInput, MemoryDatabase<Self>, usize);
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct RightInput;
+        impl_input_key!(RightInput, MemoryDatabase<Self>, usize);
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct BranchQuery;
+        impl Key for BranchQuery {
+            type Value = usize;
+            type Database = MemoryDatabase<Self>;
+
+            async fn compute(self, handle: &handle::Handle<'_>) -> Self::Value {
+                BRANCH_COMPUTES.fetch_add(1, Ordering::Relaxed);
+                match handle.query(FlagInput).await {
+                    FlagDirection::Left => handle.query(LeftInput).await,
+                    FlagDirection::Right => handle.query(RightInput).await,
+                }
+            }
+        }
+
+        let mut root = handle::Root::new()
+            .register_default::<FlagInput>()
+            .register_default::<LeftInput>()
+            .register_default::<RightInput>()
+            .register_default::<BranchQuery>();
+
+        root.upcoming().update(&FlagInput, FlagDirection::Left);
+        root.upcoming().update(&LeftInput, 10);
+        root.upcoming().update(&RightInput, 20);
+
+        root.handle().query(BranchQuery).await;
+        assert_eq!(BRANCH_COMPUTES.load(Ordering::Relaxed), 1);
+
+        root.upcoming().update(&RightInput, 99);
+        root.handle().query(BranchQuery).await;
+        assert_eq!(BRANCH_COMPUTES.load(Ordering::Relaxed), 1);
+
+        root.upcoming().update(&FlagInput, FlagDirection::Right);
+        root.handle().query(BranchQuery).await;
+        assert_eq!(BRANCH_COMPUTES.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_compute_synchronization() {
+        static SLOW_COMPUTES: AtomicUsize = AtomicUsize::new(0);
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct SlowQuery;
+        impl Key for SlowQuery {
+            type Value = ();
+            type Database = MemoryDatabase<Self>;
+
+            async fn compute(self, _handle: &handle::Handle<'_>) -> Self::Value {
+                SLOW_COMPUTES.fetch_add(1, Ordering::Relaxed);
+                for _ in 0..50 {
+                    tokio::task::yield_now().await
+                }
+            }
+        }
+
+        let root: Arc<_> = handle::Root::new().register_default::<SlowQuery>().into();
+
+        let mut joinset = JoinSet::new();
+        for _ in 0..20 {
+            let root_clone = root.clone();
+            joinset.spawn(async move { root_clone.handle().query(SlowQuery).await });
+        }
+
+        while let Some(result) = joinset.join_next().await {
+            result.expect("query should not panic")
+        }
+
+        assert_eq!(SLOW_COMPUTES.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn perftest_cpu_query() {
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct RangeInput;
+        impl_input_key!(RangeInput, MemoryDatabase<Self>, Range<u128>);
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct Compution1Query;
+        impl Key for Compution1Query {
+            type Value = u128;
+            type Database = MemoryDatabase<Self>;
+
+            async fn compute(self, handle: &Handle<'_>) -> u128 {
+                handle
+                    .query(RangeInput)
+                    .await
+                    .fold(0, |acc, x| acc.isqrt().wrapping_mul(x))
+            }
+        }
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct Compution2Query;
+        impl Key for Compution2Query {
+            type Value = [char; 16];
+            type Database = MemoryDatabase<Self>;
+
+            async fn compute(self, handle: &Handle<'_>) -> [char; 16] {
+                let bytes = handle
+                    .query(Compution1Query)
+                    .await
+                    .wrapping_pow(u32::MAX)
+                    .to_le_bytes();
+                bytes.map(|byte| byte as char)
+            }
+        }
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct Compution3Query;
+        impl Key for Compution3Query {
+            type Value = [char; 16];
+            type Database = MemoryDatabase<Self>;
+
+            async fn compute(self, handle: &Handle<'_>) -> [char; 16] {
+                const ROWS: usize = 8;
+                const COLUMNS: usize = 16;
+
+                let value = handle.query(Compution1Query).await;
+
+                let mut n_matrix = [[false; COLUMNS]; ROWS];
+                let mut c_matrix = [0 as char; COLUMNS];
+
+                for row in 0..ROWS {
+                    for column in 0..COLUMNS {
+                        let cell = &mut n_matrix[dbg!(row)][dbg!(column)];
+                        let idx = (row * ROWS) + column;
+                        *cell = value >> idx != 0;
+                    }
+
+                    let cell = &mut c_matrix[row];
+                    *cell = n_matrix[row].into_iter().map(|x| x as u8).sum::<u8>() as char;
+                }
+
+                c_matrix
             }
         }
 
         #[derive(Debug, Clone, Hash, Eq, PartialEq)]
         struct RootQuery;
-
         impl Key for RootQuery {
-            type Value = u128;
+            type Value = [[char; 16]; 2048];
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, handle: &handle::Handle<'_>) -> Self::Value {
-                let mut sum = 0;
-                for i in handle.query(InputQuery).await {
-                    sum += handle
-                        .query(DifficultQuery {
-                            offset: i % u16::MAX as u64,
-                        })
-                        .await as u128;
+            async fn compute(self, handle: &handle::Handle<'_>) -> [[char; 16]; 2048] {
+                let mut c_matrix = [[0 as char; 16]; 2048];
+
+                let range = handle.query(RangeInput).await;
+                let even = range.sum::<u128>() % 2 == 0;
+
+                for row in &mut c_matrix {
+                    *row = if even {
+                        handle.query(Compution3Query).await
+                    } else {
+                        handle.query(Compution2Query).await
+                    }
                 }
 
-                sum
+                c_matrix
             }
         }
 
-        let root = handle::Root::new()
-            .register::<RootQuery>(Default::default())
-            .register::<DifficultQuery>(Default::default())
-            .register::<InputQuery>(Default::default());
+        async fn perform(mut root: handle::Root, range: Range<u128>) -> handle::Root {
+            root.upcoming().update(&RangeInput, range);
+            std::hint::black_box(root.handle().query(RootQuery).await);
+            root
+        }
 
-        let perform = async |mut root: handle::Root, range| {
-            root.upcoming().update(&InputQuery, range);
+        let mut root = handle::Root::new()
+            .register_default::<RangeInput>()
+            .register_default::<Compution1Query>()
+            .register_default::<Compution2Query>()
+            .register_default::<Compution3Query>()
+            .register_default::<RootQuery>();
 
-            let mut joinset = JoinSet::new();
-            let root = Arc::new(root);
-
-            for _ in 0..50 {
-                let root = root.clone();
-                joinset.spawn(async move { root.handle().query(RootQuery).await });
-            }
-
-            let mut sum = 0;
-            while let Some(value) = joinset.join_next().await {
-                sum += value.expect("query should not panic");
-            }
-
-            let root = Arc::into_inner(root).expect("no more references to root should be held");
-            (root, sum)
-        };
-
-        let (root, result) = perform(root, 0..1000).await;
-        println!("result 1: {result:?}");
-
-        let (root, result) = perform(root, 500..1500).await;
-        println!("result 2: {result:?}");
-
-        let (_, result) = perform(root, 0..2000).await;
-        println!("result 3: {result:?}");
-
-        panic!()
+        let max = 2u128.pow(24);
+        for _ in 0..256 {
+            root = perform(root, 0..max / 2).await;
+            root = perform(root, max / 2..max).await;
+            root = perform(root, 0..max).await;
+        }
     }
 
     #[test]
-    fn expensive_normal() {
-        static INPUT: Mutex<Option<Range<u64>>> = Mutex::new(None);
-        fn input() -> Range<u64> {
-            INPUT
-                .lock()
-                .unwrap()
-                .as_ref()
-                .expect("input should be set")
-                .clone()
+    fn test_query_convergence() {
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct Input1;
+        impl_input_key!(Input1, MemoryDatabase<Self>, u64);
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct Input2;
+        impl_input_key!(Input2, MemoryDatabase<Self>, u64);
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct Input3;
+        impl_input_key!(Input3, MemoryDatabase<Self>, u64);
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct Input4;
+        impl_input_key!(Input4, MemoryDatabase<Self>, u64);
+
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct Mutation1Query;
+        impl Key for Mutation1Query {
+            type Value = u64;
+            type Database = MemoryDatabase<Self>;
+
+            async fn compute(self, handle: &handle::Handle<'_>) -> u64 {
+                let lhs = handle.query(Input1).await;
+                let rhs = handle.query(Input2).await;
+                lhs.wrapping_add(rhs)
+            }
         }
 
-        fn difficult(offset: u64) -> u64 {
-            let range = (1..=u16::MAX as u64).zip(input()).map(|(a, b)| a + b);
-            let range = range.clone().zip(range);
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct Mutation2Query;
+        impl Key for Mutation2Query {
+            type Value = u64;
+            type Database = MemoryDatabase<Self>;
 
-            range
-                .map(|(a, b)| if offset % 2 == 0 { a / b } else { a * b })
-                .reduce(|a, b| a.isqrt() * b.isqrt())
-                .unwrap()
-                + offset
+            async fn compute(self, handle: &handle::Handle<'_>) -> u64 {
+                let lhs = handle.query(Input3).await;
+                let rhs = handle.query(Input4).await;
+                lhs.wrapping_mul(rhs)
+            }
         }
 
-        fn root() -> u128 {
-            input()
-                .into_par_iter()
-                .map(|i| difficult(i % u16::MAX as u64) as u128)
-                .sum()
+        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+        struct RootQuery;
+        impl Key for RootQuery {
+            type Value = u64;
+            type Database = MemoryDatabase<Self>;
+
+            async fn compute(self, handle: &handle::Handle<'_>) -> u64 {
+                let m1 = handle.query(Mutation1Query).await;
+                if m1 % 2 == 0 {
+                    m1.wrapping_mul(10)
+                } else {
+                    handle.query(Mutation2Query).await
+                }
+            }
         }
 
-        fn perform(range: Range<u64>) -> u128 {
-            *INPUT.lock().unwrap() = Some(range);
-            (0..50).into_par_iter().map(|_| root()).sum()
+        async fn inner(u: &mut arbitrary::Unstructured<'_>) -> Result<(), arbitrary::Error> {
+            let mut root = handle::Root::new()
+                .register_default::<Input1>()
+                .register_default::<Input2>()
+                .register_default::<Input3>()
+                .register_default::<Input4>()
+                .register_default::<Mutation1Query>()
+                .register_default::<Mutation2Query>()
+                .register_default::<RootQuery>();
+
+            let mut input1 = 0;
+            let mut input2 = 0;
+            let mut input3 = 0;
+            let mut input4 = 0;
+
+            root.upcoming().update(&Input1, input1);
+            root.upcoming().update(&Input2, input2);
+            root.upcoming().update(&Input3, input3);
+            root.upcoming().update(&Input4, input4);
+
+            for _ in 0..=u.arbitrary_len::<usize>()? {
+                let mut upcoming = root.upcoming();
+
+                let value = u.arbitrary::<u64>()?;
+                match u.choose_index(4)? {
+                    0 => {
+                        input1 = value;
+                        upcoming.update(&Input1, value);
+                    }
+                    1 => {
+                        input2 = value;
+                        upcoming.update(&Input2, value);
+                    }
+                    2 => {
+                        input3 = value;
+                        upcoming.update(&Input3, value);
+                    }
+                    3 => {
+                        input4 = value;
+                        upcoming.update(&Input4, value);
+                    }
+                    _ => unreachable!(),
+                }
+
+                let actual = root.handle().query(RootQuery).await;
+
+                let mutation_1 = input1.wrapping_add(input2);
+                let expected = if mutation_1 % 2 == 0 {
+                    mutation_1.wrapping_mul(10)
+                } else {
+                    input3.wrapping_mul(input4)
+                };
+
+                assert_eq!(
+                    actual, expected,
+                    "queried computation diverged from real computation"
+                );
+            }
+
+            Ok::<_, arbitrary::Error>(())
         }
 
-        let result = perform(0..1000);
-        eprintln!("result 1: {result}");
-
-        let result = perform(500..1500);
-        eprintln!("result 2: {result}");
-
-        let result = perform(0..2000);
-        eprintln!("result 3: {result}");
-
-        panic!()
+        arbtest::arbtest(|u| {
+            Runtime::new()
+                .expect("should be able to create tokio runtime")
+                .block_on(inner(u))
+        });
     }
 }

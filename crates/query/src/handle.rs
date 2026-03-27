@@ -48,6 +48,14 @@ impl Root {
         Upcoming { store }
     }
 
+    pub fn register_default<K>(self) -> Self
+    where
+        K: Key,
+        K::Database: Default,
+    {
+        self.register::<K>(K::Database::default())
+    }
+
     pub fn register<K: Key>(mut self, database: K::Database) -> Self {
         let store = self.store_mut();
         store.register(database);
