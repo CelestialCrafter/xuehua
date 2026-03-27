@@ -1,8 +1,11 @@
+//! Engine accessors and action execution
+
 use std::{
     fmt::Debug,
     sync::{Arc, Mutex, atomic::Ordering},
 };
 
+use educe::Educe;
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -10,24 +13,15 @@ use crate::{
     store::{Database, Store},
 };
 
-#[derive(Debug)]
+/// This handle owns the engine, and loans out [`Upcoming`] and [`Handle`]s to utilize it.
+#[derive(Debug, Educe)]
+#[educe(Default(new))]
 pub struct Root {
     store: Arc<Store>,
 }
 
-impl Default for Root {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Root {
-    pub fn new() -> Self {
-        Self {
-            store: Arc::default(),
-        }
-    }
-
+    /// Loan out a [`Handle`] to query the engine
     pub fn handle(&self) -> Handle<'_> {
         Handle {
             store: &self.store,
@@ -39,6 +33,7 @@ impl Root {
         Arc::get_mut(&mut self.store).expect("store should not have outstanding references")
     }
 
+    /// Loan out an [`Upcoming`] to mutate the engine
     pub fn upcoming(&mut self) -> Upcoming<'_> {
         let store = self.store_mut();
         store.revision = store
@@ -48,27 +43,31 @@ impl Root {
         Upcoming { store }
     }
 
+    /// Helper function for databases that implement [`Default`]
     pub fn register_default<K>(self) -> Self
     where
         K: Key,
         K::Database: Default,
     {
-        self.register::<K>(K::Database::default())
+        self.register(K::Database::default())
     }
 
-    pub fn register<K: Key>(mut self, database: K::Database) -> Self {
+    /// Registers a database into the engine
+    pub fn register(mut self, database: impl Database) -> Self {
         let store = self.store_mut();
         store.register(database);
         self
     }
 }
 
+/// Handle to mutate the values for an upcoming revision
 #[derive(Debug)]
 pub struct Upcoming<'a> {
     store: &'a mut Store,
 }
 
 impl Upcoming<'_> {
+    /// Update the value for any given key
     pub fn update<K: Key>(&mut self, key: &K, value: K::Value) {
         let database = self.store.database_of::<K>();
         let idx = database.index_of(key);
@@ -83,6 +82,7 @@ impl Upcoming<'_> {
     }
 }
 
+/// Handle to the current revision
 #[derive(Debug)]
 pub struct Handle<'a> {
     pub(crate) store: &'a Arc<Store>,
@@ -90,6 +90,7 @@ pub struct Handle<'a> {
 }
 
 impl Handle<'_> {
+    /// Queries the engine for the memoized value computed from `key`
     pub async fn query<K: Key>(&self, key: K) -> K::Value {
         let database = self.store.database_of::<K>();
         let idx = database.index_of(&key);

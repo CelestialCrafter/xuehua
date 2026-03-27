@@ -1,3 +1,14 @@
+#![warn(missing_docs)]
+
+//! # Xuehua Query Engine
+//!
+//! This crate provides a tokio-based incremental computation engine
+//!
+//! The engine is instantiated with the [`Root`](handle::Root),
+//! which can then be used to:
+//! - [`Root::upcoming`](handle::Root::upcoming): Update the engine
+//! - [`Root::handle`](handle::Root::handle): Query the engine
+
 pub mod handle;
 pub mod store;
 
@@ -5,13 +16,18 @@ use std::{any::TypeId, fmt, hash::Hash};
 
 use crate::store::Database;
 
+/// The arguments of some memoized computation
 pub trait Key: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
+    /// The resulting value of the computation
     type Value: Value;
+    /// The backing storage for computed values
     type Database: Database<Key = Self, Value = Self::Value>;
 
+    /// Returns the computed value for this key
     fn compute(self, handle: &handle::Handle) -> impl Future<Output = Self::Value> + Send;
 }
 
+/// Helper macro to implement "input keys"
 #[macro_export]
 macro_rules! impl_input_key {
     ($ty:ty, $db:ty, $value:ty) => {
@@ -26,17 +42,21 @@ macro_rules! impl_input_key {
     };
 }
 
+/// Marker trait to ensure bounds of [`Key::Value`]
 pub trait Value: fmt::Debug + PartialEq + Clone + Send + Sync + 'static {}
 impl<T: fmt::Debug + PartialEq + Clone + Send + Sync + 'static> Value for T {}
 
+/// Cheaply clonable index to any given key
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct KeyIndex(usize, TypeId);
 
 impl KeyIndex {
+    /// Constructs a new [`KeyIndex`]
     pub fn new<T: 'static>(idx: usize) -> Self {
         KeyIndex(idx, TypeId::of::<T>())
     }
 
+    /// Retrieves the underlying index within this [`KeyIndex`]
     pub fn idx(self) -> usize {
         self.0
     }

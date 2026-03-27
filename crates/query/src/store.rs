@@ -1,3 +1,5 @@
+//! Storage for query data
+
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
@@ -17,6 +19,7 @@ use tokio::{sync::Semaphore, task::JoinSet};
 
 use crate::{Key, KeyIndex, Value, handle::Handle};
 
+/// Current state for a memoized key
 #[derive(Debug, Educe)]
 #[educe(Default)]
 pub struct Memo {
@@ -143,18 +146,33 @@ impl Store {
     }
 }
 
+/// Trait for storage of computed values
+///
+/// Implementors must ensure that the database operates logically
+/// (eg. after set_value, value_of should return Some)
 pub trait Database: Send + Sync + 'static {
+    /// Keys the database designed to store
     type Key: Key<Value = Self::Value, Database = Self>;
+    /// Values the database designed to store
     type Value: Value;
 
+    /// Returns the index or identifier of a given key
     fn index_of(&self, key: &Self::Key) -> KeyIndex;
+
+    /// Returns the key at a given index
     fn key_of(&self, idx: KeyIndex) -> Option<&Self::Key>;
+
+    /// Returns the value at a given index
     fn value_of(&self, idx: KeyIndex) -> Option<Self::Value>;
+
+    /// Returns the memo at a given index
     fn memo_of(&self, idx: KeyIndex) -> &Memo;
 
+    /// Updates the value at a given index
     fn set_value(&self, idx: KeyIndex, value: Self::Value);
 }
 
+/// Simple generic in-memory database
 #[derive(Educe)]
 #[educe(Default(new, bound(S: Default)))]
 pub struct MemoryDatabase<K: Key, S: Default = RandomState> {
