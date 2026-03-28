@@ -8,10 +8,7 @@ use std::{
 use educe::Educe;
 use rustc_hash::FxHashSet;
 
-use crate::{
-    Key, KeyIndex,
-    store::{Database, Store},
-};
+use crate::{Key, KeyIndex, database::Database, store::Store};
 
 /// This handle owns the engine, and loans out [`Upcoming`] and [`Handle`]s to utilize it.
 #[derive(Debug, Educe)]

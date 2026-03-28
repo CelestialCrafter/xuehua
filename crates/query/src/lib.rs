@@ -6,15 +6,16 @@
 //!
 //! The engine is instantiated with the [`Root`](handle::Root),
 //! which can then be used to:
-//! - [`Root::upcoming`](handle::Root::upcoming): Update the engine
-//! - [`Root::handle`](handle::Root::handle): Query the engine
+//! - [`Upcoming`](handle::Upcoming): Update the engine
+//! - [`Handle`](handle::Handle): Query the engine
 
+pub mod database;
 pub mod handle;
-pub mod store;
+mod store;
 
 use std::{any::TypeId, fmt, hash::Hash};
 
-use crate::store::Database;
+use crate::database::Database;
 
 /// The arguments of some memoized computation
 pub trait Key: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
@@ -43,8 +44,8 @@ macro_rules! impl_input_key {
 }
 
 /// Marker trait to ensure bounds of [`Key::Value`]
-pub trait Value: fmt::Debug + PartialEq + Clone + Send + Sync + 'static {}
-impl<T: fmt::Debug + PartialEq + Clone + Send + Sync + 'static> Value for T {}
+pub trait Value: fmt::Debug + PartialEq + Clone + Send + Sync {}
+impl<T: fmt::Debug + PartialEq + Clone + Send + Sync> Value for T {}
 
 /// Cheaply clonable index to any given key
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
@@ -62,11 +63,7 @@ mod tests {
 
     use tokio::{runtime::Runtime, task::JoinSet};
 
-    use crate::{
-        Key,
-        handle::{self, Handle},
-        store::MemoryDatabase,
-    };
+    use crate::{Key, database::MemoryDatabase, handle};
 
     #[tokio::test]
     async fn test_early_cutoff() {
@@ -223,7 +220,7 @@ mod tests {
             type Value = u128;
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, handle: &Handle<'_>) -> u128 {
+            async fn compute(self, handle: &handle::Handle<'_>) -> u128 {
                 handle
                     .query(RangeInput)
                     .await
@@ -237,7 +234,7 @@ mod tests {
             type Value = [char; 16];
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, handle: &Handle<'_>) -> [char; 16] {
+            async fn compute(self, handle: &handle::Handle<'_>) -> [char; 16] {
                 let bytes = handle
                     .query(Compution1Query)
                     .await
@@ -253,7 +250,7 @@ mod tests {
             type Value = [char; 16];
             type Database = MemoryDatabase<Self>;
 
-            async fn compute(self, handle: &Handle<'_>) -> [char; 16] {
+            async fn compute(self, handle: &handle::Handle<'_>) -> [char; 16] {
                 const ROWS: usize = 8;
                 const COLUMNS: usize = 16;
 

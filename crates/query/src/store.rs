@@ -1,10 +1,6 @@
-//! Storage for query data
-
 use std::{
     any::{Any, TypeId},
-    collections::HashMap,
     fmt,
-    hash::{BuildHasher, RandomState},
     num::NonZeroUsize,
     sync::{
         Arc, Mutex,
@@ -17,14 +13,14 @@ use futures_util::{FutureExt, future::BoxFuture};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tokio::{sync::Semaphore, task::JoinSet};
 
-use crate::{Key, KeyIndex, Value, handle::Handle};
+use crate::{Key, KeyIndex, database::Database, handle::Handle};
 
 #[derive(Debug, Educe)]
 #[educe(Default)]
 pub struct Memo {
-    pub(crate) verified_at: AtomicUsize,
-    pub(crate) changed_at: AtomicUsize,
-    pub(crate) dependencies: Mutex<FxHashSet<KeyIndex>>,
+    pub verified_at: AtomicUsize,
+    pub changed_at: AtomicUsize,
+    pub dependencies: Mutex<FxHashSet<KeyIndex>>,
     #[educe(Default(expr = Semaphore::new(1)))]
     computing: Semaphore,
 }
@@ -150,69 +146,5 @@ impl Store {
         self.databases
             .entry(database.type_id())
             .or_insert_with(|| Box::new(database));
-    }
-}
-
-/// Trait for storage of computed values
-///
-/// Implementors must ensure that the database operates logically
-/// (eg. after set_value, value_of should return Some)
-pub trait Database: Send + Sync + 'static {
-    /// Keys the database designed to store
-    type Key: Key<Value = Self::Value, Database = Self>;
-    /// Values the database designed to store
-    type Value: Value;
-
-    /// Returns the index or identifier of a given key
-    fn index_of(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex;
-    /// Returns the key at a given index
-    fn key_of(&self, idx: KeyIndex) -> Option<Self::Key>;
-
-    /// Returns the Value at a given index
-    fn value_of(&self, idx: KeyIndex) -> Option<Self::Value>;
-
-    /// Updates the value at a given index
-    fn set_value(&self, idx: KeyIndex, value: Self::Value);
-}
-
-/// Simple generic in-memory database
-#[derive(Educe)]
-#[educe(Default(new, bound(S: Default)))]
-pub struct MemoryDatabase<K: Key, S: Default = RandomState> {
-    lookup: Mutex<HashMap<K, KeyIndex, S>>,
-    keys: Mutex<HashMap<KeyIndex, K, S>>,
-    values: Mutex<HashMap<KeyIndex, K::Value, S>>,
-}
-
-impl<K: Key<Database = Self>, S: Default + BuildHasher + Send + Sync + 'static> Database
-    for MemoryDatabase<K, S>
-{
-    type Key = K;
-    type Value = K::Value;
-
-    fn index_of(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex {
-        let mut lookup = self.lookup.lock().unwrap();
-        if let Some(idx) = lookup.get(key).copied() {
-            return idx;
-        }
-
-        let idx = new();
-        let mut keys = self.keys.lock().unwrap();
-        lookup.insert(key.clone(), idx);
-        keys.insert(idx, key.clone());
-
-        idx
-    }
-
-    fn key_of(&self, idx: KeyIndex) -> Option<Self::Key> {
-        self.keys.lock().unwrap().get(&idx).cloned()
-    }
-
-    fn value_of(&self, idx: KeyIndex) -> Option<Self::Value> {
-        self.values.lock().unwrap().get(&idx).cloned()
-    }
-
-    fn set_value(&self, idx: KeyIndex, value: Self::Value) {
-        self.values.lock().unwrap().insert(idx, value);
     }
 }
