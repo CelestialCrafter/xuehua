@@ -28,18 +28,53 @@ pub trait Key: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
     fn compute(self, handle: &handle::Handle) -> impl Future<Output = Self::Value> + Send;
 }
 
-/// Helper macro to implement "input keys"
+#[doc(hidden)]
+pub async fn _input_query<K>(_input: K, _handle: &handle::Handle<'_>) -> ! {
+    panic!("QueryKey::compute() should not be called on an input key")
+}
+
+/// Helper macro to implement query keys
 #[macro_export]
-macro_rules! impl_input_key {
-    ($ty:ty, $db:ty, $value:ty) => {
-        impl $crate::Key for $ty {
+macro_rules! query_key {
+    (internal impl $name:ident, $value:ty, $db:ty, $compute:path) => {
+        impl $crate::Key for $name {
             type Value = $value;
             type Database = $db;
 
-            async fn compute(self, _ctx: &$crate::handle::Handle<'_>) -> Self::Value {
-                panic!("QueryKey::compute() should not be called on an input key")
+            async fn compute(self, handle: &$crate::handle::Handle<'_>) -> Self::Value {
+                $compute(self, handle).await
             }
         }
+    };
+
+    ($visibility:vis $name:ident -> $value:ty [input, $db:ty]) => {
+        query_key!($visibility $name -> $value [$crate::_input_query, $db])
+    };
+
+    ($visibility:vis $name:ident -> $value:ty [$compute:path, $db:ty]) => {
+        // TODO: expand to full names
+        #[derive(::std::fmt::Debug, ::std::clone::Clone, ::std::hash::Hash, ::std::cmp::PartialEq, ::std::cmp::Eq)]
+        $visibility struct $name;
+
+        query_key!(internal impl $name, $value, $db, $compute)
+    };
+
+    ($visibility:vis $name:ident($($argvalue:ty),*) -> $value:ty [$compute:path, $db:ty]) => {
+        // TODO: expand to full names
+        #[derive(::std::fmt::Debug, ::std::clone::Clone, ::std::hash::Hash, ::std::cmp::PartialEq, ::std::cmp::Eq)]
+        $visibility struct $name ($(pub $argvalue,)*);
+
+        query_key!(internal impl $name, $value, $db, $compute)
+    };
+
+    ($visibility:vis $name:ident($($argname:ident: $argvalue:ty),*) -> $value:ty [$compute:path, $db:ty]) => {
+        // TODO: expand to full names
+        #[derive(::std::fmt::Debug, ::std::clone::Clone, ::std::hash::Hash, ::std::cmp::PartialEq, ::std::cmp::Eq)]
+        $visibility struct $name {
+            $(pub $argname: $argvalue,)*
+        }
+
+        query_key!(internal impl $name, $value, $db, $compute)
     };
 }
 
@@ -82,29 +117,19 @@ mod tests {
         static LEN_COMPUTES: AtomicUsize = AtomicUsize::new(0);
         static EVEN_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct TextInput;
-        impl_input_key!(TextInput, MemoryDatabase<Self>, String);
+        query_key!(TextInput -> String [input, MemoryDatabase<Self>]);
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct LengthQuery;
-        impl Key for LengthQuery {
-            type Value = usize;
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, handle: &handle::Handle<'_>) -> Self::Value {
+        query_key!(LengthQuery -> usize [Self::inner, MemoryDatabase<Self>]);
+        impl LengthQuery {
+            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 LEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
                 handle.query(TextInput).await.len()
             }
         }
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct EvenQuery;
-        impl Key for EvenQuery {
-            type Value = bool;
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, handle: &handle::Handle<'_>) -> Self::Value {
+        query_key!(EvenQuery -> bool [Self::inner, MemoryDatabase<Self>]);
+        impl EvenQuery {
+            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 EVEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
                 handle.query(LengthQuery).await % 2 == 0
             }
@@ -138,25 +163,13 @@ mod tests {
             Right,
         }
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct FlagInput;
-        impl_input_key!(FlagInput, MemoryDatabase<Self>, FlagDirection);
+        query_key!(FlagInput -> FlagDirection [input, MemoryDatabase<Self>]);
+        query_key!(LeftInput -> usize [input, MemoryDatabase<Self>]);
+        query_key!(RightInput -> usize [input, MemoryDatabase<Self>]);
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct LeftInput;
-        impl_input_key!(LeftInput, MemoryDatabase<Self>, usize);
-
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct RightInput;
-        impl_input_key!(RightInput, MemoryDatabase<Self>, usize);
-
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct BranchQuery;
-        impl Key for BranchQuery {
-            type Value = usize;
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, handle: &handle::Handle<'_>) -> Self::Value {
+        query_key!(BranchQuery -> usize [Self::inner, MemoryDatabase<Self>]);
+        impl BranchQuery {
+            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 BRANCH_COMPUTES.fetch_add(1, Ordering::Relaxed);
                 match handle.query(FlagInput).await {
                     FlagDirection::Left => handle.query(LeftInput).await,
@@ -191,15 +204,11 @@ mod tests {
     async fn test_compute_synchronization() {
         static SLOW_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct SlowQuery;
-        impl Key for SlowQuery {
-            type Value = ();
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, _handle: &handle::Handle<'_>) -> Self::Value {
+        query_key!(SlowQuery -> () [Self::inner, MemoryDatabase<Self>]);
+        impl SlowQuery {
+            async fn inner(self, _handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 SLOW_COMPUTES.fetch_add(1, Ordering::Relaxed);
-                for _ in 0..50 {
+                for _ in 0..64 {
                     tokio::task::yield_now().await
                 }
             }
@@ -208,7 +217,7 @@ mod tests {
         let root: Arc<_> = handle::Root::new().register_default::<SlowQuery>().into();
 
         let mut joinset = JoinSet::new();
-        for _ in 0..20 {
+        for _ in 0..16 {
             let root_clone = root.clone();
             joinset.spawn(async move { root_clone.handle().query(SlowQuery).await });
         }
@@ -222,17 +231,11 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn perftest_cpu_query() {
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct RangeInput;
-        impl_input_key!(RangeInput, MemoryDatabase<Self>, Range<u128>);
+        query_key!(RangeInput -> Range<u128> [input, MemoryDatabase<Self>]);
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct Compution1Query;
-        impl Key for Compution1Query {
-            type Value = u128;
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, handle: &handle::Handle<'_>) -> u128 {
+        query_key!(Compution1Query -> u128 [Self::inner, MemoryDatabase<Self>]);
+        impl Compution1Query {
+            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 handle
                     .query(RangeInput)
                     .await
@@ -240,13 +243,9 @@ mod tests {
             }
         }
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct Compution2Query;
-        impl Key for Compution2Query {
-            type Value = [char; 16];
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, handle: &handle::Handle<'_>) -> [char; 16] {
+        query_key!(Compution2Query -> [char; 16] [Self::inner, MemoryDatabase<Self>]);
+        impl Compution2Query {
+            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 let bytes = handle
                     .query(Compution1Query)
                     .await
@@ -256,13 +255,9 @@ mod tests {
             }
         }
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct Compution3Query;
-        impl Key for Compution3Query {
-            type Value = [char; 16];
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, handle: &handle::Handle<'_>) -> [char; 16] {
+        query_key!(Compution3Query -> [char; 16] [Self::inner, MemoryDatabase<Self>]);
+        impl Compution3Query {
+            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 const ROWS: usize = 8;
                 const COLUMNS: usize = 16;
 
@@ -273,7 +268,7 @@ mod tests {
 
                 for row in 0..ROWS {
                     for column in 0..COLUMNS {
-                        let cell = &mut n_matrix[dbg!(row)][dbg!(column)];
+                        let cell = &mut n_matrix[row][column];
                         let idx = (row * ROWS) + column;
                         *cell = value >> idx != 0;
                     }
@@ -286,14 +281,10 @@ mod tests {
             }
         }
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct RootQuery;
-        impl Key for RootQuery {
-            type Value = [[char; 16]; 2048];
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, handle: &handle::Handle<'_>) -> [[char; 16]; 2048] {
-                let mut c_matrix = [[0 as char; 16]; 2048];
+        query_key!(RootQuery -> Vec<[char; 16]> [Self::inner, MemoryDatabase<Self>]);
+        impl RootQuery {
+            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
+                let mut c_matrix = vec![[0 as char; 16]; 8192];
 
                 let range = handle.query(RangeInput).await;
                 let even = range.sum::<u128>() % 2 == 0;
@@ -312,7 +303,7 @@ mod tests {
 
         async fn perform(mut root: handle::Root, range: Range<u128>) -> handle::Root {
             root.upcoming().update(&RangeInput, range);
-            std::hint::black_box(root.handle().query(RootQuery).await);
+            root.handle().query(RootQuery).await;
             root
         }
 
@@ -333,55 +324,32 @@ mod tests {
 
     #[test]
     fn test_query_convergence() {
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct Input1;
-        impl_input_key!(Input1, MemoryDatabase<Self>, u64);
+        query_key!(Input1 -> u64 [input, MemoryDatabase<Self>]);
+        query_key!(Input2 -> u64 [input, MemoryDatabase<Self>]);
+        query_key!(Input3 -> u64 [input, MemoryDatabase<Self>]);
+        query_key!(Input4 -> u64 [input, MemoryDatabase<Self>]);
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct Input2;
-        impl_input_key!(Input2, MemoryDatabase<Self>, u64);
-
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct Input3;
-        impl_input_key!(Input3, MemoryDatabase<Self>, u64);
-
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct Input4;
-        impl_input_key!(Input4, MemoryDatabase<Self>, u64);
-
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct Mutation1Query;
-        impl Key for Mutation1Query {
-            type Value = u64;
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, handle: &handle::Handle<'_>) -> u64 {
+        query_key!(Mutation1Query -> u64 [Self::inner, MemoryDatabase<Self>]);
+        impl Mutation1Query {
+            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 let lhs = handle.query(Input1).await;
                 let rhs = handle.query(Input2).await;
                 lhs.wrapping_add(rhs)
             }
         }
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct Mutation2Query;
-        impl Key for Mutation2Query {
-            type Value = u64;
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, handle: &handle::Handle<'_>) -> u64 {
+        query_key!(Mutation2Query -> u64 [Self::inner, MemoryDatabase<Self>]);
+        impl Mutation2Query {
+            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 let lhs = handle.query(Input3).await;
                 let rhs = handle.query(Input4).await;
                 lhs.wrapping_mul(rhs)
             }
         }
 
-        #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-        struct RootQuery;
-        impl Key for RootQuery {
-            type Value = u64;
-            type Database = MemoryDatabase<Self>;
-
-            async fn compute(self, handle: &handle::Handle<'_>) -> u64 {
+        query_key!(RootQuery -> u64 [Self::inner, MemoryDatabase<Self>]);
+        impl RootQuery {
+            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 let m1 = handle.query(Mutation1Query).await;
                 if m1 % 2 == 0 {
                     m1.wrapping_mul(10)
