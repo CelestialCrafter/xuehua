@@ -28,7 +28,6 @@ pub struct Memo {
 #[derive(Educe, Debug)]
 #[educe(Default)]
 pub struct Store {
-    // NOTE: potentially store memo next to the database
     databases: FxHashMap<TypeId, Box<dyn DynDatabase>>,
     pub memos: boxcar::Vec<Memo>,
     // index_of depends on revision 0 being non-existent
@@ -61,7 +60,7 @@ impl Store {
             .expect("database should be registered");
 
         (database.as_ref() as &dyn Any)
-            .downcast_ref::<K::Database>()
+            .downcast_ref()
             .expect("database should be of type K::Database")
     }
 

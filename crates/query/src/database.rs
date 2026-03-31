@@ -1,14 +1,13 @@
 //! Query key, value, and memo storage
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     hash::{BuildHasher, RandomState},
     sync::Mutex,
 };
 
-use educe::Educe;
-
 use crate::{Key, KeyIndex, Value};
+use educe::Educe;
 
 /// Trait for storage of computed values
 ///
@@ -16,7 +15,7 @@ use crate::{Key, KeyIndex, Value};
 /// (eg. after `set_value`, `value_of` should return Some)
 pub trait Database: Send + Sync + 'static {
     /// Keys the database designed to store
-    type Key: Key<Value = Self::Value, Database = Self>;
+    type Key: Key<Value = Self::Value>;
     /// Values the database designed to store
     type Value: Value;
 
@@ -30,22 +29,22 @@ pub trait Database: Send + Sync + 'static {
     fn value_of(&self, idx: KeyIndex) -> Option<Self::Value>;
 
     /// Updates the value at a given index
-    fn set_value(&self, idx: KeyIndex, value: Self::Value);
+    fn set_value(&self, idx: KeyIndex, value: Self::Value) -> bool;
 }
 
 /// Simple generic in-memory database
 #[derive(Educe)]
 #[educe(Default(new, bound(S: Default)))]
-pub struct MemoryDatabase<K: Key, S: Default = RandomState> {
+pub struct InMemory<K: Key, S = RandomState> {
     lookup: Mutex<HashMap<K, KeyIndex, S>>,
     keys: Mutex<HashMap<KeyIndex, K, S>>,
     values: Mutex<HashMap<KeyIndex, K::Value, S>>,
 }
 
-impl<K, S> Database for MemoryDatabase<K, S>
+impl<K, S> Database for InMemory<K, S>
 where
     K: Key<Database = Self>,
-    S: Default + BuildHasher + Send + Sync + 'static,
+    S: BuildHasher + Send + Sync + 'static,
 {
     type Key = K;
     type Value = K::Value;
@@ -72,7 +71,21 @@ where
         self.values.lock().unwrap().get(&idx).cloned()
     }
 
-    fn set_value(&self, idx: KeyIndex, value: Self::Value) {
-        self.values.lock().unwrap().insert(idx, value);
+    fn set_value(&self, idx: KeyIndex, value: Self::Value) -> bool {
+        match self.values.lock().unwrap().entry(idx) {
+            Entry::Occupied(mut occupied) => {
+                let current = occupied.get_mut();
+                if *current != value {
+                    *current = value;
+                    true
+                } else {
+                    false
+                }
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(value);
+                true
+            }
+        }
     }
 }

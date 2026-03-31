@@ -98,16 +98,16 @@ mod tests {
 
     use tokio::{runtime::Runtime, task::JoinSet};
 
-    use crate::{Key, database::MemoryDatabase, handle};
+    use crate::{Key, database, handle};
 
     #[tokio::test]
     async fn test_early_cutoff() {
         static LEN_COMPUTES: AtomicUsize = AtomicUsize::new(0);
         static EVEN_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-        query_key!(TextInput -> String [input, MemoryDatabase<Self>]);
+        query_key!(TextInput -> String [input, database::InMemory<Self>]);
 
-        query_key!(LengthQuery -> usize [Self::inner, MemoryDatabase<Self>]);
+        query_key!(LengthQuery -> usize [Self::inner, database::InMemory<Self>]);
         impl LengthQuery {
             async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 LEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
@@ -115,7 +115,7 @@ mod tests {
             }
         }
 
-        query_key!(EvenQuery -> bool [Self::inner, MemoryDatabase<Self>]);
+        query_key!(EvenQuery -> bool [Self::inner, database::InMemory<Self>]);
         impl EvenQuery {
             async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 EVEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
@@ -151,11 +151,11 @@ mod tests {
             Right,
         }
 
-        query_key!(FlagInput -> FlagDirection [input, MemoryDatabase<Self>]);
-        query_key!(LeftInput -> usize [input, MemoryDatabase<Self>]);
-        query_key!(RightInput -> usize [input, MemoryDatabase<Self>]);
+        query_key!(FlagInput -> FlagDirection [input, database::InMemory<Self>]);
+        query_key!(LeftInput -> usize [input, database::InMemory<Self>]);
+        query_key!(RightInput -> usize [input, database::InMemory<Self>]);
 
-        query_key!(BranchQuery -> usize [Self::inner, MemoryDatabase<Self>]);
+        query_key!(BranchQuery -> usize [Self::inner, database::InMemory<Self>]);
         impl BranchQuery {
             async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 BRANCH_COMPUTES.fetch_add(1, Ordering::Relaxed);
@@ -192,7 +192,7 @@ mod tests {
     async fn test_compute_synchronization() {
         static SLOW_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-        query_key!(SlowQuery -> () [Self::inner, MemoryDatabase<Self>]);
+        query_key!(SlowQuery -> () [Self::inner, database::InMemory<Self>]);
         impl SlowQuery {
             async fn inner(self, _handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 SLOW_COMPUTES.fetch_add(1, Ordering::Relaxed);
@@ -219,9 +219,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn perftest_cpu_query() {
-        query_key!(RangeInput -> Range<u128> [input, MemoryDatabase<Self>]);
+        query_key!(RangeInput -> Range<u128> [input, database::InMemory<Self>]);
 
-        query_key!(Compution1Query -> u128 [Self::inner, MemoryDatabase<Self>]);
+        query_key!(Compution1Query -> u128 [Self::inner, database::InMemory<Self>]);
         impl Compution1Query {
             async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 handle
@@ -231,7 +231,7 @@ mod tests {
             }
         }
 
-        query_key!(Compution2Query -> [char; 16] [Self::inner, MemoryDatabase<Self>]);
+        query_key!(Compution2Query -> [char; 16] [Self::inner, database::InMemory<Self>]);
         impl Compution2Query {
             async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 let bytes = handle
@@ -243,7 +243,7 @@ mod tests {
             }
         }
 
-        query_key!(Compution3Query -> [char; 16] [Self::inner, MemoryDatabase<Self>]);
+        query_key!(Compution3Query -> [char; 16] [Self::inner, database::InMemory<Self>]);
         impl Compution3Query {
             async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 const ROWS: usize = 8;
@@ -269,7 +269,7 @@ mod tests {
             }
         }
 
-        query_key!(RootQuery -> Vec<[char; 16]> [Self::inner, MemoryDatabase<Self>]);
+        query_key!(RootQuery -> Vec<[char; 16]> [Self::inner, database::InMemory<Self>]);
         impl RootQuery {
             async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 let mut c_matrix = vec![[0 as char; 16]; 8192];
@@ -312,12 +312,12 @@ mod tests {
 
     #[test]
     fn test_query_convergence() {
-        query_key!(Input1 -> u64 [input, MemoryDatabase<Self>]);
-        query_key!(Input2 -> u64 [input, MemoryDatabase<Self>]);
-        query_key!(Input3 -> u64 [input, MemoryDatabase<Self>]);
-        query_key!(Input4 -> u64 [input, MemoryDatabase<Self>]);
+        query_key!(Input1 -> u64 [input, database::InMemory<Self>]);
+        query_key!(Input2 -> u64 [input, database::InMemory<Self>]);
+        query_key!(Input3 -> u64 [input, database::InMemory<Self>]);
+        query_key!(Input4 -> u64 [input, database::InMemory<Self>]);
 
-        query_key!(Mutation1Query -> u64 [Self::inner, MemoryDatabase<Self>]);
+        query_key!(Mutation1Query -> u64 [Self::inner, database::InMemory<Self>]);
         impl Mutation1Query {
             async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 let lhs = handle.query(Input1).await;
@@ -326,7 +326,7 @@ mod tests {
             }
         }
 
-        query_key!(Mutation2Query -> u64 [Self::inner, MemoryDatabase<Self>]);
+        query_key!(Mutation2Query -> u64 [Self::inner, database::InMemory<Self>]);
         impl Mutation2Query {
             async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 let lhs = handle.query(Input3).await;
@@ -335,7 +335,7 @@ mod tests {
             }
         }
 
-        query_key!(RootQuery -> u64 [Self::inner, MemoryDatabase<Self>]);
+        query_key!(RootQuery -> u64 [Self::inner, database::InMemory<Self>]);
         impl RootQuery {
             async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
                 let m1 = handle.query(Mutation1Query).await;

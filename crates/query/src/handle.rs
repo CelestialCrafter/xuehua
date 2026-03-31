@@ -105,7 +105,7 @@ impl Handle<'_> {
 
     pub(crate) async fn query_inner<K: Key>(
         &self,
-        database: &K::Database,
+        database: &impl Database<Value = K::Value>,
         key: K,
         idx: KeyIndex,
     ) -> bool {
@@ -114,20 +114,11 @@ impl Handle<'_> {
             dependencies: Mutex::default(),
         };
 
-        let old = database.value_of(idx);
-        let new = key.compute(&child).await;
-
         let revision = self.store.revision.get();
         let memo = &self.store.memos[idx.0];
 
-        let changed = if old.is_some_and(|old| old == new) {
-            false
-        } else {
-            database.set_value(idx, new);
-            memo.changed_at.store(revision, Ordering::Release);
-
-            true
-        };
+        let new = key.compute(&child).await;
+        let changed = database.set_value(idx, new);
 
         let mut deps = memo.dependencies.lock().unwrap();
         *deps = child.dependencies.into_inner().unwrap();
