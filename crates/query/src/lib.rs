@@ -4,32 +4,33 @@
 //!
 //! This crate provides a tokio-based incremental computation engine
 //!
-//! The engine is instantiated with the [`Root`](handle::Root),
+//! The engine is instantiated with the [`Engine`](engine::Engine),
 //! which can then be used to:
-//! - [`Upcoming`](handle::Upcoming): Update the engine
-//! - [`Handle`](handle::Handle): Query the engine
+//! - [`Upcoming`](engine::Upcoming): Update the engine
+//! - [`Context`](engine::Context): Query the engine
 
 pub mod database;
-pub mod handle;
+pub mod engine;
+mod singleflight;
 mod store;
 
-use std::{any::TypeId, fmt, hash::Hash};
+use std::{fmt, hash::Hash};
 
 use crate::database::Database;
 
 /// The arguments of some memoized computation
 pub trait Key: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
     /// The resulting value of the computation
-    type Value: Value;
+    type Value: fmt::Debug + Send + Sync;
     /// The backing storage for computed values
-    type Database: Database<Key = Self, Value = Self::Value>;
+    type Database: Database<Key = Self, InputValue = Self::Value>;
 
     /// Returns the computed value for this key
-    fn compute(self, handle: &handle::Handle) -> impl Future<Output = Self::Value> + Send;
+    fn compute(self, qcx: &engine::Context) -> impl Future<Output = Self::Value> + Send;
 }
 
 #[doc(hidden)]
-pub async fn _input_query<K>(_input: K, _handle: &handle::Handle<'_>) -> ! {
+pub async fn _input_query<K>(_input: K, _qcx: &engine::Context<'_>) -> ! {
     panic!("QueryKey::compute() should not be called on an input key")
 }
 
@@ -41,8 +42,8 @@ macro_rules! query_key {
             type Value = $value;
             type Database = $db;
 
-            async fn compute(self, handle: &$crate::handle::Handle<'_>) -> Self::Value {
-                $compute(self, handle).await
+            async fn compute(self, qcx: &$crate::engine::Context<'_>) -> Self::Value {
+                $compute(self, qcx).await
             }
         }
     };
@@ -67,7 +68,7 @@ macro_rules! query_key {
         query_key!(internal impl $name, $value, $db, $compute)
     };
 
-    ($visibility:vis $name:ident($($argname:ident: $argvalue:ty),*) -> $value:ty [$compute:path, $db:ty]) => {
+    ($visibility:vis $name:ident { $($argname:ident: $argvalue:ty),* } -> $value:ty [$compute:path, $db:ty]) => {
         // TODO: expand to full names
         #[derive(::std::fmt::Debug, ::std::clone::Clone, ::std::hash::Hash, ::std::cmp::PartialEq, ::std::cmp::Eq)]
         $visibility struct $name {
@@ -78,13 +79,9 @@ macro_rules! query_key {
     };
 }
 
-/// Marker trait to ensure bounds of [`Key::Value`]
-pub trait Value: fmt::Debug + PartialEq + Clone + Send + Sync {}
-impl<T: fmt::Debug + PartialEq + Clone + Send + Sync> Value for T {}
-
 /// Cheaply clonable index to any given key
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub struct KeyIndex(usize, TypeId);
+pub struct KeyIndex(usize);
 
 #[cfg(test)]
 mod tests {
@@ -98,7 +95,7 @@ mod tests {
 
     use tokio::{runtime::Runtime, task::JoinSet};
 
-    use crate::{Key, database, handle};
+    use crate::{Key, database, engine};
 
     #[tokio::test]
     async fn test_early_cutoff() {
@@ -109,33 +106,33 @@ mod tests {
 
         query_key!(LengthQuery -> usize [Self::inner, database::InMemory<Self>]);
         impl LengthQuery {
-            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
+            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 LEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
-                handle.query(TextInput).await.len()
+                qcx.query(TextInput).await.len()
             }
         }
 
         query_key!(EvenQuery -> bool [Self::inner, database::InMemory<Self>]);
         impl EvenQuery {
-            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
+            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 EVEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
-                handle.query(LengthQuery).await % 2 == 0
+                qcx.query(LengthQuery).await % 2 == 0
             }
         }
 
-        let mut root = handle::Root::new()
+        let mut root = engine::Engine::new()
             .register_default::<TextInput>()
             .register_default::<LengthQuery>()
             .register_default::<EvenQuery>();
 
         root.upcoming().update(&TextInput, "hello".to_string());
-        root.handle().query(EvenQuery).await;
+        root.context().query(EvenQuery).await;
 
         assert_eq!(LEN_COMPUTES.load(Ordering::Relaxed), 1);
         assert_eq!(EVEN_COMPUTES.load(Ordering::Relaxed), 1);
 
         root.upcoming().update(&TextInput, "world".to_string());
-        root.handle().query(EvenQuery).await;
+        root.context().query(EvenQuery).await;
 
         assert_eq!(LEN_COMPUTES.load(Ordering::Relaxed), 2);
         assert_eq!(EVEN_COMPUTES.load(Ordering::Relaxed), 1);
@@ -157,16 +154,16 @@ mod tests {
 
         query_key!(BranchQuery -> usize [Self::inner, database::InMemory<Self>]);
         impl BranchQuery {
-            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
+            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 BRANCH_COMPUTES.fetch_add(1, Ordering::Relaxed);
-                match handle.query(FlagInput).await {
-                    FlagDirection::Left => handle.query(LeftInput).await,
-                    FlagDirection::Right => handle.query(RightInput).await,
+                match qcx.query(FlagInput).await {
+                    FlagDirection::Left => qcx.query(LeftInput).await,
+                    FlagDirection::Right => qcx.query(RightInput).await,
                 }
             }
         }
 
-        let mut root = handle::Root::new()
+        let mut root = engine::Engine::new()
             .register_default::<FlagInput>()
             .register_default::<LeftInput>()
             .register_default::<RightInput>()
@@ -176,15 +173,15 @@ mod tests {
         root.upcoming().update(&LeftInput, 10);
         root.upcoming().update(&RightInput, 20);
 
-        root.handle().query(BranchQuery).await;
+        root.context().query(BranchQuery).await;
         assert_eq!(BRANCH_COMPUTES.load(Ordering::Relaxed), 1);
 
         root.upcoming().update(&RightInput, 99);
-        root.handle().query(BranchQuery).await;
+        root.context().query(BranchQuery).await;
         assert_eq!(BRANCH_COMPUTES.load(Ordering::Relaxed), 1);
 
         root.upcoming().update(&FlagInput, FlagDirection::Right);
-        root.handle().query(BranchQuery).await;
+        root.context().query(BranchQuery).await;
         assert_eq!(BRANCH_COMPUTES.load(Ordering::Relaxed), 2);
     }
 
@@ -194,7 +191,7 @@ mod tests {
 
         query_key!(SlowQuery -> () [Self::inner, database::InMemory<Self>]);
         impl SlowQuery {
-            async fn inner(self, _handle: &handle::Handle<'_>) -> <Self as Key>::Value {
+            async fn inner(self, _qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 SLOW_COMPUTES.fetch_add(1, Ordering::Relaxed);
                 for _ in 0..64 {
                     tokio::task::yield_now().await
@@ -202,12 +199,12 @@ mod tests {
             }
         }
 
-        let root: Arc<_> = handle::Root::new().register_default::<SlowQuery>().into();
+        let root: Arc<_> = engine::Engine::new().register_default::<SlowQuery>().into();
 
         let mut joinset = JoinSet::new();
         for _ in 0..16 {
             let root_clone = root.clone();
-            joinset.spawn(async move { root_clone.handle().query(SlowQuery).await });
+            joinset.spawn(async move { root_clone.context().query(SlowQuery).await });
         }
 
         while let Some(result) = joinset.join_next().await {
@@ -221,11 +218,10 @@ mod tests {
     async fn perftest_cpu_query() {
         query_key!(RangeInput -> Range<u128> [input, database::InMemory<Self>]);
 
-        query_key!(Compution1Query -> u128 [Self::inner, database::InMemory<Self>]);
+        query_key!(Compution1Query { offset: usize } -> u128 [Self::inner, database::InMemory<Self>]);
         impl Compution1Query {
-            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
-                handle
-                    .query(RangeInput)
+            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
+                qcx.query(RangeInput)
                     .await
                     .fold(0, |acc, x| acc.isqrt().wrapping_mul(x))
             }
@@ -233,9 +229,9 @@ mod tests {
 
         query_key!(Compution2Query -> [char; 16] [Self::inner, database::InMemory<Self>]);
         impl Compution2Query {
-            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
-                let bytes = handle
-                    .query(Compution1Query)
+            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
+                let bytes = qcx
+                    .query(Compution1Query { offset: 10 })
                     .await
                     .wrapping_pow(u32::MAX)
                     .to_le_bytes();
@@ -245,11 +241,9 @@ mod tests {
 
         query_key!(Compution3Query -> [char; 16] [Self::inner, database::InMemory<Self>]);
         impl Compution3Query {
-            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
+            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 const ROWS: usize = 8;
                 const COLUMNS: usize = 16;
-
-                let value = handle.query(Compution1Query).await;
 
                 let mut n_matrix = [[false; COLUMNS]; ROWS];
                 let mut c_matrix = [0 as char; COLUMNS];
@@ -258,7 +252,7 @@ mod tests {
                     for column in 0..COLUMNS {
                         let cell = &mut n_matrix[row][column];
                         let idx = (row * ROWS) + column;
-                        *cell = value >> idx != 0;
+                        *cell = qcx.query(Compution1Query { offset: idx }).await >> idx != 0;
                     }
 
                     let cell = &mut c_matrix[row];
@@ -269,19 +263,19 @@ mod tests {
             }
         }
 
-        query_key!(RootQuery -> Vec<[char; 16]> [Self::inner, database::InMemory<Self>]);
-        impl RootQuery {
-            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
+        query_key!(EngineQuery -> Vec<[char; 16]> [Self::inner, database::InMemory<Self>]);
+        impl EngineQuery {
+            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 let mut c_matrix = vec![[0 as char; 16]; 8192];
 
-                let range = handle.query(RangeInput).await;
+                let range = qcx.query(RangeInput).await;
                 let even = range.sum::<u128>() % 2 == 0;
 
                 for row in &mut c_matrix {
                     *row = if even {
-                        handle.query(Compution3Query).await
+                        qcx.query(Compution3Query).await
                     } else {
-                        handle.query(Compution2Query).await
+                        qcx.query(Compution2Query).await
                     }
                 }
 
@@ -289,18 +283,18 @@ mod tests {
             }
         }
 
-        async fn perform(mut root: handle::Root, range: Range<u128>) -> handle::Root {
+        async fn perform(mut root: engine::Engine, range: Range<u128>) -> engine::Engine {
             root.upcoming().update(&RangeInput, range);
-            root.handle().query(RootQuery).await;
+            root.context().query(EngineQuery).await;
             root
         }
 
-        let mut root = handle::Root::new()
+        let mut root = engine::Engine::new()
             .register_default::<RangeInput>()
             .register_default::<Compution1Query>()
             .register_default::<Compution2Query>()
             .register_default::<Compution3Query>()
-            .register_default::<RootQuery>();
+            .register_default::<EngineQuery>();
 
         let max = 2u128.pow(24);
         for _ in 0..256 {
@@ -319,43 +313,43 @@ mod tests {
 
         query_key!(Mutation1Query -> u64 [Self::inner, database::InMemory<Self>]);
         impl Mutation1Query {
-            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
-                let lhs = handle.query(Input1).await;
-                let rhs = handle.query(Input2).await;
+            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
+                let lhs = qcx.query(Input1).await;
+                let rhs = qcx.query(Input2).await;
                 lhs.wrapping_add(rhs)
             }
         }
 
         query_key!(Mutation2Query -> u64 [Self::inner, database::InMemory<Self>]);
         impl Mutation2Query {
-            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
-                let lhs = handle.query(Input3).await;
-                let rhs = handle.query(Input4).await;
+            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
+                let lhs = qcx.query(Input3).await;
+                let rhs = qcx.query(Input4).await;
                 lhs.wrapping_mul(rhs)
             }
         }
 
-        query_key!(RootQuery -> u64 [Self::inner, database::InMemory<Self>]);
-        impl RootQuery {
-            async fn inner(self, handle: &handle::Handle<'_>) -> <Self as Key>::Value {
-                let m1 = handle.query(Mutation1Query).await;
+        query_key!(EngineQuery -> u64 [Self::inner, database::InMemory<Self>]);
+        impl EngineQuery {
+            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
+                let m1 = qcx.query(Mutation1Query).await;
                 if m1 % 2 == 0 {
                     m1.wrapping_mul(10)
                 } else {
-                    handle.query(Mutation2Query).await
+                    qcx.query(Mutation2Query).await
                 }
             }
         }
 
         async fn inner(u: &mut arbitrary::Unstructured<'_>) -> Result<(), arbitrary::Error> {
-            let mut root = handle::Root::new()
+            let mut root = engine::Engine::new()
                 .register_default::<Input1>()
                 .register_default::<Input2>()
                 .register_default::<Input3>()
                 .register_default::<Input4>()
                 .register_default::<Mutation1Query>()
                 .register_default::<Mutation2Query>()
-                .register_default::<RootQuery>();
+                .register_default::<EngineQuery>();
 
             let mut input1 = 0;
             let mut input2 = 0;
@@ -391,7 +385,7 @@ mod tests {
                     _ => unreachable!(),
                 }
 
-                let actual = root.handle().query(RootQuery).await;
+                let actual = root.context().query(EngineQuery).await;
 
                 let mutation_1 = input1.wrapping_add(input2);
                 let expected = if mutation_1 % 2 == 0 {

@@ -1,55 +1,37 @@
 use std::{
     any::{Any, TypeId},
-    fmt,
     num::NonZeroUsize,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Mutex, atomic::AtomicUsize},
 };
 
 use educe::Educe;
 use futures_util::{FutureExt, future::BoxFuture};
 use rustc_hash::{FxHashMap, FxHashSet};
-use tokio::{sync::Semaphore, task::JoinSet};
 
-use crate::{Key, KeyIndex, database::Database, handle::Handle};
+use crate::{
+    Key, KeyIndex,
+    database::{Difference, EdgeDatabase},
+    engine::Context,
+    singleflight::SingleFlight,
+};
 
-#[derive(Debug, Educe)]
-#[educe(Default)]
+#[derive(Debug)]
 pub struct Memo {
+    pub dependencies: Mutex<FxHashSet<KeyIndex>>,
     pub verified_at: AtomicUsize,
     pub changed_at: AtomicUsize,
-    pub dependencies: Mutex<FxHashSet<KeyIndex>>,
-    #[educe(Default(expr = Semaphore::new(1)))]
-    computing: Semaphore,
+    pub flight: SingleFlight,
+    pub recompute: for<'a> fn(KeyIndex, Context<'a>) -> BoxFuture<'a, Difference>,
 }
 
 #[derive(Educe, Debug)]
 #[educe(Default)]
 pub struct Store {
-    databases: FxHashMap<TypeId, Box<dyn DynDatabase>>,
+    pub databases: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
     pub memos: boxcar::Vec<Memo>,
-    // index_of depends on revision 0 being non-existent
+    // revision 0 is treated as untracked in verified_at and changed_at
     #[educe(Default = NonZeroUsize::new(1).unwrap())]
     pub revision: NonZeroUsize,
-}
-
-trait DynDatabase: Any + Send + Sync {
-    fn query<'a>(&'a self, handle: &'a Handle<'_>, idx: KeyIndex) -> BoxFuture<'a, bool>;
-}
-
-impl<T: Database> DynDatabase for T {
-    fn query<'a>(&'a self, handle: &'a Handle<'_>, idx: KeyIndex) -> BoxFuture<'a, bool> {
-        let key = self.key_of(idx).expect("key should exist");
-        handle.query_inner(self, key, idx).boxed()
-    }
-}
-
-impl fmt::Debug for Box<dyn DynDatabase> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        (self as &dyn Any).fmt(f)
-    }
 }
 
 impl Store {
@@ -64,86 +46,39 @@ impl Store {
             .expect("database should be of type K::Database")
     }
 
-    pub fn index_of<D: Database>(&self, database: &D, key: &D::Key) -> KeyIndex {
-        database.index_of(key, || {
+    pub fn index_of<D: EdgeDatabase>(&self, database: &D, key: &D::Key) -> KeyIndex {
+        database.index(key, || {
             let idx = self.memos.push(Memo {
                 verified_at: 0.into(),
                 changed_at: 0.into(),
                 dependencies: Mutex::default(),
-                computing: Semaphore::new(1),
+                flight: SingleFlight::default(),
+                recompute: Self::recompute::<D>,
             });
 
-            KeyIndex(idx, database.type_id())
+            KeyIndex(idx)
         })
     }
 
-    pub async fn update(self: &Arc<Self>, idx: KeyIndex) -> usize {
-        let revision = self.revision.get();
-
-        let memo = &self.memos[idx.0];
-        let load_changed_at = || memo.changed_at.load(Ordering::Acquire);
-        macro_rules! load_va {
-            () => {{
-                let verified_at = memo.verified_at.load(Ordering::Acquire);
-                if verified_at == revision {
-                    return load_changed_at();
-                }
-
-                verified_at
-            }};
-        }
-
-        // short circut if the memo is initially verified
-        load_va!();
-
-        let _permit = memo
-            .computing
-            .acquire()
-            .await
-            .expect("permit should not be closed");
-
-        // short circut if someone else verified the memo while we were waiting
-        let verified_at = load_va!();
-
-        let mut recompute = verified_at == 0;
-        let dependencies = memo.dependencies.lock().unwrap().clone();
-        if !dependencies.is_empty() {
-            let mut joinset = JoinSet::new();
-            for dep in dependencies {
-                let store = self.clone();
-                joinset.spawn(async move { store.update_inner(dep).await });
-            }
-
-            while let Some(res) = joinset.join_next().await {
-                let dep_ca = res.expect("dependency query should not panic");
-                recompute |= dep_ca > verified_at;
-            }
-        }
-
-        let changed_at = if recompute {
-            let database = &self.databases[&idx.1];
-            let handle = Handle {
-                store: self,
-                dependencies: Mutex::default(),
-            };
-
-            let changed = database.query(&handle, idx).await;
-            changed.then_some(revision)
-        } else {
-            None
+    fn recompute<D: EdgeDatabase>(idx: KeyIndex, qcx: Context<'_>) -> BoxFuture<'_, Difference> {
+        let type_id = TypeId::of::<D>();
+        let database = qcx.store.databases[&type_id]
+            .downcast_ref::<D>()
+            .expect("database should be of type D");
+        let Some(key) = database.key(idx) else {
+            return std::future::ready(Difference::Changed).boxed();
         };
 
-        memo.verified_at.store(revision, Ordering::Release);
-        changed_at.unwrap_or_else(load_changed_at)
-    }
+        async move {
+            let value = key.compute(&qcx).await;
+            let diff = database.set_value(idx, value);
 
-    fn update_inner(self: &Arc<Self>, idx: KeyIndex) -> BoxFuture<'_, usize> {
-        self.update(idx).boxed()
-    }
+            let dependencies = qcx.dependencies.into_inner().unwrap();
+            let memo = &qcx.store.memos[idx.0];
+            *memo.dependencies.lock().unwrap() = dependencies;
 
-    pub fn register(&mut self, database: impl Database) {
-        self.databases
-            .entry(database.type_id())
-            .or_insert_with(|| Box::new(database));
+            diff
+        }
+        .boxed()
     }
 }
