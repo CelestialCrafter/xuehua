@@ -1,12 +1,11 @@
 //! Engine accessors and action execution
 
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     fmt::Debug,
     sync::{Arc, Mutex, atomic::Ordering},
 };
 
-use educe::Educe;
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -16,14 +15,29 @@ use crate::{
     store::{Memo, Store},
 };
 
+#[doc(hidden)]
+#[linkme::distributed_slice]
+pub static REGISTERED_DATABASES: [fn() -> (TypeId, Box<dyn Any + Send + Sync>)];
+
 /// This handle owns the engine, and loans out [`Upcoming`] and [`Context`]s to utilize it.
-#[derive(Debug, Educe)]
-#[educe(Default(new))]
+#[derive(Debug, Default)]
 pub struct Engine {
     store: Arc<Store>,
 }
 
 impl Engine {
+    /// Constructs a new [`Engine`]
+    pub fn new() -> Self {
+        let mut store = Store::default();
+        for func in REGISTERED_DATABASES {
+            let (type_id, database) = func();
+            store.databases.insert(type_id, database);
+        }
+
+        Self {
+            store: Arc::new(store),
+        }
+    }
     /// Loan out a [`Context`] to query the engine
     pub fn context(&self) -> Context<'_> {
         Context {
