@@ -1,11 +1,11 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
-    hash::{BuildHasher, RandomState},
+    hash::{Hash, BuildHasher, RandomState},
     sync::Mutex,
 };
 
 use crate::{
-    Key, KeyIndex,
+    KeyIndex,
     database::{Database, Difference},
 };
 use educe::Educe;
@@ -13,21 +13,21 @@ use educe::Educe;
 /// Simple generic in-memory database
 #[derive(Educe, Debug)]
 #[educe(Default(new, bound(S: Default)))]
-pub struct InMemory<K: Key, S = RandomState> {
+pub struct InMemory<K, V, S = RandomState> {
     lookup: Mutex<HashMap<K, KeyIndex, S>>,
     keys: Mutex<HashMap<KeyIndex, K, S>>,
-    values: Mutex<HashMap<KeyIndex, K::Value, S>>,
+    values: Mutex<HashMap<KeyIndex, V, S>>,
 }
 
-impl<K, S> Database for InMemory<K, S>
+impl<K, V, S> Database for InMemory<K, V, S>
 where
-    K: Key,
-    K::Value: PartialEq + Clone,
+    K: Eq + Hash + Clone + Send + Sync + 'static,
+    V: Eq + Clone + Send + Sync + 'static,
     S: BuildHasher + Send + Sync + 'static,
 {
     type Key = K;
-    type InputValue = K::Value;
-    type OutputValue<'a> = K::Value;
+    type InputValue = V;
+    type OutputValue<'a> = V;
 
     fn index(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex {
         let mut lookup = self.lookup.lock().unwrap();

@@ -3,6 +3,9 @@
 mod in_memory;
 pub use in_memory::InMemory;
 
+mod fallible;
+pub use fallible::Fallible;
+
 use crate::{Key, KeyIndex};
 
 /// Whether a value has changed or not

@@ -37,9 +37,9 @@ pub async fn input_query<K>(_input: K, _qcx: &engine::Context<'_>) -> ! {
 /// Helper macro to implement query keys
 #[macro_export]
 macro_rules! query_key {
-    (@internal $name:ident, $value:ty, $db:ty, $compute:path) => {
+    (@internal $name:ident, $db:ty, $compute:path) => {
         impl $crate::Key for $name {
-            type Value = $value;
+            type Value = <$db as $crate::database::Database>::InputValue;
             type Database = $db;
 
             async fn compute(self, qcx: &$crate::engine::Context<'_>) -> Self::Value {
@@ -66,28 +66,28 @@ macro_rules! query_key {
         }
     };
 
-    ($visibility:vis $name:ident -> $value:ty [$compute:path, $db:ty]) => {
+    ($visibility:vis $name:ident [$compute:path, $db:ty]) => {
         #[derive(::std::fmt::Debug, ::std::clone::Clone, ::std::hash::Hash, ::std::cmp::PartialEq, ::std::cmp::Eq)]
         $visibility struct $name;
 
-        query_key!(@internal $name, $value, $db, $compute)
+        query_key!(@internal $name, $db, $compute)
     };
 
-    ($visibility:vis $name:ident($($argvis:vis $argvalue:ty),*) -> $value:ty [$compute:path, $db:ty]) => {
+    ($visibility:vis $name:ident($($argvis:vis $argvalue:ty),*) [$compute:path, $db:ty]) => {
         #[derive(::std::fmt::Debug, ::std::clone::Clone, ::std::hash::Hash, ::std::cmp::PartialEq, ::std::cmp::Eq)]
         $visibility struct $name ($($argvis $argvalue,)*);
 
-        query_key!(@internal $name, $value, $db, $compute)
+        query_key!(@internal $name, $db, $compute)
     };
 
-    ($visibility:vis $name:ident { $($argvis:vis $argname:ident: $argvalue:ty),* } -> $value:ty [$compute:path, $db:ty]) => {
+    ($visibility:vis $name:ident { $($argvis:vis $argname:ident: $argvalue:ty),* } [$compute:path, $db:ty]) => {
         // TODO: expand to full names
         #[derive(::std::fmt::Debug, ::std::clone::Clone, ::std::hash::Hash, ::std::cmp::PartialEq, ::std::cmp::Eq)]
         $visibility struct $name {
             $($argvis $argname: $argvalue,)*
         }
 
-        query_key!(@internal $name, $value, $db, $compute)
+        query_key!(@internal $name, $db, $compute)
     };
 }
 
@@ -114,9 +114,9 @@ mod tests {
         static LEN_COMPUTES: AtomicUsize = AtomicUsize::new(0);
         static EVEN_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-        query_key!(TextInput -> String [input_query, database::InMemory<TextInput>]);
+        query_key!(TextInput [input_query, database::InMemory<TextInput, String>]);
 
-        query_key!(LengthQuery -> usize [Self::inner, database::InMemory<LengthQuery>]);
+        query_key!(LengthQuery [Self::inner, database::InMemory<LengthQuery, usize>]);
         impl LengthQuery {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 LEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
@@ -124,7 +124,7 @@ mod tests {
             }
         }
 
-        query_key!(EvenQuery -> bool [Self::inner, database::InMemory<EvenQuery>]);
+        query_key!(EvenQuery [Self::inner, database::InMemory<EvenQuery, bool>]);
         impl EvenQuery {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 EVEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
@@ -150,17 +150,17 @@ mod tests {
     async fn test_dynamic_dependencies() {
         static BRANCH_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-        #[derive(Debug, PartialEq, Clone)]
+        #[derive(Debug, PartialEq, Eq, Clone)]
         enum FlagDirection {
             Left,
             Right,
         }
 
-        query_key!(FlagInput -> FlagDirection [input_query, database::InMemory<FlagInput>]);
-        query_key!(LeftInput -> usize [input_query, database::InMemory<LeftInput>]);
-        query_key!(RightInput -> usize [input_query, database::InMemory<RightInput>]);
+        query_key!(FlagInput [input_query, database::InMemory<FlagInput, FlagDirection>]);
+        query_key!(LeftInput [input_query, database::InMemory<LeftInput, usize>]);
+        query_key!(RightInput [input_query, database::InMemory<RightInput, usize>]);
 
-        query_key!(BranchQuery -> usize [Self::inner, database::InMemory<BranchQuery>]);
+        query_key!(BranchQuery [Self::inner, database::InMemory<BranchQuery, usize>]);
         impl BranchQuery {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 BRANCH_COMPUTES.fetch_add(1, Ordering::Relaxed);
@@ -192,7 +192,7 @@ mod tests {
     async fn test_compute_synchronization() {
         static SLOW_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-        query_key!(SlowQuery -> () [Self::inner, database::InMemory<SlowQuery>]);
+        query_key!(SlowQuery [Self::inner, database::InMemory<SlowQuery, ()>]);
         impl SlowQuery {
             async fn inner(self, _qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 SLOW_COMPUTES.fetch_add(1, Ordering::Relaxed);
@@ -215,9 +215,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn perftest_cpu_query() {
-        query_key!(RangeInput -> Range<u128> [input_query, database::InMemory<RangeInput>]);
+        query_key!(RangeInput [input_query, database::InMemory<RangeInput, Range<u128>>]);
 
-        query_key!(Compution1Query { offset: usize } -> u128 [Self::inner, database::InMemory<Compution1Query>]);
+        query_key!(Compution1Query { offset: usize } [Self::inner, database::InMemory<Compution1Query, u128>]);
         impl Compution1Query {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 qcx.query(RangeInput)
@@ -226,7 +226,7 @@ mod tests {
             }
         }
 
-        query_key!(Compution2Query -> [char; 16] [Self::inner, database::InMemory<Compution2Query>]);
+        query_key!(Compution2Query [Self::inner, database::InMemory<Compution2Query, [char; 16]>]);
         impl Compution2Query {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 let bytes = qcx
@@ -238,7 +238,7 @@ mod tests {
             }
         }
 
-        query_key!(Compution3Query -> [char; 16] [Self::inner, database::InMemory<Compution3Query>]);
+        query_key!(Compution3Query [Self::inner, database::InMemory<Compution3Query, [char; 16]>]);
         impl Compution3Query {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 const ROWS: usize = 8;
@@ -262,7 +262,7 @@ mod tests {
             }
         }
 
-        query_key!(RootQuery -> Vec<[char; 16]> [Self::inner, database::InMemory<RootQuery>]);
+        query_key!(RootQuery [Self::inner, database::InMemory<RootQuery, Vec<[char; 16]>>]);
         impl RootQuery {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 let mut c_matrix = vec![[0 as char; 16]; 8192];
@@ -299,12 +299,12 @@ mod tests {
 
     #[test]
     fn arbtest_query_convergence() {
-        query_key!(Input1 -> u64 [input_query, database::InMemory<Input1>]);
-        query_key!(Input2 -> u64 [input_query, database::InMemory<Input2>]);
-        query_key!(Input3 -> u64 [input_query, database::InMemory<Input3>]);
-        query_key!(Input4 -> u64 [input_query, database::InMemory<Input4>]);
+        query_key!(Input1 [input_query, database::InMemory<Input1, u64>]);
+        query_key!(Input2 [input_query, database::InMemory<Input2, u64>]);
+        query_key!(Input3 [input_query, database::InMemory<Input3, u64>]);
+        query_key!(Input4 [input_query, database::InMemory<Input4, u64>]);
 
-        query_key!(Mutation1Query -> u64 [Self::inner, database::InMemory<Mutation1Query>]);
+        query_key!(Mutation1Query [Self::inner, database::InMemory<Mutation1Query, u64>]);
         impl Mutation1Query {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 let lhs = qcx.query(Input1).await;
@@ -313,7 +313,7 @@ mod tests {
             }
         }
 
-        query_key!(Mutation2Query -> u64 [Self::inner, database::InMemory<Mutation2Query>]);
+        query_key!(Mutation2Query [Self::inner, database::InMemory<Mutation2Query, u64>]);
         impl Mutation2Query {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 let lhs = qcx.query(Input3).await;
@@ -322,7 +322,7 @@ mod tests {
             }
         }
 
-        query_key!(RootQuery -> u64 [Self::inner, database::InMemory<RootQuery>]);
+        query_key!(RootQuery [Self::inner, database::InMemory<RootQuery, u64>]);
         impl RootQuery {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Key>::Value {
                 let m1 = qcx.query(Mutation1Query).await;
