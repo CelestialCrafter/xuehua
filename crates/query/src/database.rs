@@ -13,7 +13,7 @@ pub use fallible::Fallible;
 pub use in_memory::InMemory;
 pub use lru::LRU;
 
-use crate::{Key, KeyIndex, engine::Context};
+use crate::{Query, KeyIndex, engine::Context};
 
 /// Whether a value has changed or not
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -27,12 +27,12 @@ pub enum Difference {
 /// Marker trait for databases that take in their key's output
 pub trait EdgeDatabase: Database<Key = Self::Constraint> {
     #[doc(hidden)]
-    type Constraint: Key<Value = Self::InputValue>;
+    type Constraint: Query<Value = Self::InputValue>;
 }
 
 impl<T: Database> EdgeDatabase for T
 where
-    Self::Key: Key<Value = Self::InputValue>,
+    Self::Key: Query<Value = Self::InputValue>,
 {
     type Constraint = Self::Key;
 }

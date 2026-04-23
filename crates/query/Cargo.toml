@@ -11,6 +11,7 @@ tokio = { workspace = true, features = ["rt", "sync"] }
 boxcar = "0.2.14"
 futures-util = { version = "0.3.32", default-features = false, features = ["std", "alloc"] }
 linkme = "0.3.36"
+xh-query-derive = { path = "../query-derive" }
 
 [dev-dependencies]
 arbitrary = "1.4.2"

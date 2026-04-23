@@ -62,10 +62,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::{
-        Key,
+        Query,
         database::{Fallible, InMemory},
         engine::{Context, Engine},
-        query_key,
     };
 
     #[tokio::test]
@@ -83,10 +82,14 @@ mod tests {
             }
         }
 
-        query_key!(FallibleQuery { ok: bool } [Self::inner, Fallible<Hidden, InMemory<FallibleQuery, Hidden>>]);
-        impl Copy for FallibleQuery {}
+        #[derive(Query, Debug, Clone, Copy, Hash, PartialEq, Eq)]
+        #[database(Fallible<Hidden, InMemory<FallibleQuery, Hidden>>)]
+        #[compute(Self::inner)]
+        struct FallibleQuery {
+            ok: bool,
+        }
         impl FallibleQuery {
-            async fn inner(self, _qcx: &Context<'_>) -> <Self as Key>::Value {
+            async fn inner(self, _qcx: &Context<'_>) -> <Self as Query>::Value {
                 let hidden = Hidden {
                     value: FALLIBLE_COMPUTES.fetch_add(1, Ordering::Relaxed),
                 };
