@@ -1,12 +1,19 @@
 //! Query key, value, and memo storage
 
-mod in_memory;
-pub use in_memory::InMemory;
-
 mod fallible;
-pub use fallible::Fallible;
+mod in_memory;
+mod lru;
 
-use crate::{Key, KeyIndex};
+use core::fmt;
+use std::any::Any;
+
+use futures_util::{FutureExt, future::BoxFuture};
+
+pub use fallible::Fallible;
+pub use in_memory::InMemory;
+pub use lru::LRU;
+
+use crate::{Key, KeyIndex, engine::Context};
 
 /// Whether a value has changed or not
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,6 +35,42 @@ where
     Self::Key: Key<Value = Self::InputValue>,
 {
     type Constraint = Self::Key;
+}
+
+#[doc(hidden)]
+pub trait DynDatabase: Any + Send + Sync {
+    fn evict_garbage(&mut self) -> Vec<KeyIndex>;
+    fn recompute<'a>(&'a self, idx: KeyIndex, qcx: Context<'a>) -> BoxFuture<'a, Difference>;
+}
+
+impl fmt::Debug for dyn DynDatabase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (self as &dyn Any).fmt(f)
+    }
+}
+
+impl<D: EdgeDatabase> DynDatabase for D {
+    fn evict_garbage(&mut self) -> Vec<KeyIndex> {
+        Database::evict_garbage(self)
+    }
+
+    fn recompute<'a>(&'a self, idx: KeyIndex, qcx: Context<'a>) -> BoxFuture<'a, Difference> {
+        let Some(key) = self.key(idx) else {
+            return std::future::ready(Difference::Changed).boxed();
+        };
+
+        async move {
+            let value = key.compute(&qcx).await;
+            let diff = Database::set_value(self, idx, value);
+
+            let dependencies = qcx.dependencies.into_inner().unwrap();
+            let memo = &qcx.store.memos[idx.0];
+            *memo.dependencies.lock().unwrap() = dependencies;
+
+            diff
+        }
+        .boxed()
+    }
 }
 
 /// Trait for storage of computed values
@@ -56,15 +99,26 @@ pub trait Database: Send + Sync + 'static {
     /// Updates the value at a given index
     fn set_value(&self, idx: KeyIndex, value: Self::InputValue) -> Difference;
 
-    /// Same as [`set_value`], except returns the corresponding instance of [`Self::OutputValue`]
+    /// Same as [`set_value`], except returns a corresponding instance of [`Self::OutputValue`]
     fn pass_value(
         &self,
         idx: KeyIndex,
         value: Self::InputValue,
-    ) -> (Self::OutputValue<'_>, Difference) {
-        let diff = self.set_value(idx, value);
-        let value = self.value(idx).expect("value should exist");
+    ) -> (Self::OutputValue<'_>, Difference);
 
-        (value, diff)
+    /// Evicts all "garbage" from the database
+    ///
+    /// Returns an iterator of all keys evicted
+    fn evict_garbage(&mut self) -> Vec<KeyIndex> {
+        vec![]
     }
+
+    /// Evicts an iterator of keys from the database
+    ///
+    /// Note that the database may not choose to evict some keys
+    #[allow(
+        unused_variables,
+        reason = "avoids putting _indicies in the trait's fn signature"
+    )]
+    fn evict_iter(&mut self, indicies: impl Iterator<Item = KeyIndex>) {}
 }

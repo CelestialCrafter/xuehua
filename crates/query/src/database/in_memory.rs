@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
-    hash::{Hash, BuildHasher, RandomState},
+    hash::{BuildHasher, Hash, RandomState},
     sync::Mutex,
 };
 
@@ -9,14 +9,15 @@ use crate::{
     database::{Database, Difference},
 };
 use educe::Educe;
+use rustc_hash::FxHashMap;
 
 /// Simple generic in-memory database
 #[derive(Educe, Debug)]
 #[educe(Default(new, bound(S: Default)))]
 pub struct InMemory<K, V, S = RandomState> {
     lookup: Mutex<HashMap<K, KeyIndex, S>>,
-    keys: Mutex<HashMap<KeyIndex, K, S>>,
-    values: Mutex<HashMap<KeyIndex, V, S>>,
+    keys: Mutex<FxHashMap<KeyIndex, K>>,
+    values: Mutex<FxHashMap<KeyIndex, V>>,
 }
 
 impl<K, V, S> Database for InMemory<K, V, S>
@@ -67,5 +68,44 @@ where
                 Difference::Changed
             }
         }
+    }
+
+    fn pass_value(
+        &self,
+        idx: KeyIndex,
+        value: Self::InputValue,
+    ) -> (Self::OutputValue<'_>, Difference) {
+        let diff = self.set_value(idx, value.clone());
+        (value, diff)
+    }
+
+    fn evict_iter(&mut self, indicies: impl Iterator<Item = KeyIndex>) {
+        let lookup = self.lookup.get_mut().unwrap();
+        let keys = self.keys.get_mut().unwrap();
+        let values = self.values.get_mut().unwrap();
+
+        for idx in indicies {
+            values.remove(&idx);
+            if let Some(key) = keys.remove(&idx) {
+                lookup.remove(&key);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{KeyIndex, database::{Database, InMemory}};
+
+    #[test]
+    fn test_eviction() {
+        let mut database = InMemory::<(), usize>::new();
+
+        let idx = database.index(&(), || KeyIndex(0));
+        database.set_value(idx, 0);
+
+        database.evict_iter(std::iter::once(idx));
+        assert_eq!(database.key(idx), None);
+        assert_eq!(database.value(idx), None);
     }
 }

@@ -10,14 +10,14 @@ use rustc_hash::FxHashSet;
 
 use crate::{
     Key, KeyIndex,
-    database::{Database, Difference, EdgeDatabase},
+    database::{Database, Difference, DynDatabase, EdgeDatabase},
     singleflight::{FlightGuard, FlightRole},
     store::{Memo, Store},
 };
 
 #[doc(hidden)]
 #[linkme::distributed_slice]
-pub static REGISTERED_DATABASES: [fn() -> (TypeId, Box<dyn Any + Send + Sync>)];
+pub static REGISTERED_DATABASES: [fn() -> (TypeId, Box<dyn DynDatabase>)];
 
 /// This handle owns the engine, and loans out [`Upcoming`] and [`Context`]s to utilize it.
 #[derive(Debug, Default)]
@@ -57,6 +57,11 @@ impl Engine {
             .revision
             .checked_add(1)
             .expect("revision should not exceed NonZeroUsize::MAX");
+
+        for database in store.databases.values_mut() {
+            // TODO: evict memos from store
+            let _ = database.evict_garbage();
+        }
 
         Upcoming { store }
     }
@@ -269,7 +274,9 @@ impl Context<'_> {
                             dependencies: Mutex::default(),
                         };
 
-                        (memo.recompute)(idx, handle).await
+
+                        let database = &self.store.databases[&memo.database];
+                        database.recompute(idx, handle).await
                     } else {
                         Difference::Unchanged
                     };

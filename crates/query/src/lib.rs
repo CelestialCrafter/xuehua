@@ -44,21 +44,19 @@ macro_rules! query_key {
 
             async fn compute(self, qcx: &$crate::engine::Context<'_>) -> Self::Value {
                 use ::std::{
-                    any::{Any, TypeId},
+                    any::TypeId,
                     boxed::Box,
                     default::Default,
-                    marker::{Send, Sync},
                 };
 
                 #[::linkme::distributed_slice($crate::engine::REGISTERED_DATABASES)]
                 fn _register_database() -> (
                     TypeId,
-                    Box<dyn Any + Send + Sync>
+                    Box<dyn $crate::database::DynDatabase>
                 ) {
                     let db: $db = Default::default();
                     let type_id = TypeId::of::<$db>();
-
-                    (type_id, Box::new(db))
+                    (type_id, Box::new(db) as _)
                 }
 
                 $compute(self, qcx).await
