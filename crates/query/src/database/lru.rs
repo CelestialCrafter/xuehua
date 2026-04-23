@@ -103,19 +103,21 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::{
-        Key,
+        Query,
         database::{InMemory, LRU, lru::DEFAULT_CAPACITY},
         engine::{Context, Engine},
-        query_key,
     };
 
     #[tokio::test]
     async fn test_eviction() {
         static LRU_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-        query_key!(LRUQuery(usize) [Self::inner, LRU<InMemory<LRUQuery, ()>>]);
+        #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
+        #[database(LRU<InMemory<LRUQuery, ()>>)]
+        #[compute(Self::inner)]
+        struct LRUQuery(usize);
         impl LRUQuery {
-            async fn inner(self, _qcx: &Context<'_>) -> <Self as Key>::Value {
+            async fn inner(self, _qcx: &Context<'_>) -> <Self as Query>::Value {
                 LRU_COMPUTES.fetch_add(1, Ordering::Relaxed);
             }
         }

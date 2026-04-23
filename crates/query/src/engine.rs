@@ -9,7 +9,7 @@ use std::{
 use rustc_hash::FxHashSet;
 
 use crate::{
-    Key, KeyIndex,
+    Query, KeyIndex,
     database::{Database, Difference, DynDatabase, EdgeDatabase},
     singleflight::{FlightGuard, FlightRole},
     store::{Memo, Store},
@@ -69,7 +69,7 @@ impl Engine {
     /// Helper function for databases that implement [`Default`]
     pub fn register_default<K>(self) -> Self
     where
-        K: Key,
+        K: Query,
         K::Database: Default,
     {
         self.register(K::Database::default())
@@ -93,7 +93,7 @@ pub struct Upcoming<'a> {
 
 impl Upcoming<'_> {
     /// Update the value for any given key
-    pub fn update<K: Key>(&mut self, key: &K, value: K::Value) {
+    pub fn update<K: Query>(&mut self, key: &K, value: K::Value) {
         let database = self.store.database_of::<K>();
         let idx = self.store.index_of(database, key);
 
@@ -121,7 +121,7 @@ pub struct Context<'a> {
 
 impl Context<'_> {
     /// Queries the engine for the memoized value computed from `key`
-    pub async fn query<K: Key>(&self, key: K) -> <K::Database as Database>::OutputValue<'_> {
+    pub async fn query<K: Query>(&self, key: K) -> <K::Database as Database>::OutputValue<'_> {
         struct ComputeFrame<'a> {
             idx: KeyIndex,
             memo: &'a Memo,

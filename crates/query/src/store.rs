@@ -8,7 +8,7 @@ use educe::Educe;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    Key, KeyIndex,
+    Query, KeyIndex,
     database::{DynDatabase, EdgeDatabase},
     singleflight::SingleFlight,
 };
@@ -33,7 +33,7 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn database_of<K: Key>(&self) -> &K::Database {
+    pub fn database_of<K: Query>(&self) -> &K::Database {
         let database = self
             .databases
             .get(&TypeId::of::<K::Database>())
