@@ -12,6 +12,7 @@ pub struct SingleFlight {
 }
 
 #[must_use]
+#[derive(Debug)]
 pub enum FlightRole<'a> {
     Pilot(FlightGuard<'a>),
     Passenger,
@@ -49,9 +50,24 @@ impl SingleFlight {
     }
 }
 
+pub struct PilotToken {
+    _private: (),
+}
+
 #[must_use]
 #[derive(Debug)]
 pub struct FlightGuard<'a>(&'a SingleFlight);
+
+impl FlightGuard<'_> {
+    pub fn tokenize(self) -> PilotToken {
+        std::mem::forget(self);
+        PilotToken { _private: () }
+    }
+
+    pub fn untokenize(flight: &SingleFlight, _token: PilotToken) -> FlightGuard<'_> {
+        FlightGuard(flight)
+    }
+}
 
 impl Drop for FlightGuard<'_> {
     fn drop(&mut self) {

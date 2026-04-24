@@ -1,4 +1,4 @@
-//! Engine accessors and action execution
+//! Engine handles and query execution
 
 use std::{
     any::{Any, TypeId},
@@ -7,9 +7,10 @@ use std::{
 };
 
 use rustc_hash::FxHashSet;
+use tokio::task::JoinSet;
 
 use crate::{
-    Query, KeyIndex,
+    KeyIndex, Query,
     database::{Database, Difference, DynDatabase, EdgeDatabase},
     singleflight::{FlightGuard, FlightRole},
     store::{Memo, Store},
@@ -130,16 +131,9 @@ impl Context<'_> {
         }
 
         enum Frame<'a> {
-            Verify {
-                idx: KeyIndex,
-            },
-            ComputeRoot {
-                skip_pre_post: bool,
-                compute: ComputeFrame<'a>,
-            },
-            ComputeMemo {
-                compute: ComputeFrame<'a>,
-            },
+            Verify { idx: KeyIndex },
+            ComputeRoot(ComputeFrame<'a>),
+            ComputeMemo(ComputeFrame<'a>),
         }
 
         let revision = self.store.revision.get();
@@ -147,20 +141,22 @@ impl Context<'_> {
         let root_idx = self.store.index_of(database, &key);
         self.dependencies.lock().unwrap().insert(root_idx);
 
-        let post_compute = |memo: &Memo, diff| {
+        let post_compute = move |memo: &Memo, diff| {
             memo.verified_at.store(revision, Ordering::Release);
             if let Difference::Changed = diff {
                 memo.changed_at.store(revision, Ordering::Release);
             }
         };
 
-        let should_recompute = |memo: &Memo, verified_at| {
+        let should_recompute = async |store: &Store, memo: &Memo, verified_at| {
             if verified_at == 0 {
                 return true;
             }
 
-            for dep_idx in memo.dependencies.lock().unwrap().iter() {
-                let dep_memo = &self.store.memos[dep_idx.0];
+            let dependencies = memo.dependencies.lock().unwrap().clone();
+            for dep_idx in dependencies {
+                let dep_memo = &store.memos[dep_idx.0];
+                let _ = dep_memo.flight.takeoff().await;
                 let dep_ca = dep_memo.changed_at.load(Ordering::Acquire);
 
                 if dep_ca > verified_at {
@@ -172,7 +168,12 @@ impl Context<'_> {
         };
 
         let mut queue = vec![Frame::Verify { idx: root_idx }];
-        while let Some(frame) = queue.pop() {
+        let mut joinset = JoinSet::new();
+        let value = loop {
+            let Some(frame) = queue.pop() else {
+                unreachable!("ComputeRoot should break out of the loop");
+            };
+
             match frame {
                 Frame::Verify { idx } => {
                     let memo = &self.store.memos[idx.0];
@@ -183,19 +184,15 @@ impl Context<'_> {
                         }
 
                         if let Some(value) = database.value(idx) {
-                            return value;
+                            break value;
                         }
 
-                        let guard = memo.flight.pilot().await;
-                        queue.push(Frame::ComputeRoot {
-                            compute: ComputeFrame {
-                                idx,
-                                memo,
-                                verified_at,
-                                guard,
-                            },
-                            skip_pre_post: true,
-                        });
+                        queue.push(Frame::ComputeRoot(ComputeFrame {
+                            idx,
+                            memo,
+                            verified_at,
+                            guard: memo.flight.pilot().await,
+                        }));
 
                         continue;
                     }
@@ -212,34 +209,28 @@ impl Context<'_> {
                         verified_at,
                     };
                     queue.push(if idx == root_idx {
-                        Frame::ComputeRoot {
-                            compute,
-                            skip_pre_post: false,
-                        }
+                        Frame::ComputeRoot(compute)
                     } else {
-                        Frame::ComputeMemo { compute }
+                        Frame::ComputeMemo(compute)
                     });
 
                     let dependencies = memo.dependencies.lock().unwrap();
                     let dependencies = dependencies.iter().map(|&idx| Frame::Verify { idx });
                     queue.extend(dependencies);
                 }
-                Frame::ComputeRoot {
-                    skip_pre_post,
-                    compute:
-                        ComputeFrame {
-                            idx,
-                            memo,
-                            verified_at,
-                            guard: _guard,
-                        },
-                } => {
+                Frame::ComputeRoot(ComputeFrame {
+                    idx,
+                    memo,
+                    verified_at,
+                    guard: _guard,
+                }) => {
+                    let skip_pre_post = verified_at == revision;
                     if !skip_pre_post
-                        && !should_recompute(memo, verified_at)
+                        && !should_recompute(self.store, memo, verified_at).await
                         && let Some(value) = database.value(idx)
                     {
                         post_compute(memo, Difference::Unchanged);
-                        return value;
+                        break value;
                     }
 
                     let handle = Context {
@@ -257,35 +248,40 @@ impl Context<'_> {
                         *memo.dependencies.lock().unwrap() = dependencies;
                     }
 
-                    return value;
+                    break value;
                 }
-                Frame::ComputeMemo {
-                    compute:
-                        ComputeFrame {
-                            idx,
-                            memo,
-                            verified_at,
-                            guard: _guard,
-                        },
-                } => {
-                    let diff = if should_recompute(memo, verified_at) {
-                        let handle = Context {
-                            store: self.store,
-                            dependencies: Mutex::default(),
+                Frame::ComputeMemo(ComputeFrame {
+                    idx,
+                    verified_at,
+                    memo: _,
+                    guard,
+                }) => {
+                    let token = guard.tokenize();
+                    let store = self.store.clone();
+
+                    joinset.spawn(async move {
+                        let memo = &store.memos[idx.0];
+                        let _guard = FlightGuard::untokenize(&memo.flight, token);
+
+                        let diff = if should_recompute(&store, memo, verified_at).await {
+                            let handle = Context {
+                                store: &store,
+                                dependencies: Mutex::default(),
+                            };
+
+                            let database = &store.databases[&memo.database];
+                            database.recompute(idx, handle).await
+                        } else {
+                            Difference::Unchanged
                         };
 
-
-                        let database = &self.store.databases[&memo.database];
-                        database.recompute(idx, handle).await
-                    } else {
-                        Difference::Unchanged
-                    };
-
-                    post_compute(memo, diff);
+                        post_compute(memo, diff);
+                    });
                 }
             }
-        }
+        };
 
-        unreachable!()
+        while let Some(_) = joinset.join_next().await {}
+        value
     }
 }
