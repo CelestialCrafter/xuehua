@@ -202,9 +202,20 @@ mod tests {
         impl Compution1Query {
             async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
                 let offset = u128::try_from(self.offset).unwrap_or(u128::MAX);
-                qcx.query(RangeInput)
-                    .await
-                    .fold(0, |acc, x| acc.isqrt().wrapping_mul(x + offset))
+                let range = qcx.query(RangeInput).await;
+                range
+                    .map(u128::isqrt)
+                    .map(|x| x as f64)
+                    .map(|x| {
+                        (0..x.log10() as u64)
+                            .map(|x| x as f64)
+                            .map(f64::asinh)
+                            .map(f64::sqrt)
+                            .map(|x| x.atan2(offset as f64))
+                            .map(|x| x as u128)
+                    })
+                    .flatten()
+                    .fold(0, |acc, x| acc.wrapping_mul(x + offset))
             }
         }
 
@@ -280,8 +291,8 @@ mod tests {
         }
 
         let mut root = engine::Engine::new();
-        let max = 2u128.pow(24);
-        for _ in 0..3072 {
+        let max = 6144;
+        for _ in 0..256 {
             root = perform(root, 0..max / 2).await;
             root = perform(root, max / 2..max).await;
             root = perform(root, 0..max).await;
