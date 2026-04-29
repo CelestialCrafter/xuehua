@@ -1,5 +1,4 @@
 //! Query key, value, and memo storage
-
 mod fallible;
 mod in_memory;
 mod lru;
@@ -13,7 +12,7 @@ pub use fallible::Fallible;
 pub use in_memory::InMemory;
 pub use lru::LRU;
 
-use crate::{Query, KeyIndex, engine::Context};
+use crate::{KeyIndex, Query, engine::Context};
 
 /// Whether a value has changed or not
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -22,6 +21,46 @@ pub enum Difference {
     Changed,
     /// The new value is equivalent to the old value
     Unchanged,
+}
+
+#[cfg(feature = "inventory")]
+mod erased {
+    use std::any::TypeId;
+
+    pub use inventory::submit as register;
+
+    use crate::database::{DynDatabase, EdgeDatabase};
+
+    #[doc(hidden)]
+    pub struct ErasedDatabase {
+        pub(crate) type_id_fn: fn() -> TypeId,
+        pub(crate) database_fn: fn() -> Box<dyn DynDatabase>,
+    }
+
+    inventory::collect!(ErasedDatabase);
+
+    impl ErasedDatabase {
+        pub const fn new<D: EdgeDatabase + Default>() -> Self {
+            Self {
+                type_id_fn: || TypeId::of::<D>(),
+                database_fn: || Box::new(D::default()),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "inventory")]
+pub use erased::*;
+
+pub(crate) trait DynDatabase: Any + Send + Sync {
+    fn evict_garbage(&mut self) -> Vec<KeyIndex>;
+    fn recompute<'a>(&'a self, idx: KeyIndex, qcx: Context<'a>) -> BoxFuture<'a, Difference>;
+}
+
+impl fmt::Debug for dyn DynDatabase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (self as &dyn Any).fmt(f)
+    }
 }
 
 /// Marker trait for databases that take in their key's output
@@ -35,18 +74,6 @@ where
     Self::Key: Query<Value = Self::InputValue>,
 {
     type Constraint = Self::Key;
-}
-
-#[doc(hidden)]
-pub trait DynDatabase: Any + Send + Sync {
-    fn evict_garbage(&mut self) -> Vec<KeyIndex>;
-    fn recompute<'a>(&'a self, idx: KeyIndex, qcx: Context<'a>) -> BoxFuture<'a, Difference>;
-}
-
-impl fmt::Debug for dyn DynDatabase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        (self as &dyn Any).fmt(f)
-    }
 }
 
 impl<D: EdgeDatabase> DynDatabase for D {

@@ -98,7 +98,7 @@ impl<D: Database> Database for LRU<D> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "inventory"))]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 

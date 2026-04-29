@@ -1,7 +1,7 @@
 //! Engine handles and query execution
 
 use std::{
-    any::{Any, TypeId},
+    any::Any,
     fmt::Debug,
     sync::{Arc, Mutex, atomic::Ordering},
 };
@@ -10,14 +10,10 @@ use rustc_hash::FxHashSet;
 
 use crate::{
     KeyIndex, Query,
-    database::{Database, Difference, DynDatabase, EdgeDatabase},
+    database::{Database, Difference, EdgeDatabase},
     singleflight::{FlightGuard, FlightRole},
     store::{Memo, Store},
 };
-
-#[doc(hidden)]
-#[linkme::distributed_slice]
-pub static REGISTERED_DATABASES: [fn() -> (TypeId, Box<dyn DynDatabase>)];
 
 /// This handle owns the engine, and loans out [`Upcoming`] and [`Context`]s to utilize it.
 #[derive(Debug, Default)]
@@ -28,9 +24,13 @@ pub struct Engine {
 impl Engine {
     /// Constructs a new [`Engine`]
     pub fn new() -> Self {
+        #[cfg_attr(not(feature = "inventory"), allow(unused_mut))]
         let mut store = Store::default();
-        for func in REGISTERED_DATABASES {
-            let (type_id, database) = func();
+
+        #[cfg(feature = "inventory")]
+        for erased in inventory::iter::<crate::database::ErasedDatabase> {
+            let type_id = (erased.type_id_fn)();
+            let database = (erased.database_fn)();
             store.databases.insert(type_id, database);
         }
 

@@ -57,7 +57,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "inventory"))]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 

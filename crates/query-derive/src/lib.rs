@@ -1,10 +1,6 @@
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
-use syn::{
-    DeriveInput, Error, Expr, Path, Token, Type,
-    parse::{Parse, ParseStream},
-    spanned::Spanned,
-};
+use quote::quote;
+use syn::{DeriveInput, Error, Path, Type, parse::Parse, spanned::Spanned};
 
 #[proc_macro_derive(Query, attributes(database, compute))]
 pub fn derive_query(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -21,26 +17,6 @@ fn flatten_result(result: Result<TokenStream, Error>) -> TokenStream {
 }
 
 fn build_query_impl(input: DeriveInput) -> Result<TokenStream, Error> {
-    struct Database {
-        ty: Type,
-        expr: Expr,
-    }
-
-    impl Parse for Database {
-        fn parse(input: ParseStream) -> Result<Self, Error> {
-            let ty = input.parse()?;
-
-            let lookahead = input.lookahead1();
-            let expr = if lookahead.peek(Token![,]) {
-                input.parse::<Token![,]>().and_then(|_| input.parse())
-            } else {
-                syn::parse2(quote! { Default::default() })
-            }?;
-
-            Ok(Self { ty, expr })
-        }
-    }
-
     fn required_attr<T: Parse>(attr_name: &str, input: &DeriveInput) -> Result<T, Error> {
         let attr = input
             .attrs
@@ -67,25 +43,18 @@ fn build_query_impl(input: DeriveInput) -> Result<TokenStream, Error> {
         Ok(parsed)
     }
 
-    let database: Database = required_attr("database", &input)?;
+    let database: Type = required_attr("database", &input)?;
     let compute: Path = required_attr("compute", &input)?;
 
     let ident = input.ident;
-    let db_ty = database.ty;
-    let db_expr = database.expr;
-    let register = format_ident!("_{ident}_query_register");
-
     let query_impl = quote! {
-        #[::linkme::distributed_slice(::xh_query::engine::REGISTERED_DATABASES)]
-        fn #register() -> (::std::any::TypeId, ::std::boxed::Box<dyn ::xh_query::database::DynDatabase>) {
-            let db: #db_ty = { #db_expr };
-            let type_id = ::std::any::Any::type_id(&db);
-            (type_id, Box::new(db) as _)
+        ::xh_query::register_database! {
+            ::xh_query::database::ErasedDatabase::new::<#database>()
         }
 
         impl ::xh_query::Query for #ident {
             type Value = <Self::Database as ::xh_query::database::Database>::InputValue;
-            type Database = #db_ty;
+            type Database = #database;
 
             fn compute<'a>(self, qcx: &'a ::xh_query::engine::Context<'_>) -> impl Future<Output = Self::Value> + 'a {
                 #compute(self, qcx)

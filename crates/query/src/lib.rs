@@ -22,6 +22,17 @@ use std::{fmt, hash::Hash};
 
 use crate::database::Database;
 
+#[doc(hidden)]
+#[cfg(feature = "inventory")]
+pub use inventory::submit as register_database;
+
+#[doc(hidden)]
+#[cfg(not(feature = "inventory"))]
+#[macro_export]
+macro_rules! register_database {
+    ($($expr:tt)*) => {};
+}
+
 /// The arguments of some memoized computation
 pub trait Query: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
     /// The resulting value of the computation
@@ -42,7 +53,7 @@ pub async fn input_query<K: Query>(_input: K, _qcx: &engine::Context<'_>) -> K::
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct KeyIndex(usize);
 
-#[cfg(test)]
+#[cfg(all(test, feature = "inventory"))]
 mod tests {
     use std::{
         ops::Range,
@@ -54,7 +65,11 @@ mod tests {
 
     use tokio::{runtime::Runtime, task::JoinSet};
 
-    use crate::{Query, database, engine, input_query};
+    use crate::{
+        Query, database,
+        engine::{Context, Engine},
+        input_query,
+    };
 
     #[tokio::test]
     async fn test_early_cutoff() {
@@ -71,7 +86,7 @@ mod tests {
         #[compute(Self::inner)]
         struct LengthQuery;
         impl LengthQuery {
-            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, qcx: &Context<'_>) -> <Self as Query>::Value {
                 LEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
                 qcx.query(TextInput).await.len()
             }
@@ -82,13 +97,13 @@ mod tests {
         #[compute(Self::inner)]
         struct EvenQuery;
         impl EvenQuery {
-            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, qcx: &Context<'_>) -> <Self as Query>::Value {
                 EVEN_COMPUTES.fetch_add(1, Ordering::Relaxed);
                 qcx.query(LengthQuery).await % 2 == 0
             }
         }
 
-        let mut root = engine::Engine::new();
+        let mut root = Engine::new();
         root.upcoming().update(&TextInput, "hello".to_string());
         root.context().query(EvenQuery).await;
 
@@ -132,7 +147,7 @@ mod tests {
         #[compute(Self::inner)]
         struct BranchQuery;
         impl BranchQuery {
-            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, qcx: &Context<'_>) -> <Self as Query>::Value {
                 BRANCH_COMPUTES.fetch_add(1, Ordering::Relaxed);
                 match qcx.query(FlagInput).await {
                     FlagDirection::Left => qcx.query(LeftInput).await,
@@ -141,7 +156,7 @@ mod tests {
             }
         }
 
-        let mut root = engine::Engine::new();
+        let mut root = Engine::new();
         root.upcoming().update(&FlagInput, FlagDirection::Left);
         root.upcoming().update(&LeftInput, 10);
         root.upcoming().update(&RightInput, 20);
@@ -167,7 +182,7 @@ mod tests {
         #[compute(Self::inner)]
         struct SlowQuery;
         impl SlowQuery {
-            async fn inner(self, _qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, _qcx: &Context<'_>) -> <Self as Query>::Value {
                 SLOW_COMPUTES.fetch_add(1, Ordering::Relaxed);
                 for _ in 0..64 {
                     tokio::task::yield_now().await
@@ -175,7 +190,7 @@ mod tests {
             }
         }
 
-        let root: Arc<_> = engine::Engine::new().into();
+        let root: Arc<_> = Engine::new().into();
         let mut joinset = JoinSet::new();
         for _ in 0..16 {
             let root = root.clone();
@@ -200,7 +215,7 @@ mod tests {
             offset: usize,
         }
         impl Compution1Query {
-            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, qcx: &Context<'_>) -> <Self as Query>::Value {
                 let offset = u128::try_from(self.offset).unwrap_or(u128::MAX);
                 let range = qcx.query(RangeInput).await;
                 range
@@ -224,7 +239,7 @@ mod tests {
         #[compute(Self::inner)]
         struct Compution2Query;
         impl Compution2Query {
-            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, qcx: &Context<'_>) -> <Self as Query>::Value {
                 let bytes = qcx
                     .query(Compution1Query { offset: 0 })
                     .await
@@ -239,7 +254,7 @@ mod tests {
         #[compute(Self::inner)]
         struct Compution3Query;
         impl Compution3Query {
-            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, qcx: &Context<'_>) -> <Self as Query>::Value {
                 const ROWS: usize = 8;
                 const COLUMNS: usize = 16;
 
@@ -266,7 +281,7 @@ mod tests {
         #[compute(Self::inner)]
         struct RootQuery;
         impl RootQuery {
-            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, qcx: &Context<'_>) -> <Self as Query>::Value {
                 let mut c_matrix = vec![[0 as char; 16]; 8192];
 
                 let range = qcx.query(RangeInput).await;
@@ -284,13 +299,13 @@ mod tests {
             }
         }
 
-        async fn perform(mut root: engine::Engine, range: Range<u128>) -> engine::Engine {
+        async fn perform(mut root: Engine, range: Range<u128>) -> Engine {
             root.upcoming().update(&RangeInput, range);
             root.context().query(RootQuery).await;
             root
         }
 
-        let mut root = engine::Engine::new();
+        let mut root = Engine::new();
         let max = 6144;
         for _ in 0..256 {
             root = perform(root, 0..max / 2).await;
@@ -326,7 +341,7 @@ mod tests {
         #[compute(Self::inner)]
         struct Mutation1Query;
         impl Mutation1Query {
-            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, qcx: &Context<'_>) -> <Self as Query>::Value {
                 let lhs = qcx.query(Input1).await;
                 let rhs = qcx.query(Input2).await;
                 lhs.wrapping_add(rhs)
@@ -338,7 +353,7 @@ mod tests {
         #[compute(Self::inner)]
         struct Mutation2Query;
         impl Mutation2Query {
-            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, qcx: &Context<'_>) -> <Self as Query>::Value {
                 let lhs = qcx.query(Input3).await;
                 let rhs = qcx.query(Input4).await;
                 lhs.wrapping_mul(rhs)
@@ -350,7 +365,7 @@ mod tests {
         #[compute(Self::inner)]
         struct RootQuery;
         impl RootQuery {
-            async fn inner(self, qcx: &engine::Context<'_>) -> <Self as Query>::Value {
+            async fn inner(self, qcx: &Context<'_>) -> <Self as Query>::Value {
                 let m1 = qcx.query(Mutation1Query).await;
                 if m1 % 2 == 0 {
                     m1.wrapping_mul(10)
@@ -361,7 +376,7 @@ mod tests {
         }
 
         async fn inner(u: &mut arbitrary::Unstructured<'_>) -> Result<(), arbitrary::Error> {
-            let mut root = engine::Engine::new();
+            let mut root = Engine::new();
 
             let mut input1 = 0;
             let mut input2 = 0;
