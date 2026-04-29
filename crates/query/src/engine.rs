@@ -7,7 +7,6 @@ use std::{
 };
 
 use rustc_hash::FxHashSet;
-use tokio::task::JoinSet;
 
 use crate::{
     KeyIndex, Query,
@@ -47,8 +46,20 @@ impl Engine {
         }
     }
 
+    // FIX: refactor this function once either:
+    //      - polonius stabilizes
+    //      - both `Arc::is_unique` and `Arc::get_mut_unchecked` stabilize
     fn store_mut(&mut self) -> &mut Store {
-        Arc::get_mut(&mut self.store).expect("store should not have outstanding references")
+        let ptr: *mut Arc<Store> = &mut self.store;
+        loop {
+            // SAFETY: since `ptr` comes from `&mut self`, no aliases exist
+            //         we never create overlapping &mut borrows
+            let arc: &mut Arc<Store> = unsafe { &mut *ptr };
+            match Arc::get_mut(arc) {
+                Some(store) => break store,
+                None => std::hint::spin_loop(),
+            }
+        }
     }
 
     /// Loan out an [`Upcoming`] to mutate the engine
@@ -168,7 +179,6 @@ impl Context<'_> {
         };
 
         let mut queue = vec![Frame::Verify { idx: root_idx }];
-        let mut joinset = JoinSet::new();
         let value = loop {
             let Some(frame) = queue.pop() else {
                 unreachable!("ComputeRoot should break out of the loop");
@@ -259,7 +269,7 @@ impl Context<'_> {
                     let token = guard.tokenize();
                     let store = self.store.clone();
 
-                    joinset.spawn(async move {
+                    tokio::task::spawn(async move {
                         let memo = &store.memos[idx.0];
                         let _guard = FlightGuard::untokenize(&memo.flight, token);
 
@@ -281,7 +291,6 @@ impl Context<'_> {
             }
         };
 
-        while let Some(_) = joinset.join_next().await {}
         value
     }
 }
