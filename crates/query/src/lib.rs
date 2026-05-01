@@ -16,11 +16,12 @@ pub mod engine;
 mod singleflight;
 mod store;
 
+use educe::Educe;
 pub use xh_query_derive::Query;
 
 use std::{fmt, hash::Hash};
 
-use crate::database::Database;
+use crate::database::{Database, EdgeDatabase};
 
 #[doc(hidden)]
 #[cfg(feature = "inventory")]
@@ -38,7 +39,7 @@ pub trait Query: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
     /// The resulting value of the computation
     type Value: fmt::Debug + Send + Sync;
     /// The backing storage for computed values
-    type Database: Database<Key = Self, InputValue = Self::Value>;
+    type Database: EdgeDatabase<QueryConstraint = Self> + Database<InputValue = Self::Value>;
 
     /// Returns the computed value for this key
     fn compute(self, qcx: &engine::Context<'_>) -> impl Future<Output = Self::Value> + Send;
@@ -52,6 +53,11 @@ pub async fn input_query<K: Query>(_input: K, _qcx: &engine::Context<'_>) -> K::
 /// Cheaply clonable index to any given key
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct KeyIndex(usize);
+
+/// The hash of a memoized value
+#[derive(Educe)]
+#[educe(Deref)]
+pub struct Fingerprint(pub u64);
 
 #[cfg(all(test, feature = "inventory"))]
 mod tests {

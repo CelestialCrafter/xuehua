@@ -1,8 +1,12 @@
 use std::marker::PhantomData;
 
+use bytes::Bytes;
 use educe::Educe;
 
-use crate::{KeyIndex, database::Database};
+use crate::{
+    Fingerprint, KeyIndex,
+    database::{Database, persist::Persist},
+};
 
 use super::Difference;
 
@@ -14,6 +18,32 @@ pub struct Fallible<E, D> {
     _marker: PhantomData<E>,
 }
 
+impl<E, D: Database> Persist for Fallible<E, D> {
+    type Value<'a>
+        = Result<<D::PersistExtension<'a> as Persist>::Value<'a>, E>
+    where
+        Self: 'a;
+
+    fn fingerprint<'a>(&'a self, value: &Self::Value<'a>) -> Option<Fingerprint> {
+        let persistence = self.inner.persistence();
+        match value {
+            Ok(value) => persistence.fingerprint(value),
+            Err(_) => None,
+        }
+    }
+
+    fn serialize<'a>(&'a self, value: &Self::Value<'a>) -> Option<Bytes> {
+        match value {
+            Ok(value) => self.inner.persistence().serialize(value),
+            Err(_) => None,
+        }
+    }
+
+    fn deserialize<'a>(&'a self, data: Bytes) -> Option<Self::Value<'a>> {
+        self.inner.persistence().deserialize(data).map(Ok)
+    }
+}
+
 impl<E, D> Database for Fallible<E, D>
 where
     E: Send + Sync + 'static,
@@ -22,6 +52,8 @@ where
     type Key = D::Key;
     type InputValue = Result<D::InputValue, E>;
     type OutputValue<'a> = Result<D::OutputValue<'a>, E>;
+    type PersistExtension<'a> = Self;
+    type EvictionExtension<'a> = D::EvictionExtension<'a>;
 
     fn index(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex {
         self.inner.index(key, new)
@@ -54,6 +86,14 @@ where
             }
             Err(err) => (Err(err), Difference::Changed),
         }
+    }
+
+    fn persistence(&self) -> &Self::PersistExtension<'_> {
+        self
+    }
+
+    fn eviction(&mut self) -> &mut Self::EvictionExtension<'_> {
+        self.inner.eviction()
     }
 }
 
@@ -88,6 +128,7 @@ mod tests {
         struct FallibleQuery {
             ok: bool,
         }
+
         impl FallibleQuery {
             async fn inner(self, _qcx: &Context<'_>) -> <Self as Query>::Value {
                 let hidden = Hidden {
@@ -99,7 +140,6 @@ mod tests {
         }
 
         let root = Engine::new();
-
         let extract = |value| match value {
             Ok(Hidden { value }) => value,
             Err(Hidden { value }) => value,

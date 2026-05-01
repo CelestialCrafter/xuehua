@@ -1,18 +1,22 @@
 //! Query key, value, and memo storage
+
+pub mod evict;
 mod fallible;
 mod in_memory;
-mod lru;
+pub mod persist;
 
-use core::fmt;
-use std::any::Any;
+use std::{any::Any, fmt};
 
 use futures_util::{FutureExt, future::BoxFuture};
 
 pub use fallible::Fallible;
 pub use in_memory::InMemory;
-pub use lru::LRU;
 
-use crate::{KeyIndex, Query, engine::Context};
+use crate::{
+    KeyIndex, Query,
+    database::{evict::Evict, persist::Persist},
+    engine::Context,
+};
 
 /// Whether a value has changed or not
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -64,21 +68,21 @@ impl fmt::Debug for dyn DynDatabase {
 }
 
 /// Marker trait for databases that take in their key's output
-pub trait EdgeDatabase: Database<Key = Self::Constraint> {
+pub trait EdgeDatabase: Database<Key = Self::QueryConstraint> {
     #[doc(hidden)]
-    type Constraint: Query<Value = Self::InputValue>;
+    type QueryConstraint: Query<Value = Self::InputValue>;
 }
 
 impl<T: Database> EdgeDatabase for T
 where
     Self::Key: Query<Value = Self::InputValue>,
 {
-    type Constraint = Self::Key;
+    type QueryConstraint = Self::Key;
 }
 
 impl<D: EdgeDatabase> DynDatabase for D {
     fn evict_garbage(&mut self) -> Vec<KeyIndex> {
-        Database::evict_garbage(self)
+        self.eviction().evict_garbage()
     }
 
     fn recompute<'a>(&'a self, idx: KeyIndex, qcx: Context<'a>) -> BoxFuture<'a, Difference> {
@@ -100,52 +104,47 @@ impl<D: EdgeDatabase> DynDatabase for D {
     }
 }
 
-/// Trait for storage of computed values
+/// Trait for storage of computed values.
 ///
 /// Implementors must ensure that the database operates logically
-/// (eg. after `set_value`, `value_of` should return Some)
+/// (eg. after `set_value`, `value_of` should return Some).
 pub trait Database: Send + Sync + 'static {
-    /// Keys the database can handle
+    /// Keys the database can handle.
     type Key;
 
-    /// Values the database can take as an input
+    /// Values the database can take as an input.
     type InputValue;
 
-    /// Values the database returns as an output
+    /// Values the database returns as an output.
     type OutputValue<'a>;
 
-    /// Returns the index or identifier of a given key
+    /// Eviction strategy the database can use.
+    type EvictionExtension<'a>: Evict;
+    /// Persistence strategy the database can use.
+    type PersistExtension<'a>: Persist<Value<'a> = Self::OutputValue<'a>>;
+
+    /// Returns the index or identifier of a given key.
     fn index(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex;
 
-    /// Returns the key at a given index
+    /// Returns the key at a given index.
     fn key(&self, idx: KeyIndex) -> Option<Self::Key>;
 
-    /// Returns the value at a given index
+    /// Returns the value at a given index.
     fn value(&self, idx: KeyIndex) -> Option<Self::OutputValue<'_>>;
 
-    /// Updates the value at a given index
+    /// Updates the value at a given index.
     fn set_value(&self, idx: KeyIndex, value: Self::InputValue) -> Difference;
 
-    /// Same as [`set_value`], except returns a corresponding instance of [`Self::OutputValue`]
+    /// Same as [`set_value`], except returns a corresponding instance of [`Self::OutputValue`].
     fn pass_value(
         &self,
         idx: KeyIndex,
         value: Self::InputValue,
     ) -> (Self::OutputValue<'_>, Difference);
 
-    /// Evicts all "garbage" from the database
-    ///
-    /// Returns an iterator of all keys evicted
-    fn evict_garbage(&mut self) -> Vec<KeyIndex> {
-        vec![]
-    }
+    /// Returns the persistence database extension.
+    fn persistence(&self) -> &Self::PersistExtension<'_>;
 
-    /// Evicts an iterator of keys from the database
-    ///
-    /// Note that the database may not choose to evict some keys
-    #[allow(
-        unused_variables,
-        reason = "avoids putting _indicies in the trait's fn signature"
-    )]
-    fn evict_iter(&mut self, indicies: impl Iterator<Item = KeyIndex>) {}
+    /// Returns the eviction database extension.
+    fn eviction(&mut self) -> &mut Self::EvictionExtension<'_>;
 }

@@ -3,7 +3,10 @@ use std::sync::{Mutex, atomic::AtomicUsize};
 use educe::Educe;
 use rapidhash::RapidHashMap;
 
-use crate::{KeyIndex, database::{Database, Difference}};
+use crate::{
+    KeyIndex,
+    database::{Database, Difference, evict::Evict},
+};
 
 pub const DEFAULT_CAPACITY: usize = 512;
 
@@ -42,6 +45,8 @@ impl<D: Database> Database for LRU<D> {
     type Key = D::Key;
     type InputValue = D::InputValue;
     type OutputValue<'a> = D::OutputValue<'a>;
+    type EvictionExtension<'a> = Self;
+    type PersistExtension<'a> = D::PersistExtension<'a>;
 
     fn index(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex {
         self.inner.index(key, new)
@@ -70,6 +75,16 @@ impl<D: Database> Database for LRU<D> {
         self.inner.pass_value(idx, value)
     }
 
+    fn eviction(&mut self) -> &mut Self::EvictionExtension<'_> {
+        self
+    }
+
+    fn persistence(&self) -> &Self::PersistExtension<'_> {
+        self.inner.persistence()
+    }
+}
+
+impl<D: Database> Evict for LRU<D> {
     fn evict_garbage(&mut self) -> Vec<KeyIndex> {
         let usage = self.usage.get_mut().unwrap();
 
@@ -91,8 +106,12 @@ impl<D: Database> Database for LRU<D> {
             }
         });
 
-        self.inner.evict_iter(evicted.iter().copied());
+        self.inner.eviction().evict_iter(evicted.iter().copied());
         evicted
+    }
+
+    fn evict_iter(&mut self, indicies: impl Iterator<Item = KeyIndex>) {
+        self.inner.eviction().evict_iter(indicies)
     }
 }
 
@@ -102,9 +121,11 @@ mod tests {
 
     use crate::{
         Query,
-        database::{InMemory, LRU, lru::DEFAULT_CAPACITY},
+        database::InMemory,
         engine::{Context, Engine},
     };
+
+    use super::{DEFAULT_CAPACITY, LRU};
 
     #[tokio::test]
     async fn test_eviction() {
@@ -121,16 +142,16 @@ mod tests {
         }
 
         let mut engine = Engine::new();
-        for i in 0..DEFAULT_CAPACITY * 2 {
-            engine.context().query(LRUQuery(i)).await;
-        }
+        let fill = async |engine: &mut Engine| {
+            for i in 0..DEFAULT_CAPACITY * 2 {
+                engine.context().query(LRUQuery(i)).await;
+            }
+        };
 
+        fill(&mut engine).await;
         // allow the engine to evict 0..DEFAULT_CAPACITY
         engine.upcoming();
-
-        for i in 0..DEFAULT_CAPACITY {
-            engine.context().query(LRUQuery(i)).await;
-        }
+        fill(&mut engine).await;
 
         assert_eq!(LRU_COMPUTES.load(Ordering::Relaxed), DEFAULT_CAPACITY * 3);
     }

@@ -1,16 +1,17 @@
 use std::{
     any::{Any, TypeId},
     num::NonZeroUsize,
-    sync::{Mutex, atomic::AtomicUsize},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
 };
 
 use educe::Educe;
 use rapidhash::{RapidHashMap, RapidHashSet};
 
 use crate::{
-    KeyIndex, Query,
-    database::{DynDatabase, EdgeDatabase},
-    singleflight::SingleFlight,
+    Fingerprint, KeyIndex, Query, database::{DynDatabase, EdgeDatabase}, singleflight::SingleFlight
 };
 
 #[derive(Debug)]
@@ -20,6 +21,25 @@ pub struct Memo {
     pub changed_at: AtomicUsize,
     pub flight: SingleFlight,
     pub database: TypeId,
+    fingerprint: AtomicU64,
+}
+
+impl Memo {
+    pub fn load_fingerprint(&self, order: Ordering) -> Option<Fingerprint> {
+        match self.fingerprint.load(order) {
+            0 => None,
+            value => Some(Fingerprint(value)),
+        }
+    }
+
+    pub fn store_fingerprint(&self, value: Option<Fingerprint>, order: Ordering) {
+        let value = match value {
+            Some(value) => *value,
+            None => 0,
+        };
+
+        self.fingerprint.store(value, order);
+    }
 }
 
 #[derive(Educe, Debug)]
@@ -52,6 +72,7 @@ impl Store {
                 dependencies: Mutex::default(),
                 flight: SingleFlight::default(),
                 database: database.type_id(),
+                fingerprint: AtomicU64::new(0),
             });
 
             KeyIndex(idx)

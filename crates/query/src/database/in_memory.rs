@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     KeyIndex,
-    database::{Database, Difference},
+    database::{Database, Difference, evict::Evict, persist},
 };
 use educe::Educe;
 use rapidhash::{RapidHashMap, fast::RandomState};
@@ -18,6 +18,7 @@ pub struct InMemory<K, V, S = RandomState> {
     lookup: Mutex<HashMap<K, KeyIndex, S>>,
     keys: Mutex<RapidHashMap<KeyIndex, K>>,
     values: Mutex<RapidHashMap<KeyIndex, V>>,
+    persist: persist::NoOp<V>,
 }
 
 impl<K, V, S> Database for InMemory<K, V, S>
@@ -29,6 +30,8 @@ where
     type Key = K;
     type InputValue = V;
     type OutputValue<'a> = V;
+    type PersistExtension<'a> = persist::NoOp<V>;
+    type EvictionExtension<'a> = Self;
 
     fn index(&self, key: &Self::Key, new: impl FnOnce() -> KeyIndex) -> KeyIndex {
         let mut lookup = self.lookup.lock().unwrap();
@@ -79,6 +82,20 @@ where
         (value, diff)
     }
 
+    fn persistence(&self) -> &Self::PersistExtension<'_> {
+        &self.persist
+    }
+
+    fn eviction(&mut self) -> &mut Self::EvictionExtension<'_> {
+        self
+    }
+}
+
+impl<K: Eq + Hash, V, S: BuildHasher> Evict for InMemory<K, V, S> {
+    fn evict_garbage(&mut self) -> Vec<KeyIndex> {
+        vec![]
+    }
+
     fn evict_iter(&mut self, indicies: impl Iterator<Item = KeyIndex>) {
         let lookup = self.lookup.get_mut().unwrap();
         let keys = self.keys.get_mut().unwrap();
@@ -95,16 +112,19 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{KeyIndex, database::{Database, InMemory}};
+    use crate::{
+        KeyIndex,
+        database::{Database, InMemory, evict::Evict},
+    };
 
     #[test]
     fn test_eviction() {
         let mut database = InMemory::<(), usize>::new();
-
         let idx = database.index(&(), || KeyIndex(0));
-        database.set_value(idx, 0);
 
-        database.evict_iter(std::iter::once(idx));
+        database.set_value(idx, 0);
+        database.eviction().evict_iter(std::iter::once(idx));
+
         assert_eq!(database.key(idx), None);
         assert_eq!(database.value(idx), None);
     }
