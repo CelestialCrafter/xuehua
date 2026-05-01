@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex, atomic::Ordering},
 };
 
-use rustc_hash::FxHashSet;
+use rapidhash::RapidHashSet;
 
 use crate::{
     KeyIndex, Query,
@@ -128,7 +128,7 @@ impl Upcoming<'_> {
 #[derive(Debug)]
 pub struct Context<'a> {
     pub(crate) store: &'a Arc<Store>,
-    pub(crate) dependencies: Mutex<FxHashSet<KeyIndex>>,
+    pub(crate) dependencies: Mutex<RapidHashSet<KeyIndex>>,
 }
 
 impl Context<'_> {

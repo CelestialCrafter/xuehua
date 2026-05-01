@@ -5,17 +5,17 @@ use std::{
 };
 
 use educe::Educe;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rapidhash::{RapidHashMap, RapidHashSet};
 
 use crate::{
-    Query, KeyIndex,
+    KeyIndex, Query,
     database::{DynDatabase, EdgeDatabase},
     singleflight::SingleFlight,
 };
 
 #[derive(Debug)]
 pub struct Memo {
-    pub dependencies: Mutex<FxHashSet<KeyIndex>>,
+    pub dependencies: Mutex<RapidHashSet<KeyIndex>>,
     pub verified_at: AtomicUsize,
     pub changed_at: AtomicUsize,
     pub flight: SingleFlight,
@@ -25,7 +25,7 @@ pub struct Memo {
 #[derive(Educe, Debug)]
 #[educe(Default)]
 pub struct Store {
-    pub databases: FxHashMap<TypeId, Box<dyn DynDatabase>>,
+    pub databases: RapidHashMap<TypeId, Box<dyn DynDatabase>>,
     pub memos: boxcar::Vec<Memo>,
     // revision 0 is treated as untracked in verified_at and changed_at
     #[educe(Default = NonZeroUsize::new(1).unwrap())]

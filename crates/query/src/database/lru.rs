@@ -1,11 +1,9 @@
 use std::sync::{Mutex, atomic::AtomicUsize};
 
 use educe::Educe;
-use rustc_hash::FxHashMap;
+use rapidhash::RapidHashMap;
 
-use crate::{KeyIndex, database::Database};
-
-use super::Difference;
+use crate::{KeyIndex, database::{Database, Difference}};
 
 pub const DEFAULT_CAPACITY: usize = 512;
 
@@ -17,7 +15,7 @@ pub struct LRU<D> {
     #[educe(Default(expr = DEFAULT_CAPACITY))]
     capacity: usize,
     counter: AtomicUsize,
-    usage: Mutex<FxHashMap<KeyIndex, usize>>,
+    usage: Mutex<RapidHashMap<KeyIndex, usize>>,
 }
 
 impl<D: Database> LRU<D> {

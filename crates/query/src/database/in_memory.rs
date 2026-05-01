@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
-    hash::{BuildHasher, Hash, RandomState},
+    hash::{BuildHasher, Hash},
     sync::Mutex,
 };
 
@@ -9,15 +9,15 @@ use crate::{
     database::{Database, Difference},
 };
 use educe::Educe;
-use rustc_hash::FxHashMap;
+use rapidhash::{RapidHashMap, fast::RandomState};
 
 /// Simple generic in-memory database
 #[derive(Educe, Debug)]
 #[educe(Default(new, bound(S: Default)))]
 pub struct InMemory<K, V, S = RandomState> {
     lookup: Mutex<HashMap<K, KeyIndex, S>>,
-    keys: Mutex<FxHashMap<KeyIndex, K>>,
-    values: Mutex<FxHashMap<KeyIndex, V>>,
+    keys: Mutex<RapidHashMap<KeyIndex, K>>,
+    values: Mutex<RapidHashMap<KeyIndex, V>>,
 }
 
 impl<K, V, S> Database for InMemory<K, V, S>

@@ -10,12 +10,12 @@ inventory = ["dep:inventory"]
 [dependencies]
 log.workspace = true
 educe.workspace = true
-rustc-hash = "2.1.1"
 tokio = { workspace = true, features = ["rt", "sync"] }
 boxcar = "0.2.14"
 futures-util = { version = "0.3.32", default-features = false, features = ["std", "alloc"] }
 xh-query-derive = { path = "../query-derive" }
 inventory = { optional = true, version = "0.3.24" }
+rapidhash = { version = "4.4.1", features = ["unsafe"] }
 
 [dev-dependencies]
 arbitrary = "1.4.2"
