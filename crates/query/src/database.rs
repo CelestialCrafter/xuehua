@@ -5,7 +5,7 @@ mod fallible;
 mod in_memory;
 pub mod persist;
 
-use std::{any::Any, fmt};
+use std::{any::Any, fmt, sync::atomic::Ordering};
 
 use futures_util::{FutureExt, future::BoxFuture};
 
@@ -92,10 +92,12 @@ impl<D: EdgeDatabase> DynDatabase for D {
 
         async move {
             let value = key.compute(&qcx).await;
-            let diff = Database::set_value(self, idx, value);
+            let (value, diff) = self.pass_value(idx, value);
+            let fingerprint = self.persistence().fingerprint(&value);
 
             let dependencies = qcx.dependencies.into_inner().unwrap();
             let memo = &qcx.store.memos[idx.0];
+            memo.store_fingerprint(fingerprint, Ordering::Release);
             *memo.dependencies.lock().unwrap() = dependencies;
 
             diff
@@ -132,10 +134,7 @@ pub trait Database: Send + Sync + 'static {
     /// Returns the value at a given index.
     fn value(&self, idx: KeyIndex) -> Option<Self::OutputValue<'_>>;
 
-    /// Updates the value at a given index.
-    fn set_value(&self, idx: KeyIndex, value: Self::InputValue) -> Difference;
-
-    /// Same as [`set_value`], except returns a corresponding instance of [`Self::OutputValue`].
+    /// Updates the value at a given index, and returns a corresponding instance of [`Self::OutputValue`].
     fn pass_value(
         &self,
         idx: KeyIndex,

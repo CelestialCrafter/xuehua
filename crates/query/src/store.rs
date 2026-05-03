@@ -32,7 +32,18 @@ impl Memo {
         }
     }
 
+    pub fn store_fingerprint_mut(&mut self, value: Option<Fingerprint>) {
+        eprintln!("{:?}", value.as_ref().map(|v| v.0));
+        let value = match value {
+            Some(value) => *value,
+            None => 0,
+        };
+
+        *self.fingerprint.get_mut() = value;
+    }
+
     pub fn store_fingerprint(&self, value: Option<Fingerprint>, order: Ordering) {
+        eprintln!("{:?}", value.as_ref().map(|v| v.0));
         let value = match value {
             Some(value) => *value,
             None => 0,

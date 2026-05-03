@@ -10,7 +10,7 @@ use rapidhash::RapidHashSet;
 
 use crate::{
     KeyIndex, Query,
-    database::{Database, Difference, EdgeDatabase},
+    database::{Database, Difference, EdgeDatabase, persist::Persist},
     singleflight::{FlightGuard, FlightRole},
     store::{Memo, Store},
 };
@@ -109,7 +109,10 @@ impl Upcoming<'_> {
         let database = self.store.database_of::<K>();
         let idx = self.store.index_of(database, key);
 
-        database.set_value(idx, value);
+        let fingerprint = {
+            let (value, _) = database.pass_value(idx, value);
+            database.persistence().fingerprint(&value)
+        };
 
         let revision = self.store.revision.get();
         let memo = self
@@ -118,6 +121,7 @@ impl Upcoming<'_> {
             .get_mut(idx.0)
             .expect("memo should be valid for any KeyIndex");
 
+        memo.store_fingerprint_mut(fingerprint);
         *memo.verified_at.get_mut() = revision;
         *memo.changed_at.get_mut() = revision;
         memo.dependencies = Mutex::default();
@@ -152,6 +156,9 @@ impl Context<'_> {
         let root_idx = self.store.index_of(database, &key);
         self.dependencies.lock().unwrap().insert(root_idx);
 
+        // let the key be taken out instead of cloned
+        let mut key = Some(key);
+
         let post_compute = move |memo: &Memo, diff| {
             memo.verified_at.store(revision, Ordering::Release);
             if let Difference::Changed = diff {
@@ -167,6 +174,8 @@ impl Context<'_> {
             let dependencies = memo.dependencies.lock().unwrap().clone();
             for dep_idx in dependencies {
                 let dep_memo = &store.memos[dep_idx.0];
+                // FIX: somehow check that verified_at updated in case the task panicked
+                //      we need some form of communication between parents and dependencies
                 let _ = dep_memo.flight.takeoff().await;
                 let dep_ca = dep_memo.changed_at.load(Ordering::Acquire);
 
@@ -248,8 +257,11 @@ impl Context<'_> {
                         dependencies: Mutex::default(),
                     };
 
-                    let value = key.clone().compute(&handle).await;
+                    let key = key.take().expect("key should only be taken once");
+                    let value = key.compute(&handle).await;
                     let (value, diff) = database.pass_value(idx, value);
+                    let fingerprint = database.persistence().fingerprint(&value);
+                    memo.store_fingerprint(fingerprint, Ordering::Release);
 
                     if !skip_pre_post {
                         post_compute(memo, diff);

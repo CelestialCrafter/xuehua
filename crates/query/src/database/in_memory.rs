@@ -55,30 +55,28 @@ where
         self.values.lock().unwrap().get(&idx).cloned()
     }
 
-    fn set_value(&self, idx: KeyIndex, value: Self::InputValue) -> Difference {
-        match self.values.lock().unwrap().entry(idx) {
+    fn pass_value(
+        &self,
+        idx: KeyIndex,
+        value: Self::InputValue,
+    ) -> (Self::OutputValue<'_>, Difference) {
+        let mut values = self.values.lock().unwrap();
+        let diff = match values.entry(idx) {
             Entry::Occupied(mut occupied) => {
                 let current = occupied.get_mut();
                 if *current != value {
-                    *current = value;
+                    *current = value.clone();
                     Difference::Changed
                 } else {
                     Difference::Unchanged
                 }
             }
             Entry::Vacant(vacant) => {
-                vacant.insert(value);
+                vacant.insert(value.clone());
                 Difference::Changed
             }
-        }
-    }
+        };
 
-    fn pass_value(
-        &self,
-        idx: KeyIndex,
-        value: Self::InputValue,
-    ) -> (Self::OutputValue<'_>, Difference) {
-        let diff = self.set_value(idx, value.clone());
         (value, diff)
     }
 
@@ -122,7 +120,7 @@ mod tests {
         let mut database = InMemory::<(), usize>::new();
         let idx = database.index(&(), || KeyIndex(0));
 
-        database.set_value(idx, 0);
+        database.pass_value(idx, 0);
         database.eviction().evict_iter(std::iter::once(idx));
 
         assert_eq!(database.key(idx), None);

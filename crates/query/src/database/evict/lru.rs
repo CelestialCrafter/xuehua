@@ -61,11 +61,6 @@ impl<D: Database> Database for LRU<D> {
         self.inner.value(idx)
     }
 
-    fn set_value(&self, idx: KeyIndex, value: Self::InputValue) -> Difference {
-        self.update(idx);
-        self.inner.set_value(idx, value)
-    }
-
     fn pass_value(
         &self,
         idx: KeyIndex,

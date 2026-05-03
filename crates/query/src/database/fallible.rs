@@ -67,13 +67,6 @@ where
         self.inner.value(idx).map(Ok)
     }
 
-    fn set_value(&self, idx: KeyIndex, value: Self::InputValue) -> Difference {
-        match value {
-            Ok(value) => self.inner.set_value(idx, value),
-            Err(_) => Difference::Changed,
-        }
-    }
-
     fn pass_value(
         &self,
         idx: KeyIndex,
