@@ -19,7 +19,6 @@ pub trait Evict {
 }
 
 /// No-Op eviction extension for when a database does not support eviction.
-#[derive(Clone, Copy)]
 pub struct NoOp;
 impl Evict for NoOp {
     fn evict_garbage(&mut self) -> Vec<KeyIndex> {

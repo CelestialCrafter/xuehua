@@ -1,57 +1,43 @@
-use std::hash::{BuildHasher, Hash, Hasher};
-
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     Fingerprint, KeyIndex,
-    database::{
-        Database, Difference,
-        persist::{COMPILATION_SALT, Persist},
-    },
+    database::{Database, Difference, persist::Persist},
 };
 
-/// Database adapter allowing persistence fingerprinting of values.
-#[derive(Default)]
-pub struct Fingerprinting<S, D> {
-    build_hasher: S,
+/// Database adapter implementing serialization and deserialization of values via [`postcard`].
+pub struct Postcard<D> {
     inner: D,
 }
 
-impl<S, D> Persist for Fingerprinting<S, D>
+impl<D> Persist for Postcard<D>
 where
-    S: BuildHasher + 'static,
     D: Database,
-    for<'a> D::OutputValue<'a>: Hash,
-    D::OutputValue<'static>: 'static,
+    for<'a> D::OutputValue<'a>: Serialize + Deserialize<'a>,
 {
     type Value<'a>
         = D::OutputValue<'a>
     where
         Self: 'a;
 
-    // ideally we'd hash the TypeId aswell, but we cant..
     fn fingerprint<'a>(&'a self, value: &Self::Value<'a>) -> Option<Fingerprint> {
-        let mut hasher = self.build_hasher.build_hasher();
-        value.hash(&mut hasher);
-        COMPILATION_SALT.hash(&mut hasher);
-
-        Some(Fingerprint(hasher.finish()))
+        self.inner.persistence().fingerprint(value)
     }
 
     fn serialize<'a>(&'a self, value: &Self::Value<'a>) -> Option<Bytes> {
-        self.inner.persistence().serialize(value)
+        postcard::to_allocvec(value).map(Bytes::from_owner).ok()
     }
 
     fn deserialize<'a>(&'a self, data: &'a Bytes) -> Option<Self::Value<'a>> {
-        self.inner.persistence().deserialize(data)
+        postcard::from_bytes(&data).ok()
     }
 }
 
-impl<S, D> Database for Fingerprinting<S, D>
+impl<D> Database for Postcard<D>
 where
-    S: BuildHasher + Sync + Send + 'static,
     D: Database,
-    for<'a> D::OutputValue<'a>: Hash,
+    for<'a> D::OutputValue<'a>: Serialize + Deserialize<'a>,
 {
     type Key = D::Key;
     type InputValue = D::InputValue;

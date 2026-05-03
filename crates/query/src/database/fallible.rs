@@ -39,7 +39,7 @@ impl<E, D: Database> Persist for Fallible<E, D> {
         }
     }
 
-    fn deserialize(&self, data: Bytes) -> Option<Self::Value<'_>> {
+    fn deserialize<'a>(&'a self, data: &'a Bytes) -> Option<Self::Value<'a>> {
         self.inner.persistence().deserialize(data).map(Ok)
     }
 }

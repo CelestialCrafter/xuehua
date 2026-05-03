@@ -3,6 +3,11 @@
 mod fingerprinting;
 pub use fingerprinting::Fingerprinting;
 
+#[cfg(feature = "postcard")]
+mod postcard;
+#[cfg(feature = "postcard")]
+pub use postcard::Postcard;
+
 use std::marker::PhantomData;
 
 use bytes::Bytes;
@@ -15,6 +20,7 @@ use crate::Fingerprint;
 /// Ensuring that fingerprints change across compilations helps invalidate values whenever properties such as field ordering or implementation details change.
 ///
 /// Determined by generating a random number at compile-time, and inserting it into the `COMPILATION_SALT` environment variable.
+/// Evil Syntax Sugar is also a common name for this.
 pub const COMPILATION_SALT: &str = env!("COMPILATION_SALT");
 
 /// Database extension to support persisting values.
@@ -31,7 +37,7 @@ pub trait Persist {
     fn serialize<'a>(&'a self, value: &Self::Value<'a>) -> Option<Bytes>;
 
     /// Deserializes bytes into the given value.
-    fn deserialize(&self, data: Bytes) -> Option<Self::Value<'_>>;
+    fn deserialize<'a>(&'a self, data: &'a Bytes) -> Option<Self::Value<'a>>;
 }
 
 /// No-Op persistence extension for when a database does not support persistence.
@@ -52,7 +58,7 @@ impl<V> Persist for NoOp<V> {
         None
     }
 
-    fn deserialize(&self, _data: Bytes) -> Option<Self::Value<'_>> {
+    fn deserialize<'a>(&'a self, _data: &'a Bytes) -> Option<Self::Value<'a>> {
         None
     }
 }
