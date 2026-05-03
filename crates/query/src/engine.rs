@@ -50,7 +50,7 @@ impl Engine {
     //      - polonius stabilizes
     //      - both `Arc::is_unique` and `Arc::get_mut_unchecked` stabilize
     fn store_mut(&mut self) -> &mut Store {
-        let ptr: *mut Arc<Store> = &mut self.store;
+        let ptr: *mut Arc<Store> = &raw mut self.store;
         loop {
             // SAFETY: since `ptr` comes from `&mut self`, no aliases exist
             //         we never create overlapping &mut borrows
@@ -188,7 +188,7 @@ impl Context<'_> {
         };
 
         let mut queue = vec![Frame::Verify { idx: root_idx }];
-        let value = loop {
+        loop {
             let Some(frame) = queue.pop() else {
                 unreachable!("ComputeRoot should break out of the loop");
             };
@@ -224,8 +224,8 @@ impl Context<'_> {
                     let compute = ComputeFrame {
                         idx,
                         memo,
-                        guard,
                         verified_at,
+                        guard,
                     };
                     queue.push(if idx == root_idx {
                         Frame::ComputeRoot(compute)
@@ -301,8 +301,6 @@ impl Context<'_> {
                     });
                 }
             }
-        };
-
-        value
+        }
     }
 }

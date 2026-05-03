@@ -33,7 +33,7 @@ impl SingleFlight {
 
                 // prevent deadlock if the pilot exited while we were enabling
                 if self.inflight.load(Ordering::Acquire) {
-                    notified.await
+                    notified.await;
                 }
 
                 FlightRole::Passenger

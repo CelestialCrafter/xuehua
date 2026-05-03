@@ -64,11 +64,11 @@ where
         let diff = match values.entry(idx) {
             Entry::Occupied(mut occupied) => {
                 let current = occupied.get_mut();
-                if *current != value {
+                if *current == value {
+                    Difference::Unchanged
+                } else {
                     *current = value.clone();
                     Difference::Changed
-                } else {
-                    Difference::Unchanged
                 }
             }
             Entry::Vacant(vacant) => {

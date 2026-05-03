@@ -46,6 +46,7 @@ pub trait Query: fmt::Debug + Clone + Hash + Eq + Send + Sync + 'static {
 }
 
 /// Helper compute function for defining "input" keys
+#[allow(clippy::unused_async)]
 pub async fn input_query<K: Query>(_input: K, _qcx: &engine::Context<'_>) -> K::Value {
     panic!("Query::compute() should not be called on an input key")
 }
