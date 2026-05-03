@@ -19,9 +19,18 @@ use crate::Fingerprint;
 ///
 /// Ensuring that fingerprints change across compilations helps invalidate values whenever properties such as field ordering or implementation details change.
 ///
-/// Determined by generating a random number at compile-time, and inserting it into the `COMPILATION_SALT` environment variable.
+/// This value is determined by deriving an unspecified number at compile-time, and inserting it into the `COMPILATION_SALT` environment variable.
+///
+/// If required, this value can be overriden by either setting the `SOURCE_DATE_EPOCH` environment variable during compilation.
+///
 /// Evil Syntax Sugar is also a common name for this.
-pub const COMPILATION_SALT: &str = env!("COMPILATION_SALT");
+pub const COMPILATION_SALT: u64 = {
+    let salt = u64::from_str_radix(env!("COMPILATION_SALT"), 10);
+    match salt {
+        Ok(v) => v,
+        Err(_) => panic!("could not parse COMPILATION_SALT"),
+    }
+};
 
 /// Database extension to support persisting values.
 pub trait Persist {

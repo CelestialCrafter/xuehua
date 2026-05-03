@@ -33,7 +33,7 @@ where
     fn fingerprint<'a>(&'a self, value: &Self::Value<'a>) -> Option<Fingerprint> {
         let mut hasher = self.build_hasher.build_hasher();
         value.hash(&mut hasher);
-        COMPILATION_SALT.hash(&mut hasher);
+        dbg!(COMPILATION_SALT).hash(&mut hasher);
 
         Some(Fingerprint(hasher.finish()))
     }
