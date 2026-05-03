@@ -96,7 +96,7 @@ mod tests {
 
     use crate::{
         Query,
-        database::{Fallible, InMemory},
+        database::{Fallible, self},
         engine::{Context, Engine},
     };
 
@@ -104,7 +104,7 @@ mod tests {
     async fn test_fallible() {
         static FALLIBLE_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-        #[derive(Debug, Eq, Clone)]
+        #[derive(Hash, Debug, Eq, Clone)]
         struct Hidden {
             value: usize,
         }
@@ -116,7 +116,7 @@ mod tests {
         }
 
         #[derive(Query, Debug, Clone, Copy, Hash, PartialEq, Eq)]
-        #[database(Fallible<Hidden, InMemory<FallibleQuery, Hidden>>)]
+        #[database(Fallible<Hidden, database::Default<FallibleQuery, Hidden>>)]
         #[compute(Self::inner)]
         struct FallibleQuery {
             ok: bool,

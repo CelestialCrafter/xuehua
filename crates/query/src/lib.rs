@@ -84,12 +84,12 @@ mod tests {
         static EVEN_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<TextInput, String>)]
+        #[database(database::Default<TextInput, String>)]
         #[compute(input_query)]
         struct TextInput;
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<LengthQuery, usize>)]
+        #[database(database::Default<LengthQuery, usize>)]
         #[compute(Self::inner)]
         struct LengthQuery;
         impl LengthQuery {
@@ -100,7 +100,7 @@ mod tests {
         }
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<EvenQuery, bool>)]
+        #[database(database::Default<EvenQuery, bool>)]
         #[compute(Self::inner)]
         struct EvenQuery;
         impl EvenQuery {
@@ -128,29 +128,29 @@ mod tests {
     async fn test_dynamic_dependencies() {
         static BRANCH_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
-        #[derive(Debug, PartialEq, Eq, Clone)]
+        #[derive(Hash, Debug, PartialEq, Eq, Clone)]
         enum FlagDirection {
             Left,
             Right,
         }
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<FlagInput, FlagDirection>)]
+        #[database(database::Default<FlagInput, FlagDirection>)]
         #[compute(input_query)]
         struct FlagInput;
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<LeftInput, usize>)]
+        #[database(database::Default<LeftInput, usize>)]
         #[compute(input_query)]
         struct LeftInput;
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<RightInput, usize>)]
+        #[database(database::Default<RightInput, usize>)]
         #[compute(input_query)]
         struct RightInput;
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<BranchQuery, usize>)]
+        #[database(database::Default<BranchQuery, usize>)]
         #[compute(Self::inner)]
         struct BranchQuery;
         impl BranchQuery {
@@ -185,7 +185,7 @@ mod tests {
         static SLOW_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<SlowQuery, ()>)]
+        #[database(database::Default<SlowQuery, ()>)]
         #[compute(Self::inner)]
         struct SlowQuery;
         impl SlowQuery {
@@ -211,12 +211,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn perftest_cpu_query() {
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<RangeInput, Range<u128>>)]
+        #[database(database::Default<RangeInput, Range<u128>>)]
         #[compute(input_query)]
         struct RangeInput;
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<Compution1Query, u128>)]
+        #[database(database::Default<Compution1Query, u128>)]
         #[compute(Self::inner)]
         struct Compution1Query {
             offset: usize,
@@ -242,7 +242,7 @@ mod tests {
         }
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<Compution2Query, [char; 16]>)]
+        #[database(database::Default<Compution2Query, [char; 16]>)]
         #[compute(Self::inner)]
         struct Compution2Query;
         impl Compution2Query {
@@ -257,7 +257,7 @@ mod tests {
         }
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<Compution3Query, [char; 16]>)]
+        #[database(database::Default<Compution3Query, [char; 16]>)]
         #[compute(Self::inner)]
         struct Compution3Query;
         impl Compution3Query {
@@ -284,7 +284,7 @@ mod tests {
         }
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<RootQuery, Vec<[char; 16]>>)]
+        #[database(database::Default<RootQuery, Vec<[char; 16]>>)]
         #[compute(Self::inner)]
         struct RootQuery;
         impl RootQuery {
@@ -324,27 +324,27 @@ mod tests {
     #[test]
     fn arbtest_query_convergence() {
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<Input1, u64>)]
+        #[database(database::Default<Input1, u64>)]
         #[compute(input_query)]
         struct Input1;
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<Input2, u64>)]
+        #[database(database::Default<Input2, u64>)]
         #[compute(input_query)]
         struct Input2;
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<Input3, u64>)]
+        #[database(database::Default<Input3, u64>)]
         #[compute(input_query)]
         struct Input3;
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<Input4, u64>)]
+        #[database(database::Default<Input4, u64>)]
         #[compute(input_query)]
         struct Input4;
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<Mutation1Query, u64>)]
+        #[database(database::Default<Mutation1Query, u64>)]
         #[compute(Self::inner)]
         struct Mutation1Query;
         impl Mutation1Query {
@@ -356,7 +356,7 @@ mod tests {
         }
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<Mutation2Query, u64>)]
+        #[database(database::Default<Mutation2Query, u64>)]
         #[compute(Self::inner)]
         struct Mutation2Query;
         impl Mutation2Query {
@@ -368,7 +368,7 @@ mod tests {
         }
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(database::InMemory<RootQuery, u64>)]
+        #[database(database::Default<RootQuery, u64>)]
         #[compute(Self::inner)]
         struct RootQuery;
         impl RootQuery {

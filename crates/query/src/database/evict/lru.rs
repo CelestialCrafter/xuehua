@@ -106,7 +106,7 @@ impl<D: Database> Evict for LRU<D> {
     }
 
     fn evict_iter(&mut self, indicies: impl Iterator<Item = KeyIndex>) {
-        self.inner.eviction().evict_iter(indicies)
+        self.inner.eviction().evict_iter(indicies);
     }
 }
 
@@ -116,7 +116,7 @@ mod tests {
 
     use crate::{
         Query,
-        database::InMemory,
+        database,
         engine::{Context, Engine},
     };
 
@@ -127,7 +127,7 @@ mod tests {
         static LRU_COMPUTES: AtomicUsize = AtomicUsize::new(0);
 
         #[derive(Query, Debug, Clone, Hash, PartialEq, Eq)]
-        #[database(LRU<InMemory<LRUQuery, ()>>)]
+        #[database(LRU<database::Default<LRUQuery, ()>>)]
         #[compute(Self::inner)]
         struct LRUQuery(usize);
         impl LRUQuery {

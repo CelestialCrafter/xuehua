@@ -22,3 +22,6 @@ bytes.workspace = true
 arbitrary = "1.4.2"
 arbtest = "0.3.2"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[build-dependencies]
+getrandom = "0.4.2"

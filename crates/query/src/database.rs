@@ -5,18 +5,23 @@ mod fallible;
 mod in_memory;
 pub mod persist;
 
-use std::{any::Any, fmt, sync::atomic::Ordering};
+use std::{any::Any, fmt, hash::BuildHasherDefault, sync::atomic::Ordering};
 
 use futures_util::{FutureExt, future::BoxFuture};
 
 pub use fallible::Fallible;
 pub use in_memory::InMemory;
+use rapidhash::quality::RapidHasher;
 
 use crate::{
     KeyIndex, Query,
     database::{evict::Evict, persist::Persist},
     engine::Context,
 };
+
+/// Default database for general use cases
+pub type Default<K, V> =
+    persist::Fingerprinting<BuildHasherDefault<RapidHasher<'static>>, InMemory<K, V>>;
 
 /// Whether a value has changed or not
 #[derive(Clone, Copy, PartialEq, Eq)]
