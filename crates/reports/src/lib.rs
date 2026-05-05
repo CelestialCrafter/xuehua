@@ -279,7 +279,7 @@ impl<E> Report<E> {
         }
     }
 
-    /// Sets the log level associated with the `Report`.
+    /// Sets the level associated with the `Report`.
     pub fn with_level(mut self, level: Level) -> Self {
         self.inner.metadata.level = level;
         self
@@ -344,7 +344,7 @@ impl<T, U: Into<Report<T>>> ReportExt<T> for U {
 
 /// Helper trait for [`Result<T, Report<E>>`].
 pub trait ResultReportExt<T, E>: Sized {
-    /// Converts the inner [`Report`] into a type implementing [`Error`].
+    /// Converts this [`Report`] into a type implementing [`Error`].
     ///
     /// See [`Report::into_error`] for more information.
     #[track_caller]
@@ -356,7 +356,7 @@ pub trait ResultReportExt<T, E>: Sized {
     #[track_caller]
     fn erased(self) -> Result<T, ()>;
 
-    /// "Wraps" the inner [`Report`] with the parent's default [`Report`].
+    /// "Wraps" this [`Report`] with the parent's default [`Report`].
     ///
     /// See [`Report::wrap`] for more information.
     #[track_caller]
@@ -364,7 +364,7 @@ pub trait ResultReportExt<T, E>: Sized {
         self.wrap_with_fn(|| F::default())
     }
 
-    /// Append a [`Report`] as a parent of the inner [`Report`].
+    /// Append a [`Report`] as a parent of this [`Report`].
     ///
     /// See [`Report::wrap_with`] for more information.
     #[track_caller]
@@ -372,19 +372,19 @@ pub trait ResultReportExt<T, E>: Sized {
         self.wrap_with_fn(|| parent)
     }
 
-    /// Append a [`Report`] as a parent of the inner [`Report`].
+    /// Append a [`Report`] as a parent of this [`Report`].
     ///
     /// See [`Report::wrap_with`] for more information.
     #[track_caller]
     fn wrap_with_fn<F, G: Into<Report<F>>>(self, func: impl FnOnce() -> G) -> Result<T, F>;
 
-    /// Sets the log level associated with the inner [`Report`].
+    /// Sets the level associated with this [`Report`].
     ///
     /// See [`Report::with_level`] for more information.
     #[track_caller]
     fn with_level(self, level: Level) -> Result<T, E>;
 
-    /// Appends a [`Frame`] to the inner [`Report`].
+    /// Appends a [`Frame`] to this [`Report`].
     ///
     /// See [`Report::with_frame`] for more information.
     #[track_caller]

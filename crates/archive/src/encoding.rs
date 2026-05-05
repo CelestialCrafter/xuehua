@@ -4,10 +4,11 @@ use std::borrow::Borrow;
 
 use bytes::{BufMut, Bytes};
 use ed25519_dalek::Signature;
+use tracing::debug;
 
 use crate::{
     Event, Fingerprint, Object, ObjectContent,
-    utils::{MAGIC, Marker, VERSION, debug, hash_object},
+    utils::{MAGIC, Marker, VERSION, hash_object},
 };
 
 /// Encoder for archive events

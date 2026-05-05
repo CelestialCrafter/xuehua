@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use log::{debug, trace};
+use tracing::{debug, trace};
 use petgraph::{Direction, graph::NodeIndex, visit::Dfs};
 use rapidhash::{RapidHashMap, RapidHashSet};
 use xh_reports::Result;

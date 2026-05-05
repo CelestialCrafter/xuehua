@@ -8,7 +8,7 @@ use std::{
 use bytes::Bytes;
 use educe::Educe;
 use jiff::Timestamp;
-use log::debug;
+use tracing::debug;
 use rusqlite::{Connection, OptionalExtension, named_params};
 use tokio::sync::{mpsc, oneshot};
 use xh_archive::{Event, decoding::Decoder};

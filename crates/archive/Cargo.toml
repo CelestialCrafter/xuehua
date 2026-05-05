@@ -14,22 +14,21 @@ harness = false
 
 [features]
 mmap = ["dep:memmap2"]
-log = ["dep:log"]
 
 [dependencies]
 xh-reports.workspace = true
 xh-common.workspace = true
-log = { workspace = true, optional = true }
 blake3.workspace = true
 bytes.workspace = true
 smol_str.workspace = true
-memmap2 = { workspace = true, optional = true }
 ed25519-dalek.workspace = true
+memmap2 = { workspace = true, optional = true }
+tracing = { workspace = true, features = ["release_max_level_off"] }
 
 [dev-dependencies]
-log.workspace = true
+xh-reports = { workspace = true, features = ["json"] }
 tempfile.workspace = true
-fern = { version = "0.7.1", features = ["colored"] }
+tracing-subscriber.workspace = true
 arbitrary = "1.4.2"
 arbtest = "0.3.2"
 include_dir = "0.7.4"

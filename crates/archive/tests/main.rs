@@ -5,13 +5,14 @@ use arbtest::arbtest;
 use bytes::Bytes;
 use include_dir::include_dir;
 use libtest_mimic::{Arguments, Trial};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use xh_archive::Event;
+use xh_reports::{render::{GlobalRenderer, JsonRenderer}, tracing::ReportLayer};
 
-use crate::utils::{ArbitraryArchive, BenchmarkOptions, benchmark, decode, encode, setup};
+use crate::utils::{ArbitraryArchive, BenchmarkOptions, benchmark, decode, encode};
 
 mod utils;
 
-#[cfg(feature = "std")]
 fn pack_unpack_roundtrip(events: &Vec<Event>, assert: bool) {
     let (path, _temp) = utils::make_temp();
 
@@ -21,7 +22,7 @@ fn pack_unpack_roundtrip(events: &Vec<Event>, assert: bool) {
     }
 }
 
-#[cfg(all(feature = "std", feature = "mmap"))]
+#[cfg(all(feature = "mmap"))]
 fn mmap_pack_unpack_roundtrip(events: &Vec<Event>, assert: bool) {
     let (path, _temp) = utils::make_temp();
 
@@ -70,12 +71,11 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
                 format!("enc-dec-{name}"),
                 benchmark(|| enc_dec_roundtrip(events, false), options),
             ),
-            #[cfg(feature = "std")]
             Trial::bench(
                 format!("pack-unpack-{name}"),
                 benchmark(|| pack_unpack_roundtrip(events, false), options),
             ),
-            #[cfg(all(feature = "std", feature = "mmap"))]
+            #[cfg(all(feature = "mmap"))]
             Trial::bench(
                 format!("mmap-pack-unpack-{name}"),
                 benchmark(|| mmap_pack_unpack_roundtrip(events, false), options),
@@ -97,8 +97,11 @@ fn blob_trials() -> impl Iterator<Item = Trial> {
 }
 
 fn main() {
-    let trials = blob_trials().chain(arbitrary_trials()).collect();
-    setup();
+    let _ = GlobalRenderer::set(JsonRenderer::new());
+    tracing_subscriber::registry()
+        .with(ReportLayer::new())
+        .init();
 
+    let trials = blob_trials().chain(arbitrary_trials()).collect();
     libtest_mimic::run(&Arguments::from_args(), trials).exit()
 }

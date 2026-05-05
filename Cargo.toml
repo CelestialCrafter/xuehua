@@ -21,7 +21,6 @@ smol_str = "0.3.5"
 blake3 = "1.8.3"
 fastrand = "2.3.0"
 rapidhash = { version = "4.4.1", features = ["unsafe"] }
-log = { version = "0.4.29", features = ["std", "kv", "kv_std"] }
 tracing = "0.1.44"
 serde = { version = "1.0.228", features = ["derive"] }
 educe = "0.6.0"

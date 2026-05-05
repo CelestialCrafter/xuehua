@@ -8,9 +8,10 @@ use std::{
 };
 
 use bytes::Bytes;
+use tracing::debug;
 use xh_reports::prelude::*;
 
-use crate::{Event, Object, ObjectContent, utils::debug};
+use crate::{Event, Object, ObjectContent};
 
 /// Error type for unpacking
 #[derive(Default, Debug, IntoReport)]
@@ -108,7 +109,8 @@ fn process_object(root: &Path, object: &Object, write_file: WriteFileFn) -> Resu
 }
 
 fn write_file_default(path: &Path, contents: &Bytes) -> StdResult<(), std::io::Error> {
-    fs::write(path, contents)}
+    fs::write(path, contents)
+}
 
 #[cfg(feature = "mmap")]
 fn write_file_mmap(path: &Path, contents: &Bytes) -> StdResult<(), std::io::Error> {

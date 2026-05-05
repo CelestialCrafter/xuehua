@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use log::debug;
+use tracing::debug;
 use serde::{Deserialize, Serialize};
 use ureq::{
     Agent,

@@ -5,8 +5,8 @@ use std::{
 };
 
 use dirs::{cache_dir, config_dir, data_dir};
-use log::{info, warn};
 use tempfile::env::temp_dir;
+use tracing::{info, warn};
 use xh_reports::prelude::*;
 
 const BUILD: &str = "xuehua/builds";
@@ -65,7 +65,7 @@ fn initialize_locations() -> Result<Locations, InitializeLocationsError> {
 
     if user.is_none() {
         warn!(
-            suggestion = "ensure that the XDG_RUNTIME_DIR, XDG_DATA_HOME, and XDG_CONFIG_HOME environment variables are set";
+            suggestion = "ensure that the XDG_RUNTIME_DIR, XDG_DATA_HOME, and XDG_CONFIG_HOME environment variables are set",
             "could not evaluate user locations"
         );
     }
@@ -82,9 +82,10 @@ fn initialize_locations() -> Result<Locations, InitializeLocationsError> {
         match fs::exists(path) {
             Ok(true) => return Some(ty),
             Ok(false) => (),
-            Err(err) => warn!(
-                error:err = err;
-                "could not check if options file at {} exists", path.display()
+            Err(ref err) => warn!(
+                error = (err as &dyn std::error::Error),
+                "could not check if options file at {} exists",
+                path.display()
             ),
         }
 
@@ -98,7 +99,7 @@ fn initialize_locations() -> Result<Locations, InitializeLocationsError> {
         };
 
         info!(
-            suggestion = format!("create a config file at {}", path.display());
+            suggestion = format_args!("create a config file at {}", path.display()),
             "could not find options file, falling back to {name} locations"
         );
 

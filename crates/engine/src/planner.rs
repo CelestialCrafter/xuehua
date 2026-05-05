@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use log::trace;
+use tracing::trace;
 use petgraph::{
     Direction,
     acyclic::Acyclic,

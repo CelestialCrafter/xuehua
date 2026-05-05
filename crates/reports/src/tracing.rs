@@ -1,4 +1,5 @@
-/// Utilities for interoperating with the [`tracing`] crate.
+//! Utilities for interoperating with the [`tracing`] crate.
+
 use std::{any::type_name, error::Error, fmt, io::Write};
 
 use smol_str::{SmolStr, ToSmolStr};
@@ -86,7 +87,7 @@ fn metadata_to_payload(metadata: &tracing::Metadata, visitor: RecordVisitor) -> 
     }
 }
 
-/// A [`Layer`] that logs [`Event`]s to a report [`Renderer`].
+/// A [`Layer`] that prints [`Event`]s to a report [`Renderer`].
 pub struct ReportLayer<R, W> {
     renderer: R,
     writer: W,

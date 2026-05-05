@@ -3,9 +3,10 @@
 use std::{collections::VecDeque, fs, os::unix::fs::PermissionsExt, path::Path};
 
 use bytes::Bytes;
+use tracing::debug;
 use xh_reports::prelude::*;
 
-use crate::{Event, Object, ObjectContent, PathBytes, utils::debug};
+use crate::{Event, Object, ObjectContent, PathBytes};
 
 /// An unsupported file type was encountered (eg. socket, pipe, etc)
 #[derive(Debug, IntoReport)]
