@@ -1,9 +1,10 @@
 use std::{
     any::{Any, TypeId},
+    cell::UnsafeCell,
     num::NonZeroUsize,
     sync::{
         Mutex,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -11,7 +12,9 @@ use educe::Educe;
 use rapidhash::{RapidHashMap, RapidHashSet};
 
 use crate::{
-    Fingerprint, KeyIndex, Query, database::{DynDatabase, EdgeDatabase}, singleflight::SingleFlight
+    Fingerprint, KeyIndex, Query,
+    database::{DynDatabase, EdgeDatabase},
+    singleflight::SingleFlight,
 };
 
 #[derive(Debug)]
@@ -33,7 +36,6 @@ impl Memo {
     }
 
     pub fn store_fingerprint_mut(&mut self, value: Option<Fingerprint>) {
-        eprintln!("{:?}", value.as_ref().map(|v| v.0));
         let value = match value {
             Some(value) => *value,
             None => 0,
@@ -43,13 +45,114 @@ impl Memo {
     }
 
     pub fn store_fingerprint(&self, value: Option<Fingerprint>, order: Ordering) {
-        eprintln!("{:?}", value.as_ref().map(|v| v.0));
         let value = match value {
             Some(value) => *value,
             None => 0,
         };
 
         self.fingerprint.store(value, order);
+    }
+}
+
+enum MemoSyncState {
+    Uninitialized,
+    Transitioning,
+    Initialized,
+}
+
+impl MemoSyncState {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::Uninitialized,
+            1 => Self::Transitioning,
+            2 => Self::Initialized,
+            _ => panic!("state is not a valid value"),
+        }
+    }
+
+    fn to_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+pub struct MemoSync {
+    cell: UnsafeCell<Memo>,
+    state: AtomicU8,
+}
+
+impl MemoSync {
+    fn fetch(&self) -> &Memo {
+        let mut actual = self.state.load(Ordering::Acquire);
+        let state = loop {
+            match MemoSyncState::from_u8(actual) {
+                MemoSyncState::Uninitialized => {
+                    match self.state.compare_exchange_weak(
+                        actual,
+                        MemoSyncState::Transitioning.to_u8(),
+                        Ordering::Release,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => break MemoSyncState::Transitioning,
+                        Err(next_actual) => actual = next_actual,
+                    }
+                }
+                MemoSyncState::Transitioning => {
+                    actual = self.state.load(Ordering::Acquire);
+                    std::hint::spin_loop();
+                    continue;
+                }
+                MemoSyncState::Initialized => break MemoSyncState::Initialized,
+            };
+        };
+
+        match state {
+            MemoSyncState::Transitioning => {
+                let ptr = self.cell.get();
+
+                // SAFETY: TODO
+                unsafe { ptr.write(todo!("initialize memo")) };
+
+                // SAFETY: TODO
+                unsafe { &*ptr }
+            }
+            MemoSyncState::Initialized => {
+                let ptr = self.cell.get();
+
+                // SAFETY: TODO
+                unsafe { &*ptr }
+            }
+            MemoSyncState::Uninitialized => unreachable!(),
+        }
+    }
+
+    fn reset(&self) {
+        let cex = || {
+            // assume the state is already initialized if this is being called
+            let result = self.state.compare_exchange_weak(
+                MemoSyncState::Initialized.to_u8(),
+                MemoSyncState::Uninitialized.to_u8(),
+                Ordering::Release,
+                Ordering::Relaxed,
+            );
+
+            match result {
+                Ok(value) => MemoSyncState::from_u8(value),
+                Err(value) => MemoSyncState::from_u8(value),
+            }
+        };
+
+        let mut actual;
+        loop {
+            actual = cex();
+            match actual {
+                MemoSyncState::Uninitialized => break,
+                MemoSyncState::Transitioning => {
+                    std::hint::spin_loop();
+                    continue;
+                }
+                MemoSyncState::Initialized => panic!("memo sync state should not be initialized"),
+            }
+        }
     }
 }
 
