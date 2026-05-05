@@ -3,13 +3,13 @@ use std::sync::mpsc;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use log::{debug, trace};
 use petgraph::{Direction, graph::NodeIndex, visit::Dfs};
+use rapidhash::{RapidHashMap, RapidHashSet};
 use xh_reports::Result;
 
 use crate::{
     builder::{BuildRequest, Builder, Dispatch, Error as BuilderError, Initialize},
     name::PackageName,
     planner::{Frozen, Planner},
-    utils::passthru::{PassthruHashMap, PassthruHashSet},
 };
 
 #[derive(Debug)]
@@ -33,7 +33,7 @@ pub enum Event {
 }
 
 pub struct Scheduler<'a, E> {
-    state: PassthruHashMap<NodeIndex, PackageState>,
+    state: RapidHashMap<NodeIndex, PackageState>,
     planner: &'a Planner<Frozen>,
     builder: &'a Builder<E>,
 }
@@ -82,7 +82,7 @@ where
         };
 
         // compute subset and build leaf packages
-        let mut subset = PassthruHashSet::default();
+        let mut subset = RapidHashSet::default();
         let mut visitor = Dfs::empty(&plan);
         for target in targets {
             visitor.move_to(*target);

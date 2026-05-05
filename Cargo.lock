@@ -3051,6 +3051,7 @@ dependencies = [
  "log",
  "memmap2",
  "petgraph",
+ "rapidhash",
  "serde",
  "serde_json",
  "smol_str",

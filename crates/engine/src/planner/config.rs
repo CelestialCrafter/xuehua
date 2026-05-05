@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use educe::Educe;
 use log::trace;
 use petgraph::graph::NodeIndex;
+use rapidhash::RapidHashMap;
 use xh_reports::prelude::*;
 
 use crate::{
@@ -10,7 +11,6 @@ use crate::{
     name::PackageName,
     package::Package,
     planner::{Planner, Unfrozen},
-    utils::passthru::PassthruHashMap,
 };
 
 #[derive(Debug, Default, IntoReport)]
@@ -44,7 +44,7 @@ impl<B: Backend> Config<B> {
 }
 
 pub struct ConfigManager<'a, B: Backend> {
-    configs: PassthruHashMap<NodeIndex, Config<B>>,
+    configs: RapidHashMap<NodeIndex, Config<B>>,
     pub planner: &'a mut Planner<Unfrozen>,
 }
 

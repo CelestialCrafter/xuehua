@@ -15,13 +15,13 @@ use petgraph::{
     graph::{DiGraph, NodeIndex},
     visit::{Dfs, EdgeRef},
 };
+use rapidhash::RapidHashSet;
 use smol_str::SmolStr;
 use xh_reports::{partition_results, prelude::*};
 
 use crate::{
     name::PackageName,
     package::{LinkTime, Package},
-    utils::passthru::PassthruHashSet,
 };
 
 #[derive(Debug, IntoReport)]
@@ -80,8 +80,8 @@ impl NamespaceTracker {
 
 #[derive(Default, Debug, Clone)]
 pub struct DependencyClosure {
-    runtime: PassthruHashSet<NodeIndex>,
-    buildtime: PassthruHashSet<NodeIndex>,
+    runtime: RapidHashSet<NodeIndex>,
+    buildtime: RapidHashSet<NodeIndex>,
 }
 
 pub type Plan = Acyclic<DiGraph<Package, LinkTime>>;
@@ -195,7 +195,7 @@ impl Planner<Frozen> {
     // TODO: cache closure
     pub fn closure(&self, node: NodeIndex) -> Option<DependencyClosure> {
         let compute_closure = |dependencies: Vec<(NodeIndex, LinkTime)>| {
-            let mut runtime = PassthruHashSet::default();
+            let mut runtime = RapidHashSet::default();
             let mut visitor = Dfs::empty(&self.graph);
 
             for (node, _) in dependencies {
