@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::{Report, render::Render};
+use crate::{ReportPayload, render::Renderer};
 
 /// Default renderer for [`Report`]s.
 ///
@@ -18,8 +18,8 @@ impl SimpleRenderer {
     }
 }
 
-impl Render for SimpleRenderer {
-    fn render<E>(&self, report: &Report<E>) -> impl fmt::Display {
-        report.message()
+impl Renderer for SimpleRenderer {
+    fn render(&self, report: &ReportPayload) -> impl fmt::Display {
+        &report.message
     }
 }

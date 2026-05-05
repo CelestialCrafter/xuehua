@@ -2,23 +2,24 @@
 
 use std::fmt;
 
-use serde_json::{Value, json};
-
-use crate::{Frame, Report, render::Render};
+use crate::{ReportPayload, render::Renderer};
 
 #[derive(Debug, Clone)]
 struct JsonDisplayer<'a> {
     inner: &'a JsonRenderer,
-    value: Value,
+    payload: &'a ReportPayload,
 }
 
 impl fmt::Display for JsonDisplayer<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.inner.pretty {
-            writeln!(f, "{:#}", self.value)
+        let serialize = if self.inner.pretty {
+            serde_json::to_string_pretty
         } else {
-            writeln!(f, "{}", self.value)
-        }
+            serde_json::to_string
+        };
+
+        let string = serialize(self.payload).expect("report serialization should succeed");
+        f.write_str(&string)
     }
 }
 
@@ -39,51 +40,11 @@ impl JsonRenderer {
     }
 }
 
-impl Render for JsonRenderer {
-    fn render<E>(&self, report: &Report<E>) -> impl fmt::Display {
+impl Renderer for JsonRenderer {
+    fn render<'a>(&'a self, payload: &'a ReportPayload) -> impl fmt::Display + 'a {
         JsonDisplayer {
             inner: self,
-            value: report_to_value(report),
+            payload,
         }
-    }
-}
-
-fn report_to_value<E>(report: &Report<E>) -> Value {
-    let frames: Vec<_> = report
-        .inner
-        .frames
-        .iter()
-        .map(|frame| {
-            json!({
-                "type": match frame {
-                    Frame::Context(_) => "context",
-                    Frame::Attachment(_) => "attachment",
-                    Frame::Suggestion(_) => "suggestion"
-                },
-                "value": frame_to_value(frame)
-            })
-        })
-        .collect();
-
-    let children: Vec<_> = report.inner.children.iter().map(report_to_value).collect();
-
-    json!({
-        "error": report.to_string(),
-        "location": report.location().to_string(),
-        "level": report.level().to_string(),
-        "type": report.type_name(),
-        "frames": frames,
-        "children": children
-    })
-}
-
-fn frame_to_value(frame: &Frame) -> Value {
-    match frame {
-        Frame::Context(context) => json!({
-            "key": *context.0,
-            "value": context.1
-        }),
-        Frame::Attachment(attachment) => attachment.clone().into(),
-        Frame::Suggestion(suggestion) => suggestion.to_string().into(),
     }
 }
