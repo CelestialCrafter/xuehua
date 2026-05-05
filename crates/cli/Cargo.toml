@@ -24,6 +24,6 @@ jiff.workspace = true
 tempfile.workspace = true
 bytes.workspace = true
 ed25519-dalek.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio.workspace = true
 dirs = "6.0.0"
 bpaf = { version = "0.9.22", features = ["bright-color"] }

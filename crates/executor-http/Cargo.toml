@@ -9,5 +9,5 @@ xh-reports.workspace = true
 xh-common.workspace = true
 log.workspace = true
 serde.workspace = true
-tokio = { workspace = true, features = ["rt"] }
+tokio.workspace = true
 ureq = "3.1.4"
