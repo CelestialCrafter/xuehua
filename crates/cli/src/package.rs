@@ -10,9 +10,9 @@ use crate::options::{
     get_opts,
 };
 
-use log::info;
 use petgraph::{Direction, dot, graph::NodeIndex, visit::EdgeRef};
 use tokio::task;
+use tracing::info;
 // use xh_backend_lua::LuaBackend;
 use xh_backend_arch::ArchBackend;
 use xh_engine::{
@@ -162,7 +162,7 @@ async fn build(
         while let Ok(event) = results_rx.recv() {
             match event {
                 Event::Started { name, request } => info!(
-                    request:? = request;
+                    request = ?request,
                     "started building package {name}"
                 ),
                 Event::Finished {
@@ -171,8 +171,8 @@ async fn build(
                     result,
                 } => {
                     info!(
-                        request:? = request,
-                        status = if result.is_ok() { "succeeded" } else { "failed" };
+                        request = ?request,
+                        status = if result.is_ok() { "succeeded" } else { "failed" },
                         "package finished building {name}"
                     );
 

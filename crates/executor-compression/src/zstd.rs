@@ -46,7 +46,7 @@ pub fn decompress(_options: &Options, input: &Path, output: &Path) -> Result<(),
         .map_err(|error| Report::new(error.to_string()))?;
     let size = size.unwrap_or_else(|| {
         let capacity = 1024 * 1024 * 256;
-        log::warn!(capacity = capacity; "could not determine compressed file size, falling back to fixed capacity");
+        tracing::warn!(capacity = capacity, "could not determine compressed file size, falling back to fixed capacity");
         capacity
     });
 

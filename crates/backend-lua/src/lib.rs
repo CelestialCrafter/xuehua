@@ -2,7 +2,7 @@ mod logger;
 
 use std::{path::Path, str::FromStr, sync::LazyLock};
 
-use log::warn;
+use tracing::warn;
 use mlua::{
     AnyUserData, ExternalResult, Function, Lua, Table, UserData, UserDataRegistry,
     Value as LuaValue,

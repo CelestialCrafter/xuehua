@@ -5,8 +5,8 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use log::warn;
 use tempfile::tempfile;
+use tracing::warn;
 use xh_archive::{decoding::Decoder, encoding::Encoder, packing::Packer, unpacking::Unpacker};
 use xh_reports::prelude::*;
 
@@ -38,10 +38,10 @@ fn mmapped_stdin() -> StdResult<Bytes, std::io::Error> {
 
     match try_map(stdin().as_raw_fd()) {
         Ok(mmap) => Ok(mmap),
-        Err(err) => {
+        Err(ref err) => {
             warn!(
-                error:err = err,
-                suggestion = "redirect a file into stdin";
+                error = err as &dyn std::error::Error,
+                suggestion = "redirect a file into stdin",
                 "could not mmap stdin. attempting to copy stdin to temporary file instead"
             );
 

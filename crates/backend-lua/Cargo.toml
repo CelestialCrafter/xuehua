@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 xh-engine.workspace = true
 xh-reports.workspace = true
-log.workspace = true
+tracing.workspace = true
 petgraph.workspace = true
 serde.workspace = true
 smol_str.workspace = true

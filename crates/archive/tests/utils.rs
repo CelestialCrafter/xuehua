@@ -1,11 +1,12 @@
-#[cfg(feature = "std")]
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::{
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 
 use arbitrary::Arbitrary;
 use bytes::{Bytes, BytesMut};
 use libtest_mimic::{Failed, Measurement};
-use log::debug;
+use tracing::debug;
 use xh_archive::{Event, Object, ObjectContent, decoding::Decoder, encoding::Encoder};
 
 #[derive(Clone, Copy)]
@@ -115,7 +116,6 @@ impl Arbitrary<'_> for ArbitraryArchive {
     }
 }
 
-#[cfg(feature = "std")]
 pub fn pack(root: &Path) -> Vec<Event> {
     xh_archive::packing::Packer::new(root.to_path_buf())
         .pack_iter()
@@ -123,7 +123,7 @@ pub fn pack(root: &Path) -> Vec<Event> {
         .collect()
 }
 
-#[cfg(all(feature = "std", feature = "mmap"))]
+#[cfg(feature = "mmap")]
 pub fn pack_mmap(root: &Path) -> Vec<Event> {
     let mut packer = xh_archive::packing::Packer::new(root.to_path_buf());
     unsafe { packer.pack_mmap_iter() }
@@ -131,14 +131,13 @@ pub fn pack_mmap(root: &Path) -> Vec<Event> {
         .collect()
 }
 
-#[cfg(feature = "std")]
 pub fn unpack(root: &Path, events: &Vec<Event>) {
     xh_archive::unpacking::Unpacker::new(root)
         .unpack_iter(events)
         .expect("should be able to unpack files")
 }
 
-#[cfg(all(feature = "std", feature = "mmap"))]
+#[cfg(feature = "mmap")]
 pub fn unpack_mmap(root: &Path, events: &Vec<Event>) {
     let mut unpacker = xh_archive::unpacking::Unpacker::new(root);
     unsafe { unpacker.unpack_mmap_iter(events) }.expect("should be able to unpack files")
@@ -162,7 +161,6 @@ pub fn encode(events: &Vec<Event>) -> Bytes {
     encoded.freeze()
 }
 
-#[cfg(feature = "std")]
 pub fn make_temp() -> (PathBuf, tempfile::TempDir) {
     let temp =
         tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("should be able to make temp dir");
@@ -170,32 +168,3 @@ pub fn make_temp() -> (PathBuf, tempfile::TempDir) {
 
     (path, temp)
 }
-
-#[cfg(feature = "log")]
-pub fn setup() {
-    use fern::colors::{Color, ColoredLevelConfig};
-
-    let colors = ColoredLevelConfig::new()
-        .info(Color::Blue)
-        .debug(Color::Magenta)
-        .trace(Color::BrightBlack)
-        .warn(Color::Yellow)
-        .error(Color::Red);
-
-    fern::Dispatch::new()
-        .format(move |out, message, record| {
-            out.finish(format_args!(
-                "[{} {}] {}",
-                colors.color(record.level()),
-                record.target(),
-                message
-            ))
-        })
-        .level(log::LevelFilter::Trace)
-        .chain(std::io::stderr())
-        .apply()
-        .expect("should be able to enable logger");
-}
-
-#[cfg(not(feature = "log"))]
-pub fn setup() {}

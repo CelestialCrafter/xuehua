@@ -9,9 +9,9 @@ inventory = ["dep:inventory"]
 postcard = ["dep:postcard", "dep:serde"]
 
 [dependencies]
-log.workspace = true
 educe.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 boxcar = "0.2.14"
 futures-util = { version = "0.3.32", default-features = false, features = ["std", "alloc"] }
 xh-query-derive = { path = "../query-derive" }

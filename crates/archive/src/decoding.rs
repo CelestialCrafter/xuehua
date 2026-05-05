@@ -5,11 +5,12 @@ use std::borrow::Cow;
 use blake3::Hash;
 use bytes::{Buf, Bytes};
 use ed25519_dalek::Signature;
+use tracing::debug;
 use xh_reports::prelude::*;
 
 use crate::{
     Event, Object, ObjectContent,
-    utils::{ArchiveCompat, MAGIC, Marker, VERSION, debug, hash_object},
+    utils::{ArchiveCompat, MAGIC, Marker, VERSION, hash_object},
 };
 
 /// An unexpected token was encountered
@@ -117,13 +118,11 @@ impl Decoder {
             b"hd" => self.process_header(buffer),
             b"ft" => self.process_footer(buffer),
             b"ob" => self.process_object(buffer),
-            _ => {
-                Err(UnexpectedTokenError {
-                    token,
-                    expected: r#""hd", "ft", or "ob""#.into(),
-                }
-                .wrap())
+            _ => Err(UnexpectedTokenError {
+                token,
+                expected: r#""hd", "ft", or "ob""#.into(),
             }
+            .wrap()),
         }
     }
 
@@ -218,12 +217,7 @@ fn verify_hash(buffer: &mut Bytes, expected: blake3::Hash) -> Result<(), Error> 
 }
 
 fn process_plen(buffer: &mut Bytes) -> Result<Bytes, Error> {
-    let len = buffer
-        .try_get_u64_le()
-        .compat()
-        .wrap()?
-        .try_into()
-        .wrap()?;
+    let len = buffer.try_get_u64_le().compat().wrap()?.try_into().wrap()?;
     try_split_to(buffer, len)
 }
 

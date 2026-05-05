@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use educe::Educe;
-use log::trace;
+use tracing::trace;
 use petgraph::graph::NodeIndex;
 use rapidhash::RapidHashMap;
 use xh_reports::prelude::*;

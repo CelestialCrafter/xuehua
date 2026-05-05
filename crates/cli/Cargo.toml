@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 xh-engine.workspace = true
 xh-archive.workspace = true
-xh-reports = { workspace = true, features = ["tracing"] }
+xh-reports.workspace = true
 xh-executor-http.workspace = true
 xh-executor-bubblewrap.workspace = true
 xh-executor-compression.workspace = true
@@ -18,7 +18,6 @@ xh-store-sqlite = { path = "../store-sqlite" }
 xh-backend-lua = { path = "../backend-lua" }
 xh-backend-arch = { path = "../backend-arch" }
 memmap2.workspace = true
-log.workspace = true
 smol_str.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

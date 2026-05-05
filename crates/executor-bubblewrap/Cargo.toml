@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 xh-reports.workspace = true
 xh-engine.workspace = true
-log.workspace = true
+tracing.workspace = true
 serde.workspace = true
 smol_str = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["process"] }

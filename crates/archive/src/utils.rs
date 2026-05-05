@@ -1,5 +1,3 @@
-pub(crate) use log::*;
-
 use crate::{Object, ObjectContent};
 
 use bytes::{BufMut, Bytes};
@@ -70,40 +68,6 @@ pub fn hash_object(object: &Object) -> blake3::Hash {
     process_lenp(&mut hasher, content);
 
     let hash = hasher.finalize();
-    log::debug!("object hashed to {hash}");
+    tracing::debug!("object hashed to {hash}");
     hash
-}
-
-#[cfg(feature = "log")]
-#[allow(unused_imports)]
-mod log {
-    pub use log::{debug, error, info, trace, warn};
-}
-
-#[cfg(not(feature = "log"))]
-#[allow(unused_macros)]
-#[allow(unused_imports)]
-mod log {
-    macro_rules! error {
-        ($($x:tt)*) => {};
-    }
-
-    // warn conflicts with a builtin attribute
-    macro_rules! _warn {
-        ($($x:tt)*) => {};
-    }
-
-    macro_rules! info {
-        ($($x:tt)*) => {};
-    }
-
-    macro_rules! debug {
-        ($($x:tt)*) => {};
-    }
-
-    macro_rules! trace {
-        ($($x:tt)*) => {};
-    }
-
-    pub(crate) use {_warn as warn, debug, error, info, trace};
 }
