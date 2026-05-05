@@ -118,7 +118,7 @@ fn build_into_report_impl(input: &DeriveInput) -> TokenStream {
         impl #generics ::xh_reports::IntoReport for #ident <#(#ty_params)*> {
             fn into_report(self) -> ::xh_reports::Report<Self> {
                 let (msg, frames) = #data;
-                ::xh_reports::Report::new(msg).with_frames(frames)
+                ::xh_reports::Report::new(msg).with_frames(frames).cast()
             }
         }
     }

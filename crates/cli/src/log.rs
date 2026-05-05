@@ -1,6 +1,6 @@
 use xh_reports::{
     IntoReport,
-    render::{PrettyRenderer, Render},
+    render::{PrettyRenderer, Renderer},
 };
 
 pub fn log_report<T>(report: &xh_reports::Report<T>) {
@@ -26,7 +26,7 @@ impl log::Log for Logger {
             return;
         }
 
-        log_report(&xh_reports::LogError::new(record).into_report());
+        // log_report(&xh_reports::LogError::new(record).into_report());
     }
 
     fn flush(&self) {}

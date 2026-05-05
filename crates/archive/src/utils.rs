@@ -3,6 +3,7 @@ pub(crate) use log::*;
 use crate::{Object, ObjectContent};
 
 use bytes::{BufMut, Bytes};
+use smol_str::ToSmolStr;
 use xh_reports::{Frame, Report, impl_compat};
 
 pub const MAGIC: &str = "xuehua-archive";
@@ -14,13 +15,13 @@ impl_compat!(
         let frames = [
             Frame::context("requested", error.requested),
             Frame::context("available", error.available),
-            Frame::suggestion(format!(
-                "provide {} more byes",
+            Frame::suggestion(format_args!(
+                "provide {} more bytes",
                 error.requested - error.available
-            )),
+            ).to_smolstr()),
         ];
 
-        Report::from_error(error).with_frames(frames)
+        Report::from_error(error).with_frames(frames).cast()
     })
 );
 

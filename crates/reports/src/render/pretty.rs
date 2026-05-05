@@ -2,10 +2,9 @@
 
 use std::fmt;
 
-use log::Level;
 use owo_colors::{OwoColorize, Style};
 
-use crate::{Frame, Report, render::Render};
+use crate::{Frame, Level, Location, Metadata, ReportPayload, render::Renderer};
 
 /// Styles for each log level.
 #[derive(Debug, Copy, Clone)]
@@ -37,7 +36,6 @@ pub struct Styles {
     suggestion: Style,
     attachment: Style,
     location: Style,
-    type_name: Style,
     distracting: Style,
     log: LogStyles,
 }
@@ -50,7 +48,6 @@ impl Default for Styles {
             context: Style::new().cyan(),
             attachment: Style::new().yellow(),
             location: Style::new().purple(),
-            type_name: Style::new().blue(),
             distracting: Style::new(),
             log: LogStyles::default(),
         }
@@ -105,7 +102,6 @@ pub struct Headers {
     context: &'static str,
     suggestion: &'static str,
     attachment: &'static str,
-    type_name: &'static str,
     location: &'static str,
     log: LogHeaders,
 }
@@ -116,7 +112,6 @@ impl Default for Headers {
             context: "(context)",
             suggestion: "(suggestion)",
             attachment: "(attachment)",
-            type_name: "(type)",
             location: "(location)",
             log: LogHeaders::default(),
         }
@@ -134,6 +129,7 @@ pub struct Config {
 /// Pretty renderer for [`Report`]s.
 ///
 /// [`Report`]s can be rendered via the [`Report`] trait.
+// TODO: add color enabled field
 #[derive(Default, Debug, Copy, Clone)]
 pub struct PrettyRenderer {
     /// Configuration for this renderer
@@ -148,32 +144,58 @@ impl PrettyRenderer {
     }
 }
 
-impl Render for PrettyRenderer {
-    fn render<'a, E>(&'a self, report: &'a Report<E>) -> impl fmt::Display + 'a {
+impl Renderer for PrettyRenderer {
+    fn render<'a>(&'a self, payload: &'a ReportPayload) -> impl fmt::Display + 'a {
         PrettyDisplayer {
             inner: self,
-            report,
+            payload,
         }
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-struct PrettyDisplayer<'a, E> {
-    inner: &'a PrettyRenderer,
-    report: &'a Report<E>,
+struct LinePrinter<'a, 'b> {
+    fmt: &'a mut fmt::Formatter<'b>,
+    is_first: bool,
 }
 
-impl<E> fmt::Display for PrettyDisplayer<'_, E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.render_report(f, self.report, format_args!(""), format_args!(""))
+impl<'a, 'b> LinePrinter<'a, 'b> {
+    fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> fmt::Result {
+        if !self.is_first {
+            self.fmt.write_str("\n")?;
+        }
+
+        self.is_first = false;
+        self.fmt.write_fmt(args)
     }
 }
 
-impl<E> PrettyDisplayer<'_, E> {
-    fn render_report<F>(
+#[derive(Debug, Copy, Clone)]
+struct PrettyDisplayer<'a> {
+    inner: &'a PrettyRenderer,
+    payload: &'a ReportPayload,
+}
+
+impl fmt::Display for PrettyDisplayer<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut printer = LinePrinter {
+            fmt: f,
+            is_first: true,
+        };
+
+        self.render_report(
+            &mut printer,
+            self.payload,
+            format_args!(""),
+            format_args!(""),
+        )
+    }
+}
+
+impl PrettyDisplayer<'_> {
+    fn render_report(
         &self,
-        fmt: &mut fmt::Formatter<'_>,
-        report: &Report<F>,
+        printer: &mut LinePrinter<'_, '_>,
+        payload: &ReportPayload,
         prefix: fmt::Arguments<'_>,
         next_prefix: fmt::Arguments<'_>,
     ) -> fmt::Result {
@@ -181,64 +203,63 @@ impl<E> PrettyDisplayer<'_, E> {
         let guides = &self.inner.config.guides;
         let styles = &self.inner.config.styles;
 
-        writeln!(
-            fmt,
-            "{prefix}{} {}",
-            match report.level() {
-                Level::Error => headers.log.error.style(styles.log.error),
-                Level::Warn => headers.log.warn.style(styles.log.warn),
-                Level::Info => headers.log.info.style(styles.log.info),
-                Level::Debug => headers.log.debug.style(styles.log.debug),
-                Level::Trace => headers.log.trace.style(styles.log.trace),
-            },
-            report.message().bold()
-        )?;
+        let log_header = match payload.metadata.level {
+            Level::Error => headers.log.error.style(styles.log.error),
+            Level::Warn => headers.log.warn.style(styles.log.warn),
+            Level::Info => headers.log.info.style(styles.log.info),
+            Level::Debug => headers.log.debug.style(styles.log.debug),
+            Level::Trace => headers.log.trace.style(styles.log.trace),
+        };
 
-        let children = report.children();
-        let guide = if children.is_empty() {
+        write!(printer, "{prefix}{} {}", log_header, payload.message.bold())?;
+
+        let guide = if payload.children.is_empty() {
             guides.empty
         } else {
             guides.line
         };
 
         let sub_prefix = format_args!("{}{}", next_prefix, guide.style(styles.guides));
-        self.render_frames(fmt, report.frames(), sub_prefix)?;
-        self.render_extra(fmt, report, sub_prefix)?;
-
-        self.render_children(fmt, children, next_prefix)
+        self.render_frames(printer, &payload.frames, sub_prefix)?;
+        self.render_extra(printer, &payload.metadata, sub_prefix)?;
+        self.render_children(printer, &payload.children, next_prefix)
     }
 
-    fn render_extra<F>(
+    fn render_extra(
         &self,
-        fmt: &mut fmt::Formatter<'_>,
-        report: &Report<F>,
+        printer: &mut LinePrinter<'_, '_>,
+        metadata: &Metadata,
         prefix: fmt::Arguments<'_>,
     ) -> fmt::Result {
         let headers = &self.inner.config.headers;
         let styles = &self.inner.config.styles;
+        let mut write_location = |value: fmt::Arguments<'_>| {
+            write!(
+                printer,
+                "{prefix}{} {}",
+                headers.location.style(styles.location),
+                value.style(styles.distracting)
+            )
+        };
 
-        writeln!(
-            fmt,
-            "{prefix}{} {}",
-            headers.location.style(styles.location),
-            report.location().style(styles.distracting)
-        )?;
-
-        writeln!(
-            fmt,
-            "{prefix}{} {}",
-            headers.type_name.style(styles.type_name),
-            report.type_name().style(styles.distracting)
-        )?;
-
-        Ok(())
+        match &metadata.location {
+            Location::File { name, line, column } => match (line, column) {
+                (Some(line), Some(column)) => {
+                    write_location(format_args!("{name}:{line}:{column}"))
+                }
+                (Some(line), None) => write_location(format_args!("{name}:{line}")),
+                _ => write_location(format_args!("{name}")),
+            },
+            Location::Module(name) => write_location(format_args!("{name}")),
+            Location::Unknown => Ok(()),
+        }
     }
 
     // loops over every frame n times because sorting would require
     // allocation and we aren't going to be handling many frames anyways
     fn render_frames(
         &self,
-        fmt: &mut fmt::Formatter<'_>,
+        printer: &mut LinePrinter<'_, '_>,
         frames: &[Frame],
         prefix: fmt::Arguments<'_>,
     ) -> fmt::Result {
@@ -251,8 +272,8 @@ impl<E> PrettyDisplayer<'_, E> {
                 continue;
             };
 
-            writeln!(
-                fmt,
+            write!(
+                printer,
                 "{prefix}{} {}",
                 headers.suggestion.style(styles.suggestion),
                 suggestion
@@ -262,17 +283,17 @@ impl<E> PrettyDisplayer<'_, E> {
         // context pass
         let mut first = true;
         for frame in frames {
-            let Frame::Context((key, value)) = frame else {
+            let Frame::Context { key, value } = frame else {
                 continue;
             };
 
             if first {
-                writeln!(fmt, "{prefix}{}", headers.context.style(styles.context))?;
+                write!(printer, "{prefix}{}", headers.context.style(styles.context))?;
                 first = false;
             }
 
-            writeln!(
-                fmt,
+            write!(
+                printer,
                 "{prefix}  {}",
                 format_args!("{key}: {value}").style(styles.distracting)
             )?;
@@ -284,14 +305,14 @@ impl<E> PrettyDisplayer<'_, E> {
                 continue;
             };
 
-            writeln!(
-                fmt,
+            write!(
+                printer,
                 "{prefix}{}",
                 headers.attachment.style(styles.attachment)
             )?;
 
             for line in attachment.lines() {
-                writeln!(fmt, "{prefix}  {}", line.style(styles.distracting))?;
+                write!(printer, "{prefix}  {}", line.style(styles.distracting))?;
             }
         }
 
@@ -300,16 +321,16 @@ impl<E> PrettyDisplayer<'_, E> {
 
     fn render_children(
         &self,
-        fmt: &mut fmt::Formatter<'_>,
-        children: &[Report<()>],
+        printer: &mut LinePrinter<'_, '_>,
+        children: &[ReportPayload],
         prefix: fmt::Arguments<'_>,
     ) -> fmt::Result {
         let guides = &self.inner.config.guides;
         let styles = &self.inner.config.styles;
 
-        let mut children = children.iter().peekable();
-        while let Some(child) = children.next() {
-            let last = children.peek().is_none();
+        let len = children.len();
+        for (i, child) in children.into_iter().enumerate() {
+            let last = i == len - 1;
 
             let guide = if last {
                 guides.last_branch
@@ -321,7 +342,7 @@ impl<E> PrettyDisplayer<'_, E> {
             let guide = if last { guides.empty } else { guides.line };
             let next_next_prefix = format_args!("{}{}", prefix, guide.style(styles.guides));
 
-            self.render_report(fmt, child, next_prefix, next_next_prefix)?;
+            self.render_report(printer, child, next_prefix, next_next_prefix)?;
         }
 
         Ok(())

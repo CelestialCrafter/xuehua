@@ -4,27 +4,25 @@
 
 pub mod prelude;
 pub mod render;
+#[cfg(feature = "tracing")]
+pub mod tracing;
 
 pub use xh_reports_derive::IntoReport;
 
 use std::{
-    any::{type_name, type_name_of_val},
+    any::type_name,
     error::Error,
-    fmt,
+    fmt::{self, Display},
     iter::once,
     marker::PhantomData,
-    panic::Location,
+    panic::Location as StdLocation,
     result::Result as StdResult,
 };
 
 use educe::Educe;
-use log::{
-    Level,
-    kv::{Key, Value, VisitSource},
-};
 use smol_str::{SmolStr, ToSmolStr};
 
-use crate::render::{Render, SimpleRenderer};
+use crate::render::{GlobalRenderer, Renderer, SimpleRenderer};
 
 /// Helper alias for [`Error`]
 pub type BoxDynError = Box<dyn Error + Send + Sync + 'static>;
@@ -36,17 +34,23 @@ pub type Result<T, E> = StdResult<T, Report<E>>;
 ///
 /// `Frame`s can be created via the [`Self::suggestion`], [`Self::context`], or [`Self::attachment`] methods.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Frame {
     /// A collection of keys and values.
     ///
     /// This can be used to attach additional data such as:
     /// ids, timestamps, commands, etc.
-    Context((SmolStr, String)),
+    Context {
+        /// Name of the context field
+        key: SmolStr,
+        /// Value associated with the key
+        value: SmolStr,
+    },
     /// A long-form piece of information.
     ///
     /// This can be used to attach more detailed data such as:
     /// stderr, build logs, files, etc.
-    Attachment(String),
+    Attachment(SmolStr),
     /// An inline suggestion
     ///
     /// This can be used to suggest actions to users to resolve issues.
@@ -60,7 +64,10 @@ impl Frame {
         K: Into<SmolStr>,
         V: fmt::Display,
     {
-        Self::Context((key.into(), value.to_string()))
+        Self::Context {
+            key: key.into(),
+            value: value.to_smolstr(),
+        }
     }
 
     /// Helper function to create [`Self::Suggestion`]s.
@@ -70,107 +77,201 @@ impl Frame {
 
     /// Helper function to create [`Self::Attachment`]s.
     pub fn attachment(attachment: impl fmt::Display) -> Frame {
-        Self::Attachment(attachment.to_string())
+        Self::Attachment(attachment.to_smolstr())
     }
 }
 
-#[derive(Clone, Debug)]
-struct ReportInner {
-    frames: Vec<Frame>,
-    children: Vec<Report<()>>,
-    message: SmolStr,
-    type_name: &'static str,
-    // TODO: replace Location with custom location struct to
-    // support providing panic/log location in reports
-    location: &'static Location<'static>,
-    level: Level,
+/// Location data associated with a [`Report`].
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Location {
+    /// A location pointing to a file
+    File {
+        /// The name of the file
+        name: SmolStr,
+        /// Optionally, the line within the file
+        line: Option<u32>,
+        /// Optionally, the column within the line
+        column: Option<u32>,
+    },
+    /// A location pointing to a module
+    Module(SmolStr),
+    /// An unknown locatiion
+    #[default]
+    Unknown,
 }
 
-impl ReportInner {
-    fn new(
-        message: SmolStr,
-        type_name: &'static str,
-        location: &'static Location<'static>,
-    ) -> Self {
+/// Various error levels associated with a [`Report`].
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[allow(missing_docs)]
+pub enum Level {
+    Trace,
+    Debug,
+    Warn,
+    Info,
+    Error,
+}
+
+/// Metadata associated with a [`Report`].
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Metadata {
+    /// The location in which the [`Report`] originated.
+    pub location: Location,
+    /// The importance level of the [`Report`]
+    pub level: Level,
+    /// The name of the type associated with the [`Report`]
+    ///
+    /// Note: This field has the same semantics as [`type_name`]
+    pub type_name: SmolStr,
+}
+
+impl Metadata {
+    #[track_caller]
+    fn new() -> Self {
+        let std_location = StdLocation::caller();
         Self {
-            message,
-            type_name,
-            location,
-            children: Vec::default(),
-            frames: Vec::default(),
+            location: Location::File {
+                name: std_location.file().into(),
+                line: Some(std_location.line()),
+                column: Some(std_location.column()),
+            },
+            type_name: SmolStr::new_static(type_name::<()>()),
             level: Level::Error,
         }
     }
 }
 
-/// A tree of errors.
-///
-/// Each report contains [`Frame`]s, child [`Report`]s,
-/// and additional information about the error.
-#[derive(Educe, Clone)]
-#[educe(Debug(bound()))]
-pub struct Report<E> {
-    inner: Box<ReportInner>,
-    _marker: PhantomData<E>,
+/// Inner payload of a [`Report`].
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ReportPayload {
+    /// Frames attached to this report.
+    pub frames: Vec<Frame>,
+    /// Child reports that caused this report.
+    pub children: Vec<ReportPayload>,
+    /// Main message attached to this report.
+    pub message: SmolStr,
+    /// Other metadata associated with the report, such as creation location.
+    pub metadata: Metadata,
 }
 
-impl<T> Report<T> {
+impl ReportPayload {
+    /// Construct a new `ReportPayload`.
+    #[track_caller]
+    pub fn new(message: SmolStr) -> Self {
+        Self {
+            message,
+            metadata: Metadata::new(),
+            children: Vec::default(),
+            frames: Vec::default(),
+        }
+    }
+}
+
+/// Type representing a [`Report`], but implementing [`Error`].
+///
+/// This error type does not carry over all the "frills" of a report (such as pretty error trees).
+/// It is also impossible to losslessly convert this back to a [`Report`].
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct ReportError(ReportPayload);
+
+impl Error for ReportError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        (self.0.children.len() == 1).then(|| {
+            let child = &self.0.children[0];
+            // SAFETY: `ReportError` is repr(transparent) over `ReportPayload`.
+            let error = unsafe { std::mem::transmute::<&ReportPayload, &Self>(child) };
+            error as &(dyn Error + 'static)
+        })
+    }
+}
+
+impl fmt::Display for ReportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        SimpleRenderer.render(&self.0).fmt(f)
+    }
+}
+
+/// The core error type, representing a tree of errors.
+///
+/// Each report contains [`Frame`]s, child [`ReportPayload`]s,
+/// and additional information about the error.
+#[derive(Educe, Clone)]
+#[educe(Deref, DerefMut)]
+pub struct Report<E> {
+    #[educe(Deref, DerefMut)]
+    inner: Box<ReportPayload>,
+    _marker: PhantomData<fn() -> E>,
+}
+
+/// The [`fmt::Debug`] impl for this type defaults to rendering using the [`GlobalRenderer`].
+/// Additionally, the `{:#?}` directive can show the `Report` in a typical [`fmt::Debug`] fashion.
+impl<E> fmt::Debug for Report<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            self.inner.fmt(f)
+        } else {
+            GlobalRenderer.render(self).fmt(f)
+        }
+    }
+}
+
+impl<E> fmt::Display for Report<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        SimpleRenderer.render(self).fmt(f)
+    }
+}
+
+impl Report<()> {
     /// Constructs a new [`Report`] from a message.
     #[track_caller]
     pub fn new(message: impl Into<SmolStr>) -> Self {
+        Self::from_payload(ReportPayload::new(message.into()))
+    }
+
+    /// Converts the underlying [`ReportPayload`] back into a `Report`.
+    pub fn from_payload(payload: ReportPayload) -> Self {
         Report {
-            inner: ReportInner::new(message.into(), type_name::<T>(), Location::caller()).into(),
+            inner: payload.into(),
             _marker: PhantomData,
         }
     }
 
     /// Constructs a new [`Report`] from an error.
     ///
-    /// This method populates children by walking [`Error::source`].
-    /// To avoid this, consider using [`Report::new`].
+    /// Note that this walks [`Error::source`] to build a tree of children.
+    /// To avoid this behavior, consider using [`Report::new`]
     #[track_caller]
     pub fn from_error(error: impl Error) -> Self {
-        fn walk<T>(
-            error: &dyn Error,
-            type_name: &'static str,
-            location: &'static Location<'static>,
-        ) -> Report<T> {
-            let report = Report {
-                inner: ReportInner::new(error.to_smolstr(), type_name, location).into(),
-                _marker: PhantomData,
-            };
-
+        #[track_caller]
+        fn walk(error: &dyn Error) -> Report<()> {
+            let report = Report::new(error.to_smolstr());
             match error.source() {
-                Some(source) => {
-                    report.with_child(walk::<()>(source, type_name_of_val(source), location))
-                }
+                Some(source) => report.with_child(walk(source)),
                 None => report,
             }
         }
 
-        walk(&error, type_name_of_val(&error), Location::caller())
+        walk(&error)
+    }
+}
+
+impl<E> Report<E> {
+    /// Converts the `Report` into the underlying [`ReportPayload`].
+    pub fn into_payload(self) -> ReportPayload {
+        *self.inner
     }
 
-    /// Retrieves the type name that the `Report` was created with.
-    ///
-    /// # Notes
-    ///
-    /// This method has the same semantics as [`std::any::type_name`].
-    pub fn type_name(&self) -> &'static str {
-        self.inner.type_name
-    }
-
-    /// Retrieves the location this `Report` was created at.
-    pub fn location(&self) -> &'static Location<'static> {
-        self.inner.location
-    }
-
-    /// Retrieves the message associated with this `Report`.
-    pub fn message(&self) -> SmolStr {
-        self.inner.message.clone()
+    /// Converts this `Report` into a [`ReportError`]
+    pub fn into_error(self) -> ReportError {
+        ReportError(*self.inner)
     }
 
     /// "Erases" this `Report`s generic parameter to [`()`].
+    // NOTE: This should not change self.inner.metadata.type_name like `Self::cast` does.
     pub fn erased(self) -> Report<()> {
         Report {
             inner: self.inner,
@@ -178,55 +279,10 @@ impl<T> Report<T> {
         }
     }
 
-    /// Converts this `Report` into a type implementing [`Error`].
-    pub fn into_error(self) -> impl Error + Send + Sync + 'static {
-        #[derive(Debug)]
-        struct ReportError {
-            message: SmolStr,
-            child: Option<Box<ReportError>>,
-        }
-
-        impl ReportError {
-            fn new(report: Report<()>) -> Self {
-                Self {
-                    message: report.inner.message,
-                    child: {
-                        let mut children = report.inner.children;
-                        (children.len() == 1).then(|| Self::new(children.swap_remove(0)).into())
-                    },
-                }
-            }
-        }
-
-        impl fmt::Display for ReportError {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.message)
-            }
-        }
-
-        impl Error for ReportError {
-            fn source(&self) -> Option<&(dyn Error + 'static)> {
-                self.child.as_ref().map(|error| error as _)
-            }
-        }
-
-        ReportError::new(self.erased())
-    }
-
     /// Sets the log level associated with the `Report`.
     pub fn with_level(mut self, level: Level) -> Self {
-        self.inner.level = level;
+        self.inner.metadata.level = level;
         self
-    }
-
-    /// Retrieves the log level associated with this `Report`.
-    pub fn level(&self) -> Level {
-        self.inner.level
-    }
-
-    /// Retrieves the [`Frame`]s associated with this `Report`..
-    pub fn frames(&self) -> &[Frame] {
-        &self.inner.frames
     }
 
     /// Appends a [`Frame`] to this `Report`.
@@ -240,17 +296,9 @@ impl<T> Report<T> {
         frames.into_iter().fold(self, Report::with_frame)
     }
 
-    /// Retrieves the children associated with this `Report`.
-    pub fn children(&self) -> &[Report<()>] {
-        &self.inner.children
-    }
-
     /// Appends a `Report` as a child to this `Report`.
     pub fn with_child<F>(mut self, child: Report<F>) -> Self {
-        self.inner.children.push(Report {
-            inner: child.inner,
-            _marker: PhantomData,
-        });
+        self.inner.children.push(*child.inner);
         self
     }
 
@@ -258,11 +306,14 @@ impl<T> Report<T> {
     pub fn with_children<F>(self, children: impl IntoIterator<Item = Report<F>>) -> Self {
         children.into_iter().fold(self, Report::with_child)
     }
-}
 
-impl<E> fmt::Display for Report<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        SimpleRenderer.render(self).fmt(f)
+    /// "Casts" the reports generic parameter to `F`.
+    pub fn cast<F>(mut self) -> Report<F> {
+        self.inner.metadata.type_name = SmolStr::new_static(type_name::<F>());
+        Report {
+            inner: self.inner,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -271,21 +322,21 @@ pub trait ReportExt<T> {
     /// "Wraps" this `Report` with the parent's default `Report`.
     ///
     /// See [`Report::wrap`] for more information.
+    #[track_caller]
     fn wrap<U: IntoReport + Default>(self) -> Report<U>;
 
     /// "Wraps" this `Report` with a parent `Report`.
     ///
     /// See [`Report::wrap_with`] for more information.
+    #[track_caller]
     fn wrap_with<U>(self, parent: impl Into<Report<U>>) -> Report<U>;
 }
 
 impl<T, U: Into<Report<T>>> ReportExt<T> for U {
-    #[track_caller]
     fn wrap<V: IntoReport + Default>(self) -> Report<V> {
         V::default().into_report().with_child(self.into())
     }
 
-    #[track_caller]
     fn wrap_with<V>(self, parent: impl Into<Report<V>>) -> Report<V> {
         parent.into().with_child(self.into())
     }
@@ -296,11 +347,13 @@ pub trait ResultReportExt<T, E>: Sized {
     /// Converts the inner [`Report`] into a type implementing [`Error`].
     ///
     /// See [`Report::into_error`] for more information.
+    #[track_caller]
     fn into_error(self) -> StdResult<T, impl Error + Send + Sync + 'static>;
 
     /// "Erases" this `Report`s generic parameter to `()`.
     ///
     /// See [`Report::erased`] for more information.
+    #[track_caller]
     fn erased(self) -> Result<T, ()>;
 
     /// "Wraps" the inner [`Report`] with the parent's default [`Report`].
@@ -315,29 +368,31 @@ pub trait ResultReportExt<T, E>: Sized {
     ///
     /// See [`Report::wrap_with`] for more information.
     #[track_caller]
-    fn wrap_with<F: IntoReport>(self, parent: F) -> Result<T, F> {
+    fn wrap_with<F, G: Into<Report<F>>>(self, parent: G) -> Result<T, F> {
         self.wrap_with_fn(|| parent)
     }
 
     /// Append a [`Report`] as a parent of the inner [`Report`].
     ///
     /// See [`Report::wrap_with`] for more information.
-    fn wrap_with_fn<F: IntoReport>(self, func: impl FnOnce() -> F) -> Result<T, F>;
+    #[track_caller]
+    fn wrap_with_fn<F, G: Into<Report<F>>>(self, func: impl FnOnce() -> G) -> Result<T, F>;
 
     /// Sets the log level associated with the inner [`Report`].
     ///
     /// See [`Report::with_level`] for more information.
+    #[track_caller]
     fn with_level(self, level: Level) -> Result<T, E>;
 
     /// Appends a [`Frame`] to the inner [`Report`].
     ///
     /// See [`Report::with_frame`] for more information.
+    #[track_caller]
     fn with_frame(self, frame: impl FnOnce() -> Frame) -> Result<T, E>;
 }
 
 // we can't use [`Result::map_err`] in any of these since `#[track_caller]` on closures is unstable
 impl<T, E, D: Into<Report<E>>> ResultReportExt<T, E> for StdResult<T, D> {
-    #[track_caller]
     fn into_error(self) -> StdResult<T, impl Error + Send + Sync + 'static> {
         match self {
             Ok(t) => Ok(t),
@@ -345,7 +400,6 @@ impl<T, E, D: Into<Report<E>>> ResultReportExt<T, E> for StdResult<T, D> {
         }
     }
 
-    #[track_caller]
     fn erased(self) -> Result<T, ()> {
         match self {
             Ok(t) => Ok(t),
@@ -353,15 +407,13 @@ impl<T, E, D: Into<Report<E>>> ResultReportExt<T, E> for StdResult<T, D> {
         }
     }
 
-    #[track_caller]
-    fn wrap_with_fn<F: IntoReport>(self, parent: impl FnOnce() -> F) -> Result<T, F> {
+    fn wrap_with_fn<F, G: Into<Report<F>>>(self, parent: impl FnOnce() -> G) -> Result<T, F> {
         match self {
             Ok(t) => Ok(t),
-            Err(report) => Err(parent().into_report().with_child(report.into())),
+            Err(report) => Err(parent().into().with_child(report.into())),
         }
     }
 
-    #[track_caller]
     fn with_level(self, level: Level) -> Result<T, E> {
         match self {
             Ok(t) => Ok(t),
@@ -369,7 +421,6 @@ impl<T, E, D: Into<Report<E>>> ResultReportExt<T, E> for StdResult<T, D> {
         }
     }
 
-    #[track_caller]
     fn with_frame(self, frame: impl FnOnce() -> Frame) -> Result<T, E> {
         match self {
             Ok(t) => Ok(t),
@@ -400,7 +451,7 @@ where
     E: Send + Sync,
 {
     fn into_report(self) -> Report<Self> {
-        Report::from_error(self)
+        Report::from_error(self).cast()
     }
 }
 
@@ -408,68 +459,6 @@ impl<T: IntoReport> From<T> for Report<T> {
     #[track_caller]
     fn from(value: T) -> Self {
         value.into_report()
-    }
-}
-
-/// Helper struct for converting [`log::Record`]s into [`Report`]s.
-///
-/// This error can be converted into a [`Report`] via the [`IntoReport`] trait.
-#[derive(Debug)]
-pub struct LogError {
-    message: SmolStr,
-    level: Level,
-    frames: Vec<Frame>,
-    children: Vec<Report<LogSubError>>,
-}
-
-struct LogSubError;
-
-impl LogError {
-    /// Constructs a new [`LogError`]
-    pub fn new(record: &log::Record) -> Self {
-        #[derive(Default)]
-        struct FrameVisitor {
-            frames: Vec<Frame>,
-            children: Vec<Report<LogSubError>>,
-        }
-
-        impl VisitSource<'_> for FrameVisitor {
-            fn visit_pair(
-                &mut self,
-                key: Key<'_>,
-                value: Value<'_>,
-            ) -> StdResult<(), log::kv::Error> {
-                match key.as_str() {
-                    "suggestion" => self.frames.push(Frame::suggestion(value.to_smolstr())),
-                    "attachment" => self.frames.push(Frame::attachment(value)),
-                    "error" => self
-                        .children
-                        .push(Report::<LogSubError>::new(value.to_smolstr())),
-                    key => self.frames.push(Frame::context(key, value)),
-                }
-
-                Ok(())
-            }
-        }
-
-        let mut visitor = FrameVisitor::default();
-        record.key_values().visit(&mut visitor).unwrap();
-
-        Self {
-            message: format_args!("({}) {}", record.target(), record.args()).to_smolstr(),
-            level: record.level(),
-            children: visitor.children,
-            frames: visitor.frames,
-        }
-    }
-}
-
-impl IntoReport for LogError {
-    fn into_report(self) -> Report<Self> {
-        Report::new(self.message)
-            .with_frames(self.frames)
-            .with_level(self.level)
-            .with_children(self.children)
     }
 }
 

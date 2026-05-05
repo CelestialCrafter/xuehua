@@ -4,13 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+default = ["pretty"]
 pretty = ["dep:owo-colors"]
-json = ["dep:serde_json"]
+serde = ["dep:serde", "smol_str/serde"]
+json = ["dep:serde_json", "serde"]
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
 
 [dependencies]
 xh-reports-derive = { path = "../reports-derive" }
 educe.workspace = true
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 smol_str.workspace = true
-log.workspace = true
+serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, optional = true }
 owo-colors = { version = "4.2.3", optional = true }
