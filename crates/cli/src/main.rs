@@ -1,16 +1,43 @@
 pub mod archive;
-pub mod log;
 pub mod options;
 pub mod package;
 
 use std::process::ExitCode;
 
-use xh_reports::prelude::*;
+use smol_str::ToSmolStr;
+use tracing::info;
+use tracing_subscriber::{
+    EnvFilter, filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt,
+};
+use xh_reports::{
+    prelude::*,
+    render::{GlobalRenderer, PrettyRenderer},
+    tracing::ReportLayer,
+};
 
-use crate::{log::{Logger, log_report}, options::{OPTIONS, Options, cli::Action, get_opts}};
+use crate::options::{OPTIONS, Options, cli::Action, get_opts};
 
 fn init() -> Result<(), ()> {
-    Logger::init();
+    // TODO: support json rendering via cli arg
+    // TODO: add color flag to use with pretty renderer
+    GlobalRenderer::set(PrettyRenderer::default());
+
+    // TODO: accept directives via flag instead of environment variable
+    let env_layer = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env()
+        .wrap_with_fn(|| {
+            let msg = format_args!(
+                "could not parse the {:?} environment variable",
+                EnvFilter::DEFAULT_ENV
+            );
+
+            Report::new(msg.to_smolstr())
+        })?;
+    tracing_subscriber::registry()
+        .with(ReportLayer::new())
+        .with(env_layer)
+        .init();
 
     OPTIONS
         .set(Options::run()?)
@@ -23,7 +50,11 @@ fn init() -> Result<(), ()> {
 #[tokio::main]
 async fn main() -> ExitCode {
     if let Err(report) = init() {
-        log_report(&report);
+        info!(
+            error = &report.into_error() as &dyn StdError,
+            "failure initializing cli"
+        );
+
         return ExitCode::FAILURE;
     }
 
@@ -31,7 +62,10 @@ async fn main() -> ExitCode {
         Action::Package { project, action } => package::handle(project, action).await.erased(),
         Action::Archive(action) => archive::handle(action).erased(),
     } {
-        log_report(&report);
+        info!(
+            error = &report.into_error() as &dyn StdError,
+            "failure executing action"
+        );
         return ExitCode::FAILURE;
     }
 
