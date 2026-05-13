@@ -7,7 +7,7 @@ use include_dir::include_dir;
 use libtest_mimic::{Arguments, Trial};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use xh_archive::Event;
-use xh_reports::{render::{GlobalRenderer, JsonRenderer}, tracing::ReportLayer};
+use xh_reports::{render::{GlobalRenderer, JsonRenderer}, layer::ReportLayer};
 
 use crate::utils::{ArbitraryArchive, BenchmarkOptions, benchmark, decode, encode};
 

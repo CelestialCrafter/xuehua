@@ -5,14 +5,13 @@ pub mod package;
 use std::process::ExitCode;
 
 use smol_str::ToSmolStr;
-use tracing::info;
 use tracing_subscriber::{
     EnvFilter, filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt,
 };
 use xh_reports::{
     prelude::*,
     render::{GlobalRenderer, PrettyRenderer},
-    tracing::ReportLayer,
+    layer::ReportLayer,
 };
 
 use crate::options::{OPTIONS, Options, cli::Action, get_opts};
@@ -50,7 +49,7 @@ fn init() -> Result<(), ()> {
 #[tokio::main]
 async fn main() -> ExitCode {
     if let Err(report) = init() {
-        info!(
+        tracing::info!(
             error = &report.into_error() as &dyn StdError,
             "failure initializing cli"
         );
@@ -62,7 +61,7 @@ async fn main() -> ExitCode {
         Action::Package { project, action } => package::handle(project, action).await.erased(),
         Action::Archive(action) => archive::handle(action).erased(),
     } {
-        info!(
+        tracing::error!(
             error = &report.into_error() as &dyn StdError,
             "failure executing action"
         );

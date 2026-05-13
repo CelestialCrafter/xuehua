@@ -5,7 +5,6 @@ use std::borrow::Cow;
 use blake3::Hash;
 use bytes::{Buf, Bytes};
 use ed25519_dalek::Signature;
-use tracing::debug;
 use xh_reports::prelude::*;
 
 use crate::{
@@ -102,6 +101,7 @@ impl Decoder {
         self.hasher.finalize()
     }
 
+    #[tracing::instrument(level = "trace", skip_all)]
     fn process(&mut self, buffer: &mut Bytes) -> Result<Event, Error> {
         const PREFIX: &str = "xuehua-archive@";
         let token = try_split_to(buffer, PREFIX.len())?;
@@ -142,8 +142,6 @@ impl Decoder {
         }
 
         self.hasher.reset();
-
-        debug!("decoded header with magic {magic:?} and version {version}");
         Ok(Event::Header)
     }
 
@@ -162,7 +160,6 @@ impl Decoder {
             })
             .collect::<Result<_, _>>()?;
 
-        debug!("decoded footer with hash {hash} and signature {signatures:?}");
         Ok(Event::Footer(signatures))
     }
 
@@ -193,8 +190,6 @@ impl Decoder {
             permissions,
             content,
         };
-
-        debug!("decoded object: {object:?}");
 
         let hash = hash_object(&object);
         verify_hash(buffer, hash)?;

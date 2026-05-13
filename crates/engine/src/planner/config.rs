@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use educe::Educe;
-use tracing::trace;
 use petgraph::graph::NodeIndex;
 use rapidhash::RapidHashMap;
 use xh_reports::prelude::*;
@@ -75,8 +74,6 @@ impl<'a, B: Backend> ConfigManager<'a, B> {
         destination: PackageName,
         modify: impl FnOnce(B::Value) -> Result<B::Value, BackendError>,
     ) -> Option<Result<(), Error>> {
-        trace!("configuring from {source:?} into {destination}");
-
         self.configs.get(source).cloned().map(|source| {
             self.register(
                 destination,

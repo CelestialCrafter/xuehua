@@ -156,6 +156,7 @@ where
         Ok(Some(archive))
     }
 
+    #[tracing::instrument(level = "debug", skip(self, planner))]
     pub async fn build(
         &self,
         planner: &Planner<Frozen>,

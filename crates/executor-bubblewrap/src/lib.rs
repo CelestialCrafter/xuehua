@@ -3,7 +3,6 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use tracing::debug;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use xh_engine::{
@@ -86,15 +85,8 @@ impl Executor for BubblewrapExecutor {
         &NAME
     }
 
+    #[tracing::instrument(level = "debug", skip(self))]
     async fn execute(&mut self, request: Self::Request) -> Result<(), Error> {
-        debug!(
-            "running command {:?}",
-            std::iter::once(request.program.clone())
-                .chain(request.arguments.clone())
-                .collect::<Vec<_>>()
-                .join(" "),
-        );
-
         let mut sandboxed = tokio::process::Command::new("bwrap");
         sandboxed.stdin(Stdio::null());
         sandboxed.stdout(Stdio::null());

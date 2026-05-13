@@ -160,37 +160,34 @@ async fn build(
     let handle = task::spawn(async move {
         let mut failures = Vec::new();
         while let Ok(event) = results_rx.recv() {
-            match event {
-                Event::Started { name, request } => info!(
-                    request = ?request,
-                    "started building package {name}"
-                ),
-                Event::Finished {
-                    name,
-                    request,
-                    result,
-                } => {
-                    info!(
-                        request = ?request,
-                        status = if result.is_ok() { "succeeded" } else { "failed" },
-                        "package finished building {name}"
-                    );
+            let Event::Finished {
+                name,
+                request,
+                result,
+            } = event
+            else {
+                continue;
+            };
 
-                    match result {
-                        Ok(()) => {
-                            let archive = builder
-                                .fetch(&request.id)
-                                .expect("should be able to fetch package output")
-                                .expect("package should exist");
+            info!(
+                %name,
+                status = if result.is_ok() { "success" } else { "failure" },
+                "package finished building"
+            );
 
-                            store
-                                .register_artifact(archive)
-                                .await
-                                .expect("could not register artifact");
-                        }
-                        Err(report) => failures.push(report),
-                    }
+            match result {
+                Ok(()) => {
+                    let archive = builder
+                        .fetch(&request.id)
+                        .expect("should be able to fetch package output")
+                        .expect("package should exist");
+
+                    store
+                        .register_artifact(archive)
+                        .await
+                        .expect("could not register artifact");
                 }
+                Err(report) => failures.push(report),
             }
         }
 

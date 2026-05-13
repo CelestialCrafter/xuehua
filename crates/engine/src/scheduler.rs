@@ -1,7 +1,6 @@
 use std::sync::mpsc;
 
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use tracing::{debug, trace};
 use petgraph::{Direction, graph::NodeIndex, visit::Dfs};
 use rapidhash::{RapidHashMap, RapidHashSet};
 use xh_reports::Result;
@@ -64,6 +63,7 @@ where
         }
     }
 
+    #[tracing::instrument(skip(self, events))]
     pub async fn schedule(&mut self, targets: &[NodeIndex], events: mpsc::Sender<Event>) {
         let mut futures = FuturesUnordered::new();
         let plan = self.planner.graph();
@@ -74,10 +74,12 @@ where
                 target: node,
             };
 
+            let name = &plan[node].name;
             let _ = events.send(Event::Started {
                 request,
-                name: plan[request.target].name.clone(),
+                name: name.clone(),
             });
+
             (request, self.builder.build(self.planner, request).await)
         };
 
@@ -89,7 +91,7 @@ where
             while let Some(node) = visitor.next(plan) {
                 subset.insert(node);
                 if let PackageState::Unbuilt { remaining: 0, .. } = self.state[&node] {
-                    trace!("adding node {:?} as a leaf", plan[node].name);
+                    tracing::trace!(name = ?plan[node].name, "scheduling leaf package");
                     futures.push(build(&events, node));
                 }
             }
@@ -117,10 +119,6 @@ where
                 };
 
                 *remaining -= 1;
-                debug!(
-                    "{} has {} dependencies remaining",
-                    plan[parent].name, remaining
-                );
                 if *remaining == 0 && subset.contains(&parent) {
                     futures.push(build(&events, parent));
                 }

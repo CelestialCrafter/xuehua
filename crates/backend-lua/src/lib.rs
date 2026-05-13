@@ -2,7 +2,6 @@ mod logger;
 
 use std::{path::Path, str::FromStr, sync::LazyLock};
 
-use tracing::warn;
 use mlua::{
     AnyUserData, ExternalResult, Function, Lua, Table, UserData, UserDataRegistry,
     Value as LuaValue,
@@ -194,6 +193,7 @@ impl Backend for LuaBackend {
         &NAME
     }
 
+    #[tracing::instrument(level = "debug", skip(self, planner))]
     fn plan(&self, planner: &mut Planner<Unfrozen>, project: &Path) -> Result<(), Error> {
         let chunk = self
             .lua
@@ -232,7 +232,7 @@ fn with_module<'scope, 'env>(
     lua.register_module(name, value)?;
     scope.add_destructor(move || {
         if let Err(err) = lua.unload_module(name) {
-            warn!("could not unregister {name}: {err}");
+            tracing::warn!(%name, %err, "could not unregister module");
         }
     });
 

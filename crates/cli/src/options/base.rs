@@ -6,7 +6,7 @@ use std::{
 
 use dirs::{cache_dir, config_dir, data_dir};
 use tempfile::env::temp_dir;
-use tracing::{info, warn};
+use tracing::warn;
 use xh_reports::prelude::*;
 
 const BUILD: &str = "xuehua/builds";
@@ -83,9 +83,9 @@ fn initialize_locations() -> Result<Locations, InitializeLocationsError> {
             Ok(true) => return Some(ty),
             Ok(false) => (),
             Err(ref err) => warn!(
+                ?path,
                 error = (err as &dyn std::error::Error),
-                "could not check if options file at {} exists",
-                path.display()
+                "could not check if options file exists"
             ),
         }
 
@@ -98,7 +98,8 @@ fn initialize_locations() -> Result<Locations, InitializeLocationsError> {
             ("system", &system.options, LocationType::System)
         };
 
-        info!(
+        tracing::info!(
+            ?path,
             suggestion = format_args!("create a config file at {}", path.display()),
             "could not find options file, falling back to {name} locations"
         );

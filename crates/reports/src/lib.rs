@@ -5,7 +5,7 @@
 pub mod prelude;
 pub mod render;
 #[cfg(feature = "tracing")]
-pub mod tracing;
+pub mod layer;
 
 pub use xh_reports_derive::IntoReport;
 

@@ -8,7 +8,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use tracing::debug;
 use xh_reports::prelude::*;
 
 use crate::{Event, Object, ObjectContent};
@@ -79,9 +78,9 @@ impl<'a> Unpacker<'a> {
         self.process(event.borrow(), write_file_mmap)
     }
 
+    #[tracing::instrument(level = "trace", skip(self, write_file))]
     fn process(&mut self, event: &Event, write_file: WriteFileFn) -> Result<(), Error> {
         if let Event::Object(object) = event {
-            debug!("unpacking object: {object:?}");
             process_object(self.root, object, write_file).wrap()
         } else {
             Ok(())
@@ -91,7 +90,6 @@ impl<'a> Unpacker<'a> {
 
 fn process_object(root: &Path, object: &Object, write_file: WriteFileFn) -> Result<(), Error> {
     let location = xh_common::safe_path(root, object.location.as_ref()).wrap()?;
-    debug!("unpacking to {}", location.display());
 
     let set_permissions =
         || fs::set_permissions(&location, fs::Permissions::from_mode(object.permissions));
