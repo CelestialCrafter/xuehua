@@ -149,7 +149,7 @@ pub fn decode(contents: &mut Bytes) -> Vec<Event> {
         .collect::<Result<Vec<_>, _>>()
         .expect("decoding should not fail");
 
-    debug!("decoded events: {decoded:?}");
+    debug!(?decoded, "decoded events");
     decoded
 }
 
@@ -157,7 +157,7 @@ pub fn encode(events: &Vec<Event>) -> Bytes {
     let mut encoded = BytesMut::new();
     Encoder::new().encode_iter(&mut encoded, events);
 
-    debug!("encoded data: {encoded:?}");
+    debug!(?encoded, "encoded data");
     encoded.freeze()
 }
 

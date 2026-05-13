@@ -67,7 +67,5 @@ pub fn hash_object(object: &Object) -> blake3::Hash {
     hasher.update(&[variant]);
     process_lenp(&mut hasher, content);
 
-    let hash = hasher.finalize();
-    tracing::debug!("object hashed to {hash}");
-    hash
+    hasher.finalize()
 }

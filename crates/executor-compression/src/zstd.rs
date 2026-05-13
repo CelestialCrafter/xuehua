@@ -24,6 +24,7 @@ fn mmap_output(output: &Path, size: usize) -> Result<MmapMut, std::io::Error> {
     Ok(map)
 }
 
+#[tracing::instrument(level = "trace", skip(options))]
 pub fn compress(options: &Options, input: &Path, output: &Path) -> Result<(), ()> {
     let input = mmap_input(input).erased()?;
 
@@ -39,15 +40,15 @@ pub fn compress(options: &Options, input: &Path, output: &Path) -> Result<(), ()
     Ok(())
 }
 
+#[tracing::instrument(level = "trace", skip(_options))]
 pub fn decompress(_options: &Options, input: &Path, output: &Path) -> Result<(), ()> {
     let input = mmap_input(input).erased()?;
 
     let size = zstd_safe::get_frame_content_size(&input)
         .map_err(|error| Report::new(error.to_string()))?;
     let size = size.unwrap_or_else(|| {
-        let capacity = 1024 * 1024 * 256;
-        tracing::warn!(capacity = capacity, "could not determine compressed file size, falling back to fixed capacity");
-        capacity
+        tracing::warn!("could not determine compressed file size, falling back to fixed capacity");
+        1024 * 1024 * 256
     });
 
     let mut output = mmap_output(
