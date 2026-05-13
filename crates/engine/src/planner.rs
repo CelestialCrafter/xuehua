@@ -7,7 +7,6 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use tracing::trace;
 use petgraph::{
     Direction,
     acyclic::Acyclic,
@@ -122,8 +121,6 @@ impl Planner<Unfrozen> {
     }
 
     pub fn register(&mut self, package: Package) -> Result<NodeIndex, Error> {
-        trace!("registering package {}", package.name);
-
         if self.packages.contains_key(&package.name) {
             return Err(ConflictError {
                 package: package.name,

@@ -4,7 +4,6 @@ use std::borrow::Borrow;
 
 use bytes::{BufMut, Bytes};
 use ed25519_dalek::Signature;
-use tracing::debug;
 
 use crate::{
     Event, Fingerprint, Object, ObjectContent,
@@ -55,7 +54,6 @@ impl Encoder {
     }
 
     fn process_header(&mut self, buffer: &mut impl BufMut) {
-        debug!("encoding header");
         self.hasher.reset();
 
         Marker::Header.put(buffer);
@@ -64,8 +62,6 @@ impl Encoder {
     }
 
     fn process_object(&mut self, buffer: &mut impl BufMut, object: &Object) {
-        debug!("encoding object: {object:?}");
-
         Marker::Object.put(buffer);
         Self::process_lenp(buffer, &object.location.inner);
         buffer.put_u32_le(object.permissions);
@@ -91,9 +87,9 @@ impl Encoder {
     }
 
     fn process_footer(&self, buffer: &mut impl BufMut, signatures: &Vec<(Fingerprint, Signature)>) {
-        Marker::Footer.put(buffer);
-
         let hash = self.hasher.finalize();
+
+        Marker::Footer.put(buffer);
         buffer.put_slice(hash.as_bytes());
 
         buffer.put_u64_le(signatures.len() as u64);
@@ -101,8 +97,6 @@ impl Encoder {
             buffer.put_slice(fingerprint.as_bytes());
             buffer.put_slice(&signature.to_bytes());
         }
-
-        debug!("encoding footer with hash {hash} and signatures {signatures:?}");
     }
 
     fn process_lenp(buffer: &mut impl BufMut, bytes: &Bytes) {

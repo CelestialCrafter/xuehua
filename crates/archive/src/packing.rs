@@ -3,7 +3,6 @@
 use std::{collections::VecDeque, fs, os::unix::fs::PermissionsExt, path::Path};
 
 use bytes::Bytes;
-use tracing::debug;
 use xh_reports::prelude::*;
 
 use crate::{Event, Object, ObjectContent, PathBytes};
@@ -64,6 +63,7 @@ impl Packer {
         std::iter::from_fn(|| self.process(read_file_mmap))
     }
 
+    #[tracing::instrument(level = "trace", skip(self, read_file))]
     fn process(&mut self, read_file: ReadFileFn) -> Option<Result<Event, Error>> {
         Some(match self.state {
             State::Header => build_index(&self.root).map(|index| {
@@ -85,7 +85,6 @@ impl Packer {
 
 fn process_object(root: &PathBytes, stub: &mut Object, read_file: ReadFileFn) -> Result<(), Error> {
     let location = stub.location.as_ref();
-    debug!("packing {}", location.display());
 
     let content = match stub.content {
         ObjectContent::File { .. } => ObjectContent::File {
