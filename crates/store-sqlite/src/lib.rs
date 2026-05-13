@@ -8,9 +8,9 @@ use std::{
 use bytes::Bytes;
 use educe::Educe;
 use jiff::Timestamp;
-use tracing::debug;
 use rusqlite::{Connection, OptionalExtension, named_params};
 use tokio::sync::{mpsc, oneshot};
+use tracing::instrument;
 use xh_archive::{Event, decoding::Decoder};
 use xh_engine::{
     gen_name,
@@ -67,6 +67,7 @@ enum Task {
     Shutdown,
 }
 
+#[instrument(skip(db))]
 fn register_package(
     db: &mut Connection,
     package: PackageId,
@@ -98,6 +99,7 @@ fn register_package(
         .wrap()
 }
 
+#[instrument(skip(db))]
 fn get_package(db: &mut Connection, package: PackageId) -> Result<Option<StorePackage>, Error> {
     db.prepare_cached(Queries::GET_PACKAGE)
         .wrap()?
@@ -113,6 +115,7 @@ fn get_package(db: &mut Connection, package: PackageId) -> Result<Option<StorePa
 }
 
 // TODO: reimplement this in a way that cant break in 200 different ways
+#[instrument(skip(db, archive))]
 fn register_artifact(
     db: &mut Connection,
     root: PathBuf,
@@ -149,6 +152,7 @@ fn register_artifact(
     })
 }
 
+#[instrument(skip(db))]
 fn get_artifact(db: &mut Connection, artifact: ArtifactId) -> Result<Option<StoreArtifact>, Error> {
     db.query_one(
         Queries::GET_ARTIFACT,
@@ -164,6 +168,7 @@ fn get_artifact(db: &mut Connection, artifact: ArtifactId) -> Result<Option<Stor
     .wrap()
 }
 
+#[instrument]
 fn decode_artifact(root: PathBuf, artifact: ArtifactId) -> Result<Option<Vec<Event>>, Error> {
     let file = match File::open(artifact_path(root, &artifact)) {
         Ok(file) => file,
@@ -182,8 +187,7 @@ fn decode_artifact(root: PathBuf, artifact: ArtifactId) -> Result<Option<Vec<Eve
 
 fn processing_thread(mut db: Connection, mut rx: mpsc::Receiver<Task>) {
     while let Some(task) = rx.blocking_recv() {
-        debug!("processing task: {task:?}");
-
+        let _span = tracing::debug_span!("process_task", ?task).entered();
         match task {
             Task::RegisterPackage {
                 package,

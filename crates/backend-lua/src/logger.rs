@@ -1,10 +1,10 @@
 use mlua::Lua;
-use tracing::{Level, event};
+use tracing::Level;
 
 macro_rules! add_level {
     ($level:expr, $lua:expr) => {
         $lua.create_function(move |_, message: String| {
-            event!(
+            tracing::event!(
                 target: concat!(module_path!(), "runtime"),
                 $level,
                 message

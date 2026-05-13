@@ -3,7 +3,6 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use tracing::debug;
 use serde::{Deserialize, Serialize};
 use ureq::{
     Agent,
@@ -71,8 +70,8 @@ impl Executor for HttpExecutor {
         &NAME
     }
 
+    #[tracing::instrument(level = "debug", skip(self))]
     async fn execute(&mut self, request: Self::Request) -> Result<(), Error> {
-        debug!("making request to {}", request.url);
 
         // TODO: support parent refs
         // crude check to ensure no directory traversals are possible
@@ -87,7 +86,10 @@ impl Executor for HttpExecutor {
         let path = self.ctx.environment.join(request.path);
         let agent = self.agent.clone();
 
+        let span = tracing::Span::current();
         tokio::task::spawn_blocking(move || {
+            let _guard = span.enter();
+
             let mut file = std::fs::File::create(path).wrap()?;
             let request = HttpRequest::builder()
                 .method(request.method)
