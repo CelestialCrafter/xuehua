@@ -3,7 +3,7 @@
 use std::{any::type_name, error::Error, fmt, io::Write};
 
 use smol_str::{SmolStr, ToSmolStr};
-use tracing::{Event, Subscriber, field, level_filters::LevelFilter, span};
+use tracing::{Event, Subscriber, field, span};
 use tracing_subscriber::{Layer, fmt::MakeWriter, layer::Context, registry::LookupSpan};
 
 use crate::{
@@ -91,7 +91,6 @@ fn metadata_to_payload(metadata: &tracing::Metadata, visitor: RecordVisitor) -> 
 pub struct ReportLayer<R, W> {
     renderer: R,
     writer: W,
-    render_spans_at: LevelFilter,
 }
 
 impl ReportLayer<GlobalRenderer, fn() -> std::io::Stderr> {
@@ -100,7 +99,6 @@ impl ReportLayer<GlobalRenderer, fn() -> std::io::Stderr> {
         Self {
             renderer: GlobalRenderer,
             writer: std::io::stderr,
-            render_spans_at: LevelFilter::DEBUG,
         }
     }
 }
@@ -111,7 +109,6 @@ impl<R, W> ReportLayer<R, W> {
         ReportLayer {
             renderer,
             writer: self.writer,
-            render_spans_at: self.render_spans_at,
         }
     }
 
@@ -120,14 +117,7 @@ impl<R, W> ReportLayer<R, W> {
         ReportLayer {
             renderer: self.renderer,
             writer,
-            render_spans_at: self.render_spans_at,
         }
-    }
-
-    /// Control whether spans are rendered as parents of events or just hidden.
-    pub fn render_spans(mut self, at: LevelFilter) -> Self {
-        self.render_spans_at = at;
-        self
     }
 }
 
@@ -174,32 +164,18 @@ where
 
         let metadata = event.metadata();
         let mut payload = metadata_to_payload(metadata, visitor);
-        if let Some(scope) = ctx.event_scope(event) {
-            let render_spans = *metadata.level() <= self.render_spans_at;
-            payload = if render_spans {
-                scope.fold(payload, |acc, span| {
-                    match span.extensions().get::<ReportPayload>() {
-                        Some(parent) => {
-                            let mut parent = parent.clone();
-                            parent.children.push(acc);
-                            parent
-                        }
-                        None => acc,
-                    }
-                })
-            } else {
-                let frames = scope
-                    .filter_map(|span| {
-                        span.extensions()
-                            .get::<ReportPayload>()
-                            .map(|p| p.frames.clone().into_iter())
-                    })
-                    .flatten();
 
-                payload.frames.extend(frames);
-                payload
-            }
-        }
+        let frames = ctx
+            .event_scope(event)
+            .into_iter()
+            .flatten()
+            .filter_map(|span| {
+                span.extensions()
+                    .get::<ReportPayload>()
+                    .map(|p| p.frames.clone().into_iter())
+            })
+            .flatten();
+        payload.frames.extend(frames);
 
         let display = self.renderer.render(&payload);
         let mut writer = self.writer.make_writer_for(metadata);

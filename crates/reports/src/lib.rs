@@ -2,10 +2,10 @@
 
 #![warn(missing_docs)]
 
-pub mod prelude;
-pub mod render;
 #[cfg(feature = "tracing")]
 pub mod layer;
+pub mod prelude;
+pub mod render;
 
 pub use xh_reports_derive::IntoReport;
 
