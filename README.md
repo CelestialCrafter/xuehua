@@ -1,5 +1,8 @@
 # Xuehua
 
+> [!WARNING]
+> this repository has moved to [tangled](https://tangled.org/celestial.moe/xuehua)!
+
 A build system framework and package manager inspired by [NixOS](https://nixos.org/).
 
 ## Features
